@@ -59,6 +59,8 @@ OpenAI 会在 Codex 响应头中返回主窗口和次窗口的使用信息。Sha
 
 网关在请求发出前按账号执行最大并发与固定自然分钟 RPM 限制。某个候选账号达到限制时，路由器会继续尝试当前 API Key 的下一个候选 Plan；全部候选都受限时返回对应的 `429`。限制器位于 API 进程内，单实例部署时覆盖全部请求。
 
+成员当前配额窗口以 `(member_id, account_id, window_type)` 唯一标识。上游 `reset-after` 响应头存在秒级漂移时，网关复用已锁定窗口的起止时间；同一窗口内乱序返回的较低百分比不会覆盖较高快照，避免重复窗口和成员用量回退。
+
 ## 仪表盘口径
 
 流式请求逐行透传 SSE，并只在固定终止事件中读取 `response.usage.input_tokens`、`response.usage.output_tokens` 和 `response.usage.input_tokens_details.cached_tokens`；若流在终止事件前异常关闭，网关补发 `response.failed`。非流式请求会缓存上游 SSE 直到终止事件并返回对应的 JSON response，compact 的 JSON 响应直接转发。个人仪表盘通过请求指标关联的成员归属隔离用户数据，不会把同一 Plan 的其他成员用量计入当前用户。

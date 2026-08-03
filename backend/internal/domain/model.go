@@ -211,6 +211,13 @@ type MemberUsageRank struct {
 	EstimatedCostMicros int64      `json:"estimated_cost_micros"`
 }
 
+type MemberRankingPeriod struct {
+	Period      string            `json:"period"`
+	WindowStart time.Time         `json:"window_start"`
+	WindowEnd   time.Time         `json:"window_end"`
+	Members     []MemberUsageRank `json:"members"`
+}
+
 type DashboardPerformance struct {
 	RequestsToday     int64   `json:"requests_today"`
 	SuccessRate       float64 `json:"success_rate"`
@@ -236,11 +243,12 @@ type Dashboard struct {
 }
 
 type PlanInsights struct {
-	AccountWindows []QuotaWindow      `json:"account_windows"`
-	MemberQuotas   []MemberQuota      `json:"member_quotas"`
-	Performance    PerformanceSummary `json:"performance"`
-	WindowUsage    []WindowUsage      `json:"window_usage"`
-	MemberRanking  []MemberUsageRank  `json:"member_ranking"`
+	AccountWindows []QuotaWindow         `json:"account_windows"`
+	MemberQuotas   []MemberQuota         `json:"member_quotas"`
+	Performance    PerformanceSummary    `json:"performance"`
+	WindowUsage    []WindowUsage         `json:"window_usage"`
+	MemberRanking  []MemberUsageRank     `json:"member_ranking"`
+	MemberRankings []MemberRankingPeriod `json:"member_rankings"`
 }
 
 type PlanDetail struct {

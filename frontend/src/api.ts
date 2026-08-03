@@ -83,7 +83,7 @@ export const api = {
   updateAccount: (id: string, config: AccountConfigInput) => request<Account>(`/api/accounts/${id}`, { method: 'PATCH', body: JSON.stringify(config) }),
   plans: () => request<Plan[]>('/api/plans'),
   createPlan: (payload: { account_id: string; name: string; allocation_mode: PlanAllocationMode; owner_share_basis_points: number }) => request<PlanDetail>('/api/plans', { method: 'POST', body: JSON.stringify(payload) }),
-  plan: (id: string) => request<PlanDetail>(`/api/plans/${id}`),
+  plan: (id: string) => request<PlanDetail>(`/api/plans/${id}?timezone=${encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone)}`),
   renamePlan: (id: string, name: string) => request<Plan>(`/api/plans/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) }),
   updatePlanStatus: (id: string, status: 'active' | 'archived') => request<Plan>(`/api/plans/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
   deletePlan: (id: string) => request<{ deleted: boolean }>(`/api/plans/${id}`, { method: 'DELETE' }),

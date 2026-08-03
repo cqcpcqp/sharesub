@@ -160,7 +160,7 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if approved.Status != "approved" || approved.MemberID == nil {
 		t.Fatalf("approved application = %+v", approved)
 	}
-	detail, err := store.PlanDetail(ctx, "plan", "applicant")
+	detail, err := store.PlanDetail(ctx, "plan", "applicant", now.Truncate(24*time.Hour), now.Add(time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +211,7 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if sharedApproved.Status != "approved" {
 		t.Fatalf("shared application status = %q, want approved", sharedApproved.Status)
 	}
-	sharedDetail, err := store.PlanDetail(ctx, sharedPlan.ID, "second")
+	sharedDetail, err := store.PlanDetail(ctx, sharedPlan.ID, "second", now.Truncate(24*time.Hour), now.Add(time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}

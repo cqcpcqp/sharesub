@@ -80,6 +80,11 @@ const detail: PlanDetail = {
     },
     window_usage: [],
     member_ranking: [],
+    member_rankings: [
+      { period: 'today', window_start: '2026-08-03T00:00:00Z', window_end: '2026-08-03T12:00:00Z', members: [] },
+      { period: 'last_7_days', window_start: '2026-07-27T12:00:00Z', window_end: '2026-08-03T12:00:00Z', members: [] },
+      { period: 'account_lifecycle', window_start: '2026-08-01T00:00:00Z', window_end: '2026-08-03T12:00:00Z', members: [] },
+    ],
   },
 }
 const activePlan: Plan = { ...archivedPlan, id: 'plan-active', name: '共享 Plan', status: 'active', archived_at: undefined }

@@ -49,15 +49,25 @@ func (s *Service) CreatePlan(ctx context.Context, userID, accountID, name, alloc
 	if err := s.store.CreatePlan(ctx, plan, owner, event); err != nil {
 		return domain.PlanDetail{}, err
 	}
-	return s.PlanDetail(ctx, userID, planID)
+	return s.PlanDetail(ctx, userID, planID, "UTC")
 }
 
 func (s *Service) ListPlans(ctx context.Context, userID string) ([]domain.Plan, error) {
 	return s.store.ListPlans(ctx, userID)
 }
 
-func (s *Service) PlanDetail(ctx context.Context, userID, planID string) (domain.PlanDetail, error) {
-	detail, err := s.store.PlanDetail(ctx, planID, userID)
+func (s *Service) PlanDetail(ctx context.Context, userID, planID, timezone string) (domain.PlanDetail, error) {
+	if timezone == "" {
+		timezone = "UTC"
+	}
+	location, err := time.LoadLocation(timezone)
+	if err != nil {
+		return domain.PlanDetail{}, domain.ErrInvalidInput
+	}
+	now := s.now()
+	localNow := now.In(location)
+	todayStart := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, location)
+	detail, err := s.store.PlanDetail(ctx, planID, userID, todayStart, now)
 	if err != nil {
 		return detail, err
 	}

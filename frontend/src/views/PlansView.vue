@@ -81,6 +81,7 @@
             <template #tab><span class="tab-label"><ChartNoAxesCombined :size="16" />概览</span></template>
             <div class="tab-panel">
               <PlanInsights
+                :key="detail.plan.id"
                 :insights="detail.insights"
                 :members="detail.members"
                 :allocation-mode="detail.plan.allocation_mode"
@@ -93,7 +94,7 @@
 
           <NTabPane name="account">
             <template #tab><span class="tab-label"><Bot :size="16" />账号配置</span></template>
-            <div class="tab-panel"><AccountConfigSummary :account="detail.account" /></div>
+            <div class="tab-panel"><AccountConfigSummary :account="detail.account" :members="detail.members" /></div>
           </NTabPane>
 
           <NTabPane name="members">

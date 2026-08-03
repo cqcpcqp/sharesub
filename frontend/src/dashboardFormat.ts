@@ -10,6 +10,10 @@ export function formatDuration(milliseconds: number): string {
   return `${trimZeros(milliseconds / 1_000)} s`
 }
 
+export function formatMilliseconds(milliseconds: number): string {
+  return `${Math.round(milliseconds).toLocaleString('zh-CN')} ms`
+}
+
 export function formatPercent(value: number): string {
   return `${trimZeros(value)}%`
 }

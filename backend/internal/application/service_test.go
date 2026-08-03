@@ -148,14 +148,14 @@ func (s *accountConfigStore) UpdateAccountConfig(_ context.Context, _ string, ac
 	return account, nil
 }
 
-func (s *planAccountStore) PlanDetail(context.Context, string, string) (domain.PlanDetail, error) {
+func (s *planAccountStore) PlanDetail(context.Context, string, string, time.Time, time.Time) (domain.PlanDetail, error) {
 	return s.detail, nil
 }
 
 func TestUpdateAccountConfigEncryptsProxyAndChecksOwnership(t *testing.T) {
 	manager := testSecurityManager(t)
 	store := &accountConfigStore{account: domain.Account{ID: "account", OwnerUserID: "owner", ChatGPTAccountID: "chatgpt"}}
-	service := &Service{store: store, security: manager}
+	service := &Service{store: store, security: manager, now: time.Now}
 	policy := []domain.FastPolicyRule{{ServiceTier: "priority", Action: "filter", UserIDs: []string{"member"}, ModelWhitelist: []string{"gpt-5.5*"}, FallbackAction: "pass"}}
 	config := AccountConfigInput{Name: "团队主账号", Notes: "仅用于 Codex", ProxyURL: "socks5://proxy.example:1080", MaxConcurrency: 8, RPMLimit: 120, FastPolicy: policy, Status: domain.StatusActive}
 
@@ -214,9 +214,9 @@ func TestPlanMemberSeesHydratedAccountConfiguration(t *testing.T) {
 			ProxyURLCiphertext: ciphertext, MaxConcurrency: 6, RPMLimit: 90, Status: domain.StatusActive,
 		},
 	}}
-	service := &Service{store: store, security: manager}
+	service := &Service{store: store, security: manager, now: time.Now}
 
-	detail, err := service.PlanDetail(context.Background(), "member", "plan")
+	detail, err := service.PlanDetail(context.Background(), "member", "plan", "Asia/Shanghai")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +305,7 @@ func (s *createPlanStore) CreatePlan(_ context.Context, plan domain.Plan, member
 	return nil
 }
 
-func (s *createPlanStore) PlanDetail(context.Context, string, string) (domain.PlanDetail, error) {
+func (s *createPlanStore) PlanDetail(context.Context, string, string, time.Time, time.Time) (domain.PlanDetail, error) {
 	return s.detail, nil
 }
 

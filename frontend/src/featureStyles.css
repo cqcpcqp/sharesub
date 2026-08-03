@@ -133,6 +133,25 @@
 .account-config-list dt { display: flex; align-items: center; gap: 7px; color: var(--muted-light); font-size: 9px; font-weight: 760; text-transform: uppercase; }
 .account-config-list dd { min-width: 0; overflow-wrap: anywhere; margin: 0; color: var(--ink); font-size: 11px; line-height: 1.55; }
 .account-config-list code { white-space: normal; }
+.fast-policy-summary { display: grid; gap: 14px; margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--line); }
+.fast-policy-summary > header { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.fast-policy-summary > header > div { display: flex; min-width: 0; align-items: center; gap: 10px; }
+.fast-policy-summary > header > div > span { width: 34px; height: 34px; display: grid; flex: 0 0 auto; place-items: center; border-radius: 7px; background: var(--amber-soft); color: var(--amber); }
+.fast-policy-summary > header > div > div { display: grid; gap: 3px; }
+.fast-policy-summary > header strong { color: var(--ink-strong); font-size: 12px; }
+.fast-policy-summary > header small, .fast-policy-summary-order { color: var(--muted); font-size: 9px; }
+.fast-policy-summary-empty { padding: 20px; border: 1px dashed var(--line-strong); border-radius: 7px; color: var(--muted); background: var(--surface-soft); font-size: 10px; text-align: center; }
+.fast-policy-summary-rules { display: grid; gap: 12px; }
+.fast-policy-summary-rule { display: grid; gap: 13px; padding: 15px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--surface-soft); }
+.fast-policy-summary-rule > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.fast-policy-summary-rule > header strong { font-size: 11px; }
+.fast-policy-summary-rule dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px 20px; margin: 0; }
+.fast-policy-summary-rule dl > div { display: grid; min-width: 0; gap: 6px; }
+.fast-policy-summary-rule dt { color: var(--muted-light); font-size: 8px; font-weight: 760; text-transform: uppercase; }
+.fast-policy-summary-rule dd { min-width: 0; margin: 0; overflow-wrap: anywhere; color: var(--ink); font-size: 10px; line-height: 1.5; }
+.fast-policy-summary-full { grid-column: 1 / -1; }
+.fast-policy-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.fast-policy-tags code { font-size: 9px; }
 
 .metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
 .metric-tile { --metric-color: var(--primary); --metric-bg: var(--primary-soft); min-height: 142px; display: grid; align-content: start; gap: 7px; padding: 15px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); box-shadow: var(--shadow-xs); }
@@ -407,6 +426,8 @@
   .route-option { align-items: stretch; flex-direction: column; gap: 10px; padding: 12px 0; }
   .priority-input { justify-content: space-between; }
   .account-card dl, .account-form-grid, .fast-policy-grid, .account-config-list { grid-template-columns: 1fr; }
+  .fast-policy-summary-rule dl { grid-template-columns: 1fr; }
+  .fast-policy-summary-full { grid-column: auto; }
   .account-form-full { grid-column: auto; }
   .account-config-list > div:nth-child(odd), .account-config-list > div:nth-child(even) { padding: 15px 0; border-left: 0; }
   .oauth-step { align-items: flex-start; flex-wrap: wrap; }

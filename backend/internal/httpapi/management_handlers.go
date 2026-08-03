@@ -174,7 +174,7 @@ func (s *Server) createPlan(w http.ResponseWriter, r *http.Request) {
 	writeResult(w, v, err)
 }
 func (s *Server) planDetail(w http.ResponseWriter, r *http.Request) {
-	v, err := s.app.PlanDetail(r.Context(), currentUser(r).ID, r.PathValue("planID"))
+	v, err := s.app.PlanDetail(r.Context(), currentUser(r).ID, r.PathValue("planID"), r.URL.Query().Get("timezone"))
 	writeResult(w, v, err)
 }
 func (s *Server) renamePlan(w http.ResponseWriter, r *http.Request) {

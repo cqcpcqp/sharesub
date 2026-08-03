@@ -10,6 +10,8 @@ import (
 	"github.com/sharesub/sharesub/backend/internal/domain"
 )
 
+const quotaWindowResetTolerance = 2 * time.Minute
+
 func (s *Store) CreateAPIKey(ctx context.Context, key domain.APIKey, routes []domain.APIKeyRoute) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -187,6 +189,10 @@ func (s *Store) RecordAccountQuotaSignals(ctx context.Context, accountID string,
 	}
 	defer tx.Rollback(ctx)
 	for _, signal := range signals {
+		signal, _, err = lockAndMergeAccountQuotaSignal(ctx, tx, accountID, signal)
+		if err != nil {
+			return err
+		}
 		_, err = tx.Exec(ctx, `INSERT INTO account_quota_snapshots(account_id,window_type,window_start,reset_at,used_micros,updated_at) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(account_id,window_type) DO UPDATE SET window_start=EXCLUDED.window_start,reset_at=EXCLUDED.reset_at,used_micros=EXCLUDED.used_micros,updated_at=EXCLUDED.updated_at`, accountID, signal.WindowType, signal.WindowStart, signal.ResetAt, signal.AccountUsedMicros, now)
 		if err != nil {
 			return err
@@ -202,15 +208,9 @@ func (s *Store) RecordQuotaSignals(ctx context.Context, accountID, memberID stri
 	}
 	defer tx.Rollback(ctx)
 	for _, signal := range signals {
-		var oldUsed int64
-		var oldStart time.Time
-		err = tx.QueryRow(ctx, `SELECT used_micros,window_start FROM account_quota_snapshots WHERE account_id=$1 AND window_type=$2 FOR UPDATE`, accountID, signal.WindowType).Scan(&oldUsed, &oldStart)
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return err
-		}
-		delta := int64(0)
-		if err == nil && oldStart.Equal(signal.WindowStart) && signal.AccountUsedMicros > oldUsed {
-			delta = signal.AccountUsedMicros - oldUsed
+		signal, delta, mergeErr := lockAndMergeAccountQuotaSignal(ctx, tx, accountID, signal)
+		if mergeErr != nil {
+			return mergeErr
 		}
 		_, err = tx.Exec(ctx, `INSERT INTO account_quota_snapshots(account_id,window_type,window_start,reset_at,used_micros,updated_at) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(account_id,window_type) DO UPDATE SET window_start=EXCLUDED.window_start,reset_at=EXCLUDED.reset_at,used_micros=EXCLUDED.used_micros,updated_at=EXCLUDED.updated_at`, accountID, signal.WindowType, signal.WindowStart, signal.ResetAt, signal.AccountUsedMicros, now)
 		if err != nil {
@@ -227,12 +227,46 @@ func (s *Store) RecordQuotaSignals(ctx context.Context, accountID, memberID stri
 		if tag.RowsAffected() == 0 {
 			continue
 		}
-		_, err = tx.Exec(ctx, `INSERT INTO member_quota_windows(member_id,account_id,window_type,window_start,reset_at,used_micros,account_used_micros,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(member_id,account_id,window_type,window_start) DO UPDATE SET reset_at=EXCLUDED.reset_at,used_micros=member_quota_windows.used_micros+EXCLUDED.used_micros,account_used_micros=EXCLUDED.account_used_micros,updated_at=EXCLUDED.updated_at`, memberID, accountID, signal.WindowType, signal.WindowStart, signal.ResetAt, delta, signal.AccountUsedMicros, now)
+		_, err = tx.Exec(ctx, `INSERT INTO member_quota_windows(member_id,account_id,window_type,window_start,reset_at,used_micros,account_used_micros,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(member_id,account_id,window_type) DO UPDATE SET window_start=EXCLUDED.window_start,reset_at=EXCLUDED.reset_at,used_micros=CASE WHEN member_quota_windows.window_start=EXCLUDED.window_start THEN member_quota_windows.used_micros+EXCLUDED.used_micros ELSE EXCLUDED.used_micros END,account_used_micros=EXCLUDED.account_used_micros,updated_at=EXCLUDED.updated_at`, memberID, accountID, signal.WindowType, signal.WindowStart, signal.ResetAt, delta, signal.AccountUsedMicros, now)
 		if err != nil {
 			return err
 		}
 	}
 	return tx.Commit(ctx)
+}
+
+func lockAndMergeAccountQuotaSignal(ctx context.Context, tx pgx.Tx, accountID string, signal domain.QuotaSignal) (domain.QuotaSignal, int64, error) {
+	var oldUsed int64
+	var oldStart, oldReset time.Time
+	err := tx.QueryRow(ctx, `SELECT used_micros,window_start,reset_at FROM account_quota_snapshots WHERE account_id=$1 AND window_type=$2 FOR UPDATE`, accountID, signal.WindowType).Scan(&oldUsed, &oldStart, &oldReset)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return signal, 0, nil
+	}
+	if err != nil {
+		return domain.QuotaSignal{}, 0, err
+	}
+	return mergeAccountQuotaSignal(oldStart, oldReset, oldUsed, signal)
+}
+
+func mergeAccountQuotaSignal(oldStart, oldReset time.Time, oldUsed int64, signal domain.QuotaSignal) (domain.QuotaSignal, int64, error) {
+	if !sameQuotaWindow(oldReset, signal.ResetAt) {
+		return signal, 0, nil
+	}
+	signal.WindowStart = oldStart
+	signal.ResetAt = oldReset
+	if signal.AccountUsedMicros <= oldUsed {
+		signal.AccountUsedMicros = oldUsed
+		return signal, 0, nil
+	}
+	return signal, signal.AccountUsedMicros - oldUsed, nil
+}
+
+func sameQuotaWindow(left, right time.Time) bool {
+	difference := left.Sub(right)
+	if difference < 0 {
+		difference = -difference
+	}
+	return difference <= quotaWindowResetTolerance
 }
 
 func (s *Store) RecordGatewayMetric(ctx context.Context, metric domain.GatewayMetric) error {

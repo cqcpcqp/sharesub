@@ -68,7 +68,7 @@ func (s *Store) ListPlans(ctx context.Context, userID string) ([]domain.Plan, er
 	return out, rows.Err()
 }
 
-func (s *Store) PlanDetail(ctx context.Context, planID, userID string) (domain.PlanDetail, error) {
+func (s *Store) PlanDetail(ctx context.Context, planID, userID string, todayStart, now time.Time) (domain.PlanDetail, error) {
 	out := domain.PlanDetail{
 		Members:      make([]domain.Member, 0),
 		Invites:      make([]domain.Invite, 0),
@@ -78,6 +78,7 @@ func (s *Store) PlanDetail(ctx context.Context, planID, userID string) (domain.P
 			MemberQuotas:   make([]domain.MemberQuota, 0),
 			WindowUsage:    make([]domain.WindowUsage, 0),
 			MemberRanking:  make([]domain.MemberUsageRank, 0),
+			MemberRankings: make([]domain.MemberRankingPeriod, 0),
 		},
 	}
 	err := s.pool.QueryRow(ctx, `SELECT p.id,p.owner_user_id,p.account_id,p.name,p.status,p.visibility,p.public_slots,p.public_share_basis_points,p.allocation_mode,p.created_at,p.archived_at,a.id,a.owner_user_id,a.name,a.notes,a.email,a.chatgpt_account_id,a.plan_type,a.proxy_url_ciphertext,a.max_concurrency,a.rpm_limit,a.fast_policy,a.token_expires_at,a.status,a.last_error,a.created_at FROM shared_plans p JOIN plan_members viewer ON viewer.plan_id=p.id AND viewer.user_id=$2 AND viewer.status='active' JOIN openai_accounts a ON a.id=p.account_id WHERE p.id=$1`, planID, userID).Scan(&out.Plan.ID, &out.Plan.OwnerUserID, &out.Plan.AccountID, &out.Plan.Name, &out.Plan.Status, &out.Plan.Visibility, &out.Plan.PublicSlots, &out.Plan.PublicShareBasisPoints, &out.Plan.AllocationMode, &out.Plan.CreatedAt, &out.Plan.ArchivedAt, &out.Account.ID, &out.Account.OwnerUserID, &out.Account.Name, &out.Account.Notes, &out.Account.Email, &out.Account.ChatGPTAccountID, &out.Account.PlanType, &out.Account.ProxyURLCiphertext, &out.Account.MaxConcurrency, &out.Account.RPMLimit, &out.Account.FastPolicy, &out.Account.TokenExpiresAt, &out.Account.Status, &out.Account.LastError, &out.Account.CreatedAt)
@@ -115,7 +116,7 @@ func (s *Store) PlanDetail(ctx context.Context, planID, userID string) (domain.P
 		}
 		out.Applications = applications
 	}
-	insights, err := s.planInsights(ctx, planID, out.Plan.AccountID, out.Members)
+	insights, err := s.planInsights(ctx, planID, out.Plan.AccountID, out.Account.CreatedAt, out.Members, todayStart, now)
 	if err != nil {
 		return out, err
 	}
@@ -123,12 +124,13 @@ func (s *Store) PlanDetail(ctx context.Context, planID, userID string) (domain.P
 	return out, nil
 }
 
-func (s *Store) planInsights(ctx context.Context, planID, accountID string, members []domain.Member) (domain.PlanInsights, error) {
+func (s *Store) planInsights(ctx context.Context, planID, accountID string, accountCreatedAt time.Time, members []domain.Member, todayStart, now time.Time) (domain.PlanInsights, error) {
 	out := domain.PlanInsights{
 		AccountWindows: make([]domain.QuotaWindow, 0),
 		MemberQuotas:   make([]domain.MemberQuota, 0, len(members)),
 		WindowUsage:    make([]domain.WindowUsage, 0, 2),
 		MemberRanking:  make([]domain.MemberUsageRank, 0, len(members)),
+		MemberRankings: make([]domain.MemberRankingPeriod, 0, 4),
 	}
 	memberIndexes := make(map[string]int, len(members))
 	for _, member := range members {
@@ -193,37 +195,64 @@ func (s *Store) planInsights(ctx context.Context, planID, accountID string, memb
 	}
 	rows.Close()
 
-	rows, err = s.pool.Query(ctx, `
-		SELECT m.id,u.username,count(g.id),COALESCE(sum(g.input_tokens),0),COALESCE(sum(g.output_tokens),0),COALESCE(sum(g.cached_tokens),0),COALESCE(sum(g.estimated_cost_micros),0)
-		FROM gateway_request_metrics g
-		JOIN plan_members m ON m.id=g.member_id
-		JOIN users u ON u.id=m.user_id
-		WHERE g.plan_id=$1 AND g.created_at>=now()-interval '7 days'
-		GROUP BY m.id,u.username
-		ORDER BY COALESCE(sum(g.input_tokens+g.output_tokens),0) DESC,count(g.id) DESC,u.username`, planID)
-	if err != nil {
-		return out, err
+	type rankingWindow struct {
+		period string
+		start  time.Time
+		end    time.Time
 	}
-	for rows.Next() {
-		var rank domain.MemberUsageRank
-		if err := rows.Scan(&rank.MemberID, &rank.Username, &rank.RequestCount, &rank.TokenUsage.InputTokens, &rank.TokenUsage.OutputTokens, &rank.TokenUsage.CachedTokens, &rank.EstimatedCostMicros); err != nil {
-			rows.Close()
+	rankingWindows := []rankingWindow{
+		{period: "today", start: todayStart, end: now},
+		{period: "last_7_days", start: now.Add(-7 * 24 * time.Hour), end: now},
+	}
+	for _, usage := range out.WindowUsage {
+		if usage.WindowType == domain.Window7D {
+			rankingWindows = append(rankingWindows, rankingWindow{period: "account_7d", start: usage.WindowStart, end: usage.WindowEnd})
+			break
+		}
+	}
+	rankingWindows = append(rankingWindows, rankingWindow{period: "account_lifecycle", start: accountCreatedAt, end: now})
+	for _, window := range rankingWindows {
+		ranking, err := s.memberUsageRanking(ctx, planID, window.start, window.end)
+		if err != nil {
 			return out, err
 		}
-		rank.TokenUsage.TotalTokens = rank.TokenUsage.InputTokens + rank.TokenUsage.OutputTokens
-		out.MemberRanking = append(out.MemberRanking, rank)
+		period := domain.MemberRankingPeriod{Period: window.period, WindowStart: window.start, WindowEnd: window.end, Members: ranking}
+		out.MemberRankings = append(out.MemberRankings, period)
+		if window.period == "last_7_days" {
+			out.MemberRanking = ranking
+		}
 	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return out, err
-	}
-	rows.Close()
 
 	err = s.pool.QueryRow(ctx, `SELECT count(*),count(*) FILTER (WHERE status_code BETWEEN 200 AND 299),COALESCE(avg(ttft_ms),0)::float8,COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY ttft_ms),0)::float8,COALESCE(avg(duration_ms),0)::float8,COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms),0)::float8 FROM gateway_request_metrics WHERE plan_id=$1 AND created_at>=now()-interval '24 hours'`, planID).Scan(&out.Performance.RequestCount, &out.Performance.SuccessCount, &out.Performance.AverageTTFTMs, &out.Performance.P95TTFTMs, &out.Performance.AverageDurationMs, &out.Performance.P95DurationMs)
 	if err != nil {
 		return out, err
 	}
 	return out, nil
+}
+
+func (s *Store) memberUsageRanking(ctx context.Context, planID string, windowStart, windowEnd time.Time) ([]domain.MemberUsageRank, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT m.id,u.username,count(g.id),COALESCE(sum(g.input_tokens),0),COALESCE(sum(g.output_tokens),0),COALESCE(sum(g.cached_tokens),0),COALESCE(sum(g.estimated_cost_micros),0)
+		FROM gateway_request_metrics g
+		JOIN plan_members m ON m.id=g.member_id
+		JOIN users u ON u.id=m.user_id
+		WHERE g.plan_id=$1 AND g.created_at>=$2 AND g.created_at<$3
+		GROUP BY m.id,u.username
+		ORDER BY COALESCE(sum(g.input_tokens+g.output_tokens),0) DESC,count(g.id) DESC,u.username`, planID, windowStart, windowEnd)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]domain.MemberUsageRank, 0)
+	for rows.Next() {
+		var rank domain.MemberUsageRank
+		if err := rows.Scan(&rank.MemberID, &rank.Username, &rank.RequestCount, &rank.TokenUsage.InputTokens, &rank.TokenUsage.OutputTokens, &rank.TokenUsage.CachedTokens, &rank.EstimatedCostMicros); err != nil {
+			return nil, err
+		}
+		rank.TokenUsage.TotalTokens = rank.TokenUsage.InputTokens + rank.TokenUsage.OutputTokens
+		out = append(out, rank)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) listJoinApplications(ctx context.Context, planID string) ([]domain.JoinApplication, error) {

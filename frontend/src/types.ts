@@ -174,6 +174,15 @@ export interface MemberUsageRank {
   estimated_cost_micros: number
 }
 
+export type MemberRankingPeriodID = 'today' | 'last_7_days' | 'account_7d' | 'account_lifecycle'
+
+export interface MemberRankingPeriod {
+  period: MemberRankingPeriodID
+  window_start: string
+  window_end: string
+  members: MemberUsageRank[]
+}
+
 export interface DashboardPerformance {
   requests_today: number
   success_rate: number
@@ -204,6 +213,7 @@ export interface PlanInsights {
   performance: PerformanceSummary
   window_usage: WindowUsage[]
   member_ranking: MemberUsageRank[]
+  member_rankings: MemberRankingPeriod[]
 }
 
 export interface PlanDetail {

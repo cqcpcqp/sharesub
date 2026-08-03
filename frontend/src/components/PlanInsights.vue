@@ -18,11 +18,11 @@
       </article>
       <article class="performance-card performance-blue">
         <span class="performance-icon"><Zap :size="17" /></span>
-        <div><small>平均 TTFT</small><strong>{{ duration(insights.performance.average_ttft_ms) }}</strong><span>P95 {{ duration(insights.performance.p95_ttft_ms) }}</span></div>
+        <div><small>平均 TTFT</small><strong>{{ formatMilliseconds(insights.performance.average_ttft_ms) }}</strong><span>P95 {{ formatMilliseconds(insights.performance.p95_ttft_ms) }}</span></div>
       </article>
       <article class="performance-card performance-amber">
         <span class="performance-icon"><Timer :size="17" /></span>
-        <div><small>平均总耗时</small><strong>{{ duration(insights.performance.average_duration_ms) }}</strong><span>P95 {{ duration(insights.performance.p95_duration_ms) }}</span></div>
+        <div><small>平均总耗时</small><strong>{{ formatMilliseconds(insights.performance.average_duration_ms) }}</strong><span>P95 {{ formatMilliseconds(insights.performance.p95_duration_ms) }}</span></div>
       </article>
     </div>
 
@@ -85,10 +85,10 @@
             </div>
           </dl>
           <dl class="token-grid">
-            <div><dt>Input</dt><dd>{{ item.usage ? formatNumber(item.usage.token_usage.input_tokens) : '--' }}</dd></div>
-            <div><dt>Output</dt><dd>{{ item.usage ? formatNumber(item.usage.token_usage.output_tokens) : '--' }}</dd></div>
-            <div><dt>Cached</dt><dd>{{ item.usage ? formatNumber(item.usage.token_usage.cached_tokens) : '--' }}</dd></div>
-            <div class="token-total"><dt>Total Token</dt><dd>{{ item.usage ? formatNumber(item.usage.token_usage.total_tokens) : '--' }}</dd></div>
+            <div><dt>Input</dt><dd>{{ item.usage ? formatTokens(item.usage.token_usage.input_tokens) : '--' }}</dd></div>
+            <div><dt>Output</dt><dd>{{ item.usage ? formatTokens(item.usage.token_usage.output_tokens) : '--' }}</dd></div>
+            <div><dt>Cached</dt><dd>{{ item.usage ? formatTokens(item.usage.token_usage.cached_tokens) : '--' }}</dd></div>
+            <div class="token-total"><dt>Total Token</dt><dd>{{ item.usage ? formatTokens(item.usage.token_usage.total_tokens) : '--' }}</dd></div>
           </dl>
         </article>
       </div>
@@ -122,10 +122,10 @@
       <section class="data-panel ranking-panel">
         <header class="panel-heading">
           <div>
-            <span class="section-label">LAST 7 DAYS</span>
+            <span class="section-label">{{ rankingPeriodRange }}</span>
             <h4>成员用量排行</h4>
           </div>
-          <UsersRound :size="18" />
+          <NSelect v-model:value="rankingPeriodID" class="ranking-period-select" size="small" :options="rankingPeriodOptions" :consistent-menu-width="false" />
         </header>
         <div v-if="memberRanking.length" class="table-scroll">
           <table class="ranking-table">
@@ -136,15 +136,15 @@
                 <td><strong class="ranking-name">{{ member.username }}</strong></td>
                 <td>{{ formatNumber(member.request_count) }}</td>
                 <td>
-                  <strong class="ranking-total">{{ formatNumber(member.token_usage.total_tokens) }}</strong>
-                  <small class="ranking-breakdown">I {{ formatNumber(member.token_usage.input_tokens) }} · O {{ formatNumber(member.token_usage.output_tokens) }} · C {{ formatNumber(member.token_usage.cached_tokens) }}</small>
+                  <strong class="ranking-total">{{ formatTokens(member.token_usage.total_tokens) }}</strong>
+                  <small class="ranking-breakdown">I {{ formatTokens(member.token_usage.input_tokens) }} · O {{ formatTokens(member.token_usage.output_tokens) }} · C {{ formatTokens(member.token_usage.cached_tokens) }}</small>
                 </td>
                 <td><strong class="ranking-cost">{{ formatUSD(member.estimated_cost_micros) }}</strong></td>
               </tr>
             </tbody>
           </table>
         </div>
-        <p v-else class="empty-copy">最近 7 天还没有成员请求。</p>
+        <p v-else class="empty-copy">{{ rankingPeriodLabel }}还没有成员请求。</p>
       </section>
     </div>
 
@@ -152,11 +152,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
-import { NButton, NProgress } from 'naive-ui'
-import { Activity, Clock3, Gauge, RefreshCw, Timer, UsersRound, Zap } from 'lucide-vue-next'
-import type { Member, PlanAllocationMode, PlanInsights, QuotaWindow, WindowUsage } from '../types'
+import { computed, ref } from 'vue'
+import { NButton, NProgress, NSelect } from 'naive-ui'
+import { Activity, Clock3, Gauge, RefreshCw, Timer, Zap } from 'lucide-vue-next'
+import type { Member, MemberRankingPeriodID, PlanAllocationMode, PlanInsights, QuotaWindow, WindowUsage } from '../types'
 import { formatShareBasisPoints } from '../planAllocation'
+import { formatMilliseconds, formatTokens } from '../dashboardFormat'
 import UserAvatar from './UserAvatar.vue'
 
 const props = withDefaults(defineProps<{
@@ -171,7 +172,18 @@ const props = withDefaults(defineProps<{
 })
 
 const emit = defineEmits<{ refresh: [] }>()
-const memberRanking = computed(() => props.insights.member_ranking)
+const rankingPeriodID = ref<MemberRankingPeriodID>('last_7_days')
+const rankingPeriodLabels: Record<MemberRankingPeriodID, string> = {
+  today: '本日',
+  last_7_days: '最近 7 天',
+  account_7d: '当前账号 7d 周期',
+  account_lifecycle: '账号生命周期（接入以来）',
+}
+const rankingPeriodOptions = computed(() => props.insights.member_rankings.map(period => ({ label: rankingPeriodLabels[period.period], value: period.period })))
+const rankingPeriod = computed(() => props.insights.member_rankings.find(period => period.period === rankingPeriodID.value)!)
+const rankingPeriodLabel = computed(() => rankingPeriodLabels[rankingPeriodID.value])
+const memberRanking = computed(() => rankingPeriod.value.members)
+const rankingPeriodRange = computed(() => `${formatDate(rankingPeriod.value.window_start)} – ${formatDate(rankingPeriod.value.window_end)}`)
 const quotaKinds = [
   { type: '5h' as const, label: '5 小时' },
   { type: '7d' as const, label: '7 天' },
@@ -200,10 +212,6 @@ const dateFormatter = new Intl.DateTimeFormat('zh-CN', {
   minute: '2-digit',
   hour12: false,
 })
-
-function duration(value: number) {
-  return value >= 1000 ? `${(value / 1000).toFixed(2)} s` : `${Math.round(value)} ms`
-}
 
 function formatNumber(value: number) {
   return numberFormatter.format(value)
@@ -291,6 +299,7 @@ function usagePeriod(usage: WindowUsage | undefined) {
 .panel-heading > div { min-width: 0; }
 .panel-heading h4 { margin-top: 4px; font-size: 13px; }
 .panel-heading > svg { color: var(--muted-light); }
+.ranking-period-select { width: 150px; }
 .section-label { display: block; color: var(--muted-light); font-size: 8px; font-weight: 800; letter-spacing: 0; }
 .quota-heading { align-items: center; margin-bottom: 11px; }
 .quota-heading :deep(.n-button) { flex: 0 0 auto; }
@@ -393,6 +402,8 @@ tbody tr:hover { background: var(--surface-hover); }
   .member-row { align-items: flex-start; flex-direction: column; padding: 11px 0; }
   .member-windows { width: 100%; }
   .member-windows > span { text-align: left; }
+  .ranking-panel > .panel-heading { align-items: stretch; flex-direction: column; }
+  .ranking-period-select { width: 100%; }
 }
 
 @media (max-width: 380px) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatDuration, formatPercent, formatTokens } from './dashboardFormat'
+import { formatDuration, formatMilliseconds, formatPercent, formatTokens } from './dashboardFormat'
 
 describe('dashboard formatting', () => {
   it('formats token counts with compact units', () => {
@@ -12,6 +12,7 @@ describe('dashboard formatting', () => {
   it('formats latency and success rate without noisy zeroes', () => {
     expect(formatDuration(428)).toBe('428 ms')
     expect(formatDuration(15_310)).toBe('15.31 s')
+    expect(formatMilliseconds(15_310)).toBe('15,310 ms')
     expect(formatPercent(99.5)).toBe('99.5%')
   })
 })
