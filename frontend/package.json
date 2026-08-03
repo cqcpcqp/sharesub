@@ -1,0 +1,29 @@
+{
+  "name": "sharesub-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc -b && vite build",
+    "typecheck": "vue-tsc --noEmit",
+    "test:run": "vitest run"
+  },
+  "dependencies": {
+    "chart.js": "^4.5.1",
+    "lucide-vue-next": "0.468.0",
+    "naive-ui": "^2.44.1",
+    "vue": "3.5.26",
+    "vue-chartjs": "^5.3.4"
+  },
+  "devDependencies": {
+    "@types/node": "20.19.27",
+    "@vitejs/plugin-vue": "5.2.4",
+    "@vue/test-utils": "2.4.6",
+    "happy-dom": "15.11.7",
+    "typescript": "5.6.3",
+    "vite": "5.4.21",
+    "vitest": "2.1.9",
+    "vue-tsc": "2.2.12"
+  }
+}

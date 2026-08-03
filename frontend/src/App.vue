@@ -1,0 +1,378 @@
+<template>
+  <NConfigProvider :theme="naiveTheme" :theme-overrides="activeThemeOverrides">
+    <ThemeSwitcher v-if="!user" v-model="themeMode" class="auth-theme-switcher" />
+    <AuthView
+      v-if="!user"
+      :invite-pending="Boolean(inviteIntent)"
+      :invitation="invitePreview"
+      :invite-loading="invitePreviewLoading"
+      :invite-error="inviteError"
+      @authenticated="onAuthenticated"
+      @retry-invite="loadInvitePreview"
+      @discard-invite="discardInvite"
+    />
+    <div v-else class="app-shell" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
+      <aside class="sidebar">
+        <NTooltip placement="right">
+          <template #trigger>
+            <NButton
+              quaternary
+              class="icon-button sidebar-toggle"
+              :aria-label="sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'"
+              :aria-expanded="!sidebarCollapsed"
+              @click="sidebarCollapsed = !sidebarCollapsed"
+            >
+              <template #icon><PanelLeftOpen v-if="sidebarCollapsed" :size="16" /><PanelLeftClose v-else :size="16" /></template>
+            </NButton>
+          </template>
+          {{ sidebarCollapsed ? '展开侧边栏' : '收起侧边栏' }}
+        </NTooltip>
+        <div class="brand"><BrandMark :size="38" /><div><strong>ShareSub</strong><span>Access together</span></div></div>
+        <span class="nav-label">工作台</span>
+        <nav aria-label="主导航">
+          <NTooltip v-for="item in nav" :key="item.id" placement="right" :disabled="!sidebarCollapsed">
+            <template #trigger>
+              <NButton quaternary :class="{ active: activeView === item.id }" :aria-current="activeView === item.id ? 'page' : undefined" @click="activeView = item.id">
+                <span class="nav-icon"><component :is="item.icon" :size="18" /></span><span class="nav-text">{{ item.label }}</span><span class="nav-text-mobile">{{ item.shortLabel }}</span>
+              </NButton>
+            </template>
+            {{ item.label }}
+          </NTooltip>
+        </nav>
+        <div class="profile-menu">
+          <NTooltip placement="right" :disabled="!sidebarCollapsed">
+            <template #trigger>
+              <NButton quaternary class="profile-button" :class="{ active: activeView === 'profile' }" @click="activeView = 'profile'">
+                <UserAvatar class="user-avatar" :size="36" :username="user.username" :src="user.avatar_url" />
+                <span class="profile-copy"><strong>{{ user.username }}</strong><small>{{ user.email }}</small></span>
+                <ChevronRight class="profile-chevron" :size="16" />
+              </NButton>
+            </template>
+            {{ user.username }} · 个人设置
+          </NTooltip>
+          <NTooltip placement="right" :disabled="!sidebarCollapsed">
+            <template #trigger>
+              <NButton quaternary type="error" class="icon-button sidebar-logout" aria-label="退出登录" @click="logout"><template #icon><LogOut :size="18" /></template></NButton>
+            </template>
+            退出登录
+          </NTooltip>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <header class="workspace-toolbar">
+          <NotificationCenter
+            :items="notifications"
+            :unread-count="unreadNotificationCount"
+            :loading="notificationLoading"
+            :reading-all="readingAllNotifications"
+            @refresh="refreshNotifications(true)"
+            @read="markNotificationRead"
+            @read-all="markAllNotificationsRead"
+            @open="openNotification"
+          />
+        </header>
+        <div class="workspace-body">
+          <Transition name="toast"><NAlert v-if="notice.text" class="notice" :type="notice.type" closable @close="notice.text = ''">{{ notice.text }}</NAlert></Transition>
+          <OnboardingGuide v-if="activeView === 'dashboard' && showOnboarding" :accounts="accounts" :plans="plans" :keys="keys" :user="user" @navigate="activeView = $event" @invite="openPlanInvite" @setup-key="openKeySetup" />
+          <DashboardView v-else-if="activeView === 'dashboard'" :dashboard="dashboard" :loading="busy" :theme="resolvedTheme" />
+          <LobbyView v-else-if="activeView === 'lobby'" :plans="publicPlans" :user="user" @changed="refreshAll" @message="showMessage" />
+          <PlansView v-else-if="activeView === 'plans'" :accounts="accounts" :plans="plans" :user="user" :initial-plan-id="selectedPlanID" :invite-plan-id="invitePlanID" @invite-opened="invitePlanID = ''" @changed="refreshAll" @message="showMessage" />
+          <AccountsView v-else-if="activeView === 'accounts'" :accounts="accounts" @changed="refreshAll" @message="showMessage" />
+          <KeysView v-else-if="activeView === 'keys'" :keys="keys" :plans="plans" @changed="refreshAll" @message="showMessage" />
+          <ProfileView v-else v-model:theme-mode="themeMode" :user="user" @updated="onUserUpdated" @message="showMessage" />
+        </div>
+      </main>
+    </div>
+
+    <InvitationStatusDialog
+      v-if="user && inviteIntent && (inviteAccepting || inviteError)"
+      :accepting="inviteAccepting"
+      :error="inviteError"
+      :preview="invitePreview"
+      @retry="acceptPendingInvite"
+      @switch-account="switchInviteAccount"
+      @discard="discardInvite"
+    />
+    <APIKeySetupWizard v-if="user" v-model:show="keySetupVisible" :plans="plans" :initial-plan-id="keySetupPlanID" @created="refreshAll" @message="showMessage" />
+  </NConfigProvider>
+</template>
+
+<script setup lang="ts">
+import { darkTheme, NAlert, NButton, NConfigProvider, NTooltip } from 'naive-ui'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { ChevronRight, Compass, KeyRound, Layers3, LayoutDashboard, LogOut, PanelLeftClose, PanelLeftOpen, Settings, UsersRound } from 'lucide-vue-next'
+import { api, clearSessionToken, sessionToken } from './api'
+import type { Account, APIKey, Dashboard, InvitePreview, Notification as UserNotification, Plan, PublicPlan, User } from './types'
+import AccountsView from './views/AccountsView.vue'
+import APIKeySetupWizard from './components/APIKeySetupWizard.vue'
+import AuthView from './views/AuthView.vue'
+import BrandMark from './components/BrandMark.vue'
+import DashboardView from './views/DashboardView.vue'
+import InvitationStatusDialog from './components/InvitationStatusDialog.vue'
+import KeysView from './views/KeysView.vue'
+import LobbyView from './views/LobbyView.vue'
+import NotificationCenter from './components/NotificationCenter.vue'
+import OnboardingGuide from './components/OnboardingGuide.vue'
+import PlansView from './views/PlansView.vue'
+import ProfileView from './views/ProfileView.vue'
+import ThemeSwitcher from './components/ThemeSwitcher.vue'
+import UserAvatar from './components/UserAvatar.vue'
+import { darkThemeOverrides, lightThemeOverrides } from './theme'
+import { locationWithoutHash, parseNavigationIntent, type InviteIntent } from './navigationIntent'
+import { isThemeMode, resolveTheme, type ThemeMode } from './themePreference'
+
+type ViewID = 'dashboard' | 'lobby' | 'plans' | 'accounts' | 'keys' | 'profile'
+const nav = [
+  { id: 'dashboard' as const, label: '仪表盘', shortLabel: '仪表盘', icon: LayoutDashboard },
+  { id: 'lobby' as const, label: '探索大厅', shortLabel: '大厅', icon: Compass },
+  { id: 'plans' as const, label: '我的 Plans', shortLabel: 'Plans', icon: Layers3 },
+  { id: 'accounts' as const, label: 'OpenAI 账号', shortLabel: '账号', icon: UsersRound },
+  { id: 'keys' as const, label: 'API Keys', shortLabel: '密钥', icon: KeyRound },
+  { id: 'profile' as const, label: '个人设置', shortLabel: '设置', icon: Settings },
+]
+const user = ref<User | null>(null)
+const accounts = ref<Account[]>([])
+const plans = ref<Plan[]>([])
+const keys = ref<APIKey[]>([])
+const publicPlans = ref<PublicPlan[]>([])
+const dashboard = ref<Dashboard | null>(null)
+const activeView = ref<ViewID>('dashboard')
+const busy = ref(false)
+const bootstrapped = ref(false)
+const keySetupVisible = ref(false)
+const keySetupPlanID = ref('')
+const selectedPlanID = ref('')
+const invitePlanID = ref('')
+const notifications = ref<UserNotification[]>([])
+const unreadNotificationCount = ref(0)
+const notificationLoading = ref(false)
+const readingAllNotifications = ref(false)
+const inviteIntent = ref<InviteIntent | null>(parseNavigationIntent(window.location.hash))
+const invitePreview = ref<InvitePreview | null>(null)
+const invitePreviewLoading = ref(false)
+const inviteAccepting = ref(false)
+const inviteError = ref('')
+const sidebarStorageKey = 'sharesub.sidebar.collapsed'
+const sidebarCollapsed = ref(localStorage.getItem(sidebarStorageKey) === 'true')
+const themeStorageKey = 'sharesub.theme'
+const systemThemeQuery = window.matchMedia('(prefers-color-scheme: dark)')
+const storedTheme = localStorage.getItem(themeStorageKey)
+const themeMode = ref<ThemeMode>(isThemeMode(storedTheme) ? storedTheme : 'system')
+const systemPrefersDark = ref(systemThemeQuery.matches)
+const resolvedTheme = computed(() => resolveTheme(themeMode.value, systemPrefersDark.value))
+const naiveTheme = computed(() => resolvedTheme.value === 'dark' ? darkTheme : null)
+const activeThemeOverrides = computed(() => resolvedTheme.value === 'dark' ? darkThemeOverrides : lightThemeOverrides)
+const usablePlanIDs = computed(() => new Set(plans.value.map(plan => plan.id)))
+const hasUsableKey = computed(() => keys.value.some(key => key.status === 'active' && key.routes.some(route => route.enabled && usablePlanIDs.value.has(route.plan_id))))
+const showOnboarding = computed(() => bootstrapped.value && (plans.value.length === 0 || !hasUsableKey.value))
+const notice = reactive<{ type: 'success' | 'error'; text: string }>({ type: 'success', text: '' })
+let noticeTimer: ReturnType<typeof setTimeout> | undefined
+let notificationTimer: ReturnType<typeof setInterval> | undefined
+let notificationRequestSequence = 0
+watch(themeMode, mode => localStorage.setItem(themeStorageKey, mode), { immediate: true })
+watch(resolvedTheme, theme => { document.documentElement.dataset.theme = theme }, { immediate: true })
+watch(sidebarCollapsed, collapsed => localStorage.setItem(sidebarStorageKey, String(collapsed)))
+
+function updateSystemTheme(event: MediaQueryListEvent) { systemPrefersDark.value = event.matches }
+
+async function onAuthenticated(value: User) {
+  user.value = value
+  bootstrapped.value = false
+  startNotificationPolling()
+  if (inviteIntent.value) await acceptPendingInvite()
+  else await refreshAll()
+  await refreshNotifications()
+}
+
+async function refreshAll() {
+  if (!user.value) return
+  busy.value = true
+  try {
+    ;[dashboard.value, accounts.value, plans.value, keys.value, publicPlans.value] = await Promise.all([
+      api.dashboard(Intl.DateTimeFormat().resolvedOptions().timeZone),
+      api.accounts(),
+      api.plans(),
+      api.keys(),
+      api.publicPlans(),
+    ])
+    bootstrapped.value = true
+  } catch (error) {
+    showMessage('error', error instanceof Error ? error.message : String(error))
+  } finally {
+    busy.value = false
+  }
+}
+
+async function refreshNotifications(reportError = false) {
+  if (!user.value || notificationLoading.value) return
+  const requestUserID = user.value.id
+  const requestSequence = ++notificationRequestSequence
+  notificationLoading.value = true
+  try {
+    const result = await api.notifications()
+    if (requestSequence !== notificationRequestSequence || user.value?.id !== requestUserID) return
+    notifications.value = result.items
+    unreadNotificationCount.value = result.unread_count
+  } catch (error) {
+    if (reportError) showMessage('error', error instanceof Error ? error.message : String(error))
+  } finally {
+    notificationLoading.value = false
+  }
+}
+
+async function markNotificationRead(notification: UserNotification) {
+  const requestUserID = user.value?.id
+  const mutationSequence = ++notificationRequestSequence
+  try {
+    const updated = await api.markNotificationRead(notification.id)
+    if (mutationSequence !== notificationRequestSequence || user.value?.id !== requestUserID) return
+    notifications.value = notifications.value.map(item => item.id === updated.id ? updated : item)
+    unreadNotificationCount.value = notifications.value.filter(item => !item.read_at).length
+  } catch (error) {
+    showMessage('error', error instanceof Error ? error.message : String(error))
+  }
+}
+
+async function markAllNotificationsRead() {
+  const requestUserID = user.value?.id
+  const mutationSequence = ++notificationRequestSequence
+  readingAllNotifications.value = true
+  try {
+    await api.markAllNotificationsRead()
+    if (mutationSequence !== notificationRequestSequence || user.value?.id !== requestUserID) return
+    const readAt = new Date().toISOString()
+    notifications.value = notifications.value.map(item => item.read_at ? item : { ...item, read_at: readAt })
+    unreadNotificationCount.value = 0
+  } catch (error) {
+    showMessage('error', error instanceof Error ? error.message : String(error))
+  } finally {
+    readingAllNotifications.value = false
+  }
+}
+
+async function openNotification(notification: UserNotification) {
+  if (notification.resource_type === 'plan') {
+    await refreshAll()
+    selectedPlanID.value = ''
+    await nextTick()
+    selectedPlanID.value = notification.resource_id
+    activeView.value = 'plans'
+    if (notification.type === 'application_approved') openKeySetup(notification.resource_id)
+  } else if (notification.resource_type === 'account') activeView.value = 'accounts'
+  else if (notification.resource_type === 'api_key') activeView.value = 'keys'
+}
+
+function startNotificationPolling() {
+  clearInterval(notificationTimer)
+  notificationTimer = setInterval(() => { void refreshNotifications() }, 60_000)
+}
+
+async function loadInvitePreview() {
+  if (!inviteIntent.value || invitePreviewLoading.value) return
+  invitePreviewLoading.value = true
+  inviteError.value = ''
+  try {
+    invitePreview.value = await api.invitePreview(inviteIntent.value.token)
+  } catch (error) {
+    invitePreview.value = null
+    inviteError.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    invitePreviewLoading.value = false
+  }
+}
+
+async function acceptPendingInvite() {
+  if (!user.value || !inviteIntent.value || inviteAccepting.value) return
+  inviteAccepting.value = true
+  inviteError.value = ''
+  try {
+    const member = await api.acceptInvite(inviteIntent.value.token)
+    clearInviteIntent()
+    await Promise.all([refreshAll(), refreshNotifications()])
+    selectedPlanID.value = member.plan_id
+    activeView.value = 'plans'
+    openKeySetup(member.plan_id)
+    showMessage('success', '已加入 Plan，接下来配置你的 API Key')
+  } catch (error) {
+    inviteError.value = error instanceof Error ? error.message : String(error)
+    await refreshAll()
+  } finally {
+    inviteAccepting.value = false
+  }
+}
+
+async function syncNavigationIntent() {
+  const nextIntent = parseNavigationIntent(window.location.hash)
+  if (nextIntent?.token === inviteIntent.value?.token) return
+  inviteIntent.value = nextIntent
+  invitePreview.value = null
+  inviteError.value = ''
+  if (!nextIntent) return
+  await loadInvitePreview()
+  if (user.value) await acceptPendingInvite()
+}
+
+function clearInviteIntent() {
+  window.history.replaceState(null, '', locationWithoutHash(window.location.pathname, window.location.search))
+  inviteIntent.value = null
+  invitePreview.value = null
+  inviteError.value = ''
+}
+
+function discardInvite() { clearInviteIntent() }
+async function switchInviteAccount() { inviteError.value = ''; await logout(); await loadInvitePreview() }
+function openPlanInvite(planID: string) { selectedPlanID.value = ''; invitePlanID.value = planID; activeView.value = 'plans' }
+function openKeySetup(planID: string) { keySetupPlanID.value = planID; keySetupVisible.value = true }
+function onUserUpdated(value: User) {
+  user.value = value
+  publicPlans.value = publicPlans.value.map(item => item.plan.owner_user_id === value.id
+    ? { ...item, owner_username: value.username, owner_avatar_url: value.avatar_url }
+    : item)
+}
+function showMessage(type: 'success' | 'error', text: string) { notice.type = type; notice.text = text; clearTimeout(noticeTimer); noticeTimer = setTimeout(() => { notice.text = '' }, 5000) }
+
+async function logout() {
+  try { await api.logout() } finally {
+    notificationRequestSequence += 1
+    clearSessionToken()
+    clearInterval(notificationTimer)
+    user.value = null
+    dashboard.value = null
+    accounts.value = []
+    plans.value = []
+    keys.value = []
+    publicPlans.value = []
+    selectedPlanID.value = ''
+    invitePlanID.value = ''
+    notifications.value = []
+    unreadNotificationCount.value = 0
+    bootstrapped.value = false
+    activeView.value = 'dashboard'
+  }
+}
+
+onMounted(async () => {
+  systemThemeQuery.addEventListener('change', updateSystemTheme)
+  window.addEventListener('hashchange', syncNavigationIntent)
+  if (inviteIntent.value) await loadInvitePreview()
+  if (!sessionToken()) return
+  try {
+    user.value = await api.me()
+  } catch {
+    clearSessionToken()
+    user.value = null
+    return
+  }
+  startNotificationPolling()
+  if (inviteIntent.value) await acceptPendingInvite()
+  else await refreshAll()
+  await refreshNotifications()
+})
+onBeforeUnmount(() => {
+  systemThemeQuery.removeEventListener('change', updateSystemTheme)
+  window.removeEventListener('hashchange', syncNavigationIntent)
+  clearTimeout(noticeTimer)
+  clearInterval(notificationTimer)
+})
+</script>

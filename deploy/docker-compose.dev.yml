@@ -1,0 +1,6 @@
+services:
+  postgres:
+    # Native backend development needs host access. Production must use only
+    # docker-compose.yml so PostgreSQL stays private to the Compose network.
+    ports:
+      - "${SHARESUB_DATABASE_BIND_HOST:-127.0.0.1}:${SHARESUB_DATABASE_PORT:-5432}:5432"

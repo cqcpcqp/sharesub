@@ -1,0 +1,44 @@
+name: sharesub
+
+services:
+  api:
+    build: ../backend
+    restart: unless-stopped
+    environment:
+      SHARESUB_HTTP_ADDR: 0.0.0.0:8080
+      SHARESUB_DATABASE_URL: postgres://sharesub:sharesub@postgres:5432/sharesub?sslmode=disable
+      SHARESUB_PUBLIC_URL: ${SHARESUB_DOCKER_PUBLIC_URL:-http://127.0.0.1:8081}
+      SHARESUB_OAUTH_REDIRECT_URI: ${SHARESUB_OAUTH_REDIRECT_URI:-http://localhost:1455/auth/callback}
+      SHARESUB_OUTBOUND_PROXY: ${SHARESUB_OUTBOUND_PROXY:-}
+      SHARESUB_TOKEN_PEPPER: ${SHARESUB_TOKEN_PEPPER:?SHARESUB_TOKEN_PEPPER is required}
+      SHARESUB_CREDENTIAL_KEY: ${SHARESUB_CREDENTIAL_KEY:?SHARESUB_CREDENTIAL_KEY is required}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    build: ../frontend
+    restart: unless-stopped
+    ports:
+      - "${SHARESUB_WEB_BIND_HOST:-127.0.0.1}:${SHARESUB_WEB_PORT:-8081}:80"
+    depends_on:
+      - api
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: sharesub
+      POSTGRES_PASSWORD: sharesub
+      POSTGRES_DB: sharesub
+    volumes:
+      - sharesub_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sharesub -d sharesub"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  sharesub_postgres:
+    # Preserve the volume created by releases whose implicit project name was "deploy".
+    name: deploy_sharesub_postgres

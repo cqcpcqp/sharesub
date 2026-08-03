@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+.DS_Store
+.pnpm-store/
+backend/bin/
+backend/coverage.out
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+.run/
