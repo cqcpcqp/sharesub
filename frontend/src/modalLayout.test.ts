@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 describe('modal layout', () => {
   it('keeps scrolling on the modal overlay instead of the dialog surface', () => {
-    const styles = readFileSync(new URL('./style.css', import.meta.url), 'utf8')
+    const styles = readFileSync(new URL('./featureStyles.css', import.meta.url), 'utf8')
     const modalRule = styles.match(/(?:^|\n)\.modal \{([^}]+)\}/)?.[1]
 
     expect(modalRule).toBeDefined()

@@ -85,3 +85,15 @@ OpenAI 会在 Codex 响应头中返回主窗口和次窗口的使用信息。Sha
 管理请求通过 `ss_session_...` 登录 Token 鉴权，由 `/api` 路由处理。Codex 请求通过 `sk-sharesub-...` 用户 API Key 鉴权，由 `/v1/responses`、`/responses` 或 `/backend-api/codex/responses` 进入网关；三个前缀都支持 `/compact`。
 
 Docker 部署时，外部请求先到 Web 容器中的 Nginx。静态页面直接返回，`/api/`、`/v1/`、`/responses` 和 `/backend-api/` 转发到 API 容器。网关路径关闭代理缓冲，以支持流式响应。
+
+## 代码组织
+
+后端保持 `domain -> application -> infrastructure` 的依赖方向：
+
+- `internal/domain` 定义稳定的业务模型和错误。
+- `internal/application` 按身份与账号、Plan、网关访问拆分用例；`ports.go` 是持久化与 OpenAI 能力边界。
+- `internal/postgres` 按账号、Plan 查询、Plan 协作、Key 与指标组织 SQL；跨多表生命周期事务单独放在 `lifecycle.go`。
+- `internal/httpapi` 的 `server.go` 只负责服务构造和路由总览，管理接口、网关接口和 HTTP 通用能力分别实现。
+- `internal/openai` 将请求准备与发送、响应复制与计量、OAuth 分开。
+
+前端页面只负责组合 UI。跨多个模板区域共享的状态和命令放在同目录 composable 中；页面专属样式使用同名 CSS 文件，全局基础样式与业务功能样式分开。API 数据直接使用 `types.ts` 中与后端契约一致的固定类型，不在视图层转换或猜测返回结构。
