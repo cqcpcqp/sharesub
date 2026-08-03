@@ -2,7 +2,7 @@ name: sharesub
 
 services:
   api:
-    build: ../backend
+    image: ${SHARESUB_API_IMAGE:-ghcr.io/cqcpcqp/sharesub-api:main}
     restart: unless-stopped
     environment:
       SHARESUB_HTTP_ADDR: 0.0.0.0:8080
@@ -17,7 +17,7 @@ services:
         condition: service_healthy
 
   web:
-    build: ../frontend
+    image: ${SHARESUB_WEB_IMAGE:-ghcr.io/cqcpcqp/sharesub-web:main}
     restart: unless-stopped
     ports:
       - "${SHARESUB_WEB_BIND_HOST:-127.0.0.1}:${SHARESUB_WEB_PORT:-8081}:80"

@@ -58,7 +58,8 @@ SHARESUB_CREDENTIAL_KEY=第二段随机值
 两个值必须分别生成，Base64 解码后必须恰好为 32 字节。设置完成后启动全部服务：
 
 ```bash
-docker compose --env-file .env -f deploy/docker-compose.yml up -d --build
+docker compose --env-file .env -f deploy/docker-compose.yml pull
+docker compose --env-file .env -f deploy/docker-compose.yml up -d --no-build
 docker compose --env-file .env -f deploy/docker-compose.yml ps
 ```
 
@@ -242,10 +243,13 @@ SHARESUB_CREDENTIAL_KEY=独立生成的第二段随机值
 ### 2. 启动服务
 
 ```bash
-docker compose --env-file .env -f deploy/docker-compose.yml up -d --build
+docker compose --env-file .env -f deploy/docker-compose.yml pull
+docker compose --env-file .env -f deploy/docker-compose.yml up -d --no-build
 docker compose --env-file .env -f deploy/docker-compose.yml ps
 docker compose --env-file .env -f deploy/docker-compose.yml logs -f api web
 ```
+
+生产 Compose 只使用 GHCR 中已经构建好的镜像，不在服务器编译 Go 或前端资源。私有镜像需要先在服务器执行 `docker login ghcr.io`；完整的 GitHub Actions、GHCR 和服务器配置见 [部署工作流](docs/deployment.md)。
 
 当前 Compose 将 Web 仅绑定到服务器的 `127.0.0.1:8081`，并且不把 PostgreSQL 映射到宿主机。生产环境应使用宿主机上的 Nginx 或 Caddy 将独立域名反向代理到 `127.0.0.1:8081`，并配置 HTTPS。
 
@@ -283,7 +287,8 @@ docker inspect deploy-postgres-1 --format '{{ index .Config.Labels "com.docker.c
 
 ```bash
 docker compose -p deploy --env-file .env -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml down
-docker compose --env-file .env -f deploy/docker-compose.yml up -d --build
+docker compose --env-file .env -f deploy/docker-compose.yml pull
+docker compose --env-file .env -f deploy/docker-compose.yml up -d --no-build
 ```
 
 如果 `deploy` 属于 sub2api，不要执行第一条停止命令。数据库卷固定使用原有唯一名称 `deploy_sharesub_postgres`，切换项目名不会创建空数据库卷。本地 `make dev` 也会检测旧版 ShareSub 容器并拒绝同时启动两个 PostgreSQL 实例。
@@ -328,13 +333,15 @@ server {
 
 ### 4. 升级与回滚准备
 
-生产环境固定为 `share.underelay.com`、SSH 别名固定为 `underelay` 时，推荐在本机从干净且已经推送到 `origin/main` 的 `main` 分支执行一键发布：
+推荐通过 GitHub Actions 手动运行 `Deploy production`。发布前，当前 `main` 的 `CI and images` 必须已经成功，将两个带完整 commit SHA 的镜像推送到 GHCR。GitHub `production` Environment 可以配置人工审批和生产 SSH Secrets。
+
+生产环境固定为 `share.underelay.com`、SSH 别名固定为 `underelay` 时，也可以在本机从干净且已经推送的 `main` 执行同一发布脚本：
 
 ```bash
 make deploy
 ```
 
-发布脚本会运行完整测试、使用 `git archive` 同步当前提交、依次构建 API 与 Web 镜像、备份生产数据库、更新容器并验证公网健康接口。构建或备份失败时不会切换当前容器；不包含迁移的版本健康检查失败时会自动恢复上一组镜像。仓库中的 Nginx 配置发生变化时，脚本会停止并要求先人工安装配置。
+发布脚本会运行完整测试、同步当前提交、拉取对应完整 commit SHA 的 API/Web 镜像、保留当前运行镜像用于回滚、备份生产数据库、更新容器并验证公网健康接口。服务器不会再执行镜像构建。拉取或备份失败时不会切换当前容器；不包含迁移的版本健康检查失败时会自动恢复上一组镜像。仓库中的 Nginx 配置发生变化时，脚本会停止并要求先人工安装配置。
 
 常用生产管理命令：
 
@@ -350,16 +357,7 @@ make deploy-backup
 SHARESUB_DEPLOY_ALLOW_MIGRATIONS=1 make deploy
 ```
 
-迁移版本不会自动恢复旧数据库；发布前生成的压缩备份会保存在服务器 `/home/cqcpcqp/share2api/backups/`。手工升级时也必须先备份数据库，再拉取新代码并重新构建：
-
-```bash
-docker compose --env-file .env -f deploy/docker-compose.yml exec -T postgres \
-  pg_dump -U sharesub -d sharesub -Fc > sharesub-$(date +%Y%m%d-%H%M%S).dump
-
-git pull
-docker compose --env-file .env -f deploy/docker-compose.yml up -d --build
-docker compose --env-file .env -f deploy/docker-compose.yml ps
-```
+迁移版本不会自动恢复旧数据库；发布前生成的压缩备份会保存在服务器 `/home/cqcpcqp/share2api/backups/`。完整的新旧工作流、首次配置、回滚边界和机器资源建议见 [部署工作流](docs/deployment.md)。升级应使用 GitHub Actions 或 `make deploy`，不要绕过迁移确认、备份、不可变镜像和健康检查直接运行 Compose。
 
 后端进程启动时会自动应用新增迁移。
 
