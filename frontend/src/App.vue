@@ -1,16 +1,21 @@
 <template>
   <NConfigProvider :theme="naiveTheme" :theme-overrides="activeThemeOverrides">
-    <ThemeSwitcher v-if="!user" v-model="themeMode" class="auth-theme-switcher" />
-    <AuthView
-      v-if="!user"
-      :invite-pending="Boolean(inviteIntent)"
-      :invitation="invitePreview"
-      :invite-loading="invitePreviewLoading"
-      :invite-error="inviteError"
-      @authenticated="onAuthenticated"
-      @retry-invite="loadInvitePreview"
-      @discard-invite="discardInvite"
-    />
+    <main v-if="authChecking" class="app-bootstrap" aria-label="正在恢复登录状态">
+      <BrandMark :size="42" />
+      <NSpin size="small" />
+    </main>
+    <template v-else-if="!user">
+      <ThemeSwitcher v-model="themeMode" class="auth-theme-switcher" />
+      <AuthView
+        :invite-pending="Boolean(inviteIntent)"
+        :invitation="invitePreview"
+        :invite-loading="invitePreviewLoading"
+        :invite-error="inviteError"
+        @authenticated="onAuthenticated"
+        @retry-invite="loadInvitePreview"
+        @discard-invite="discardInvite"
+      />
+    </template>
     <div v-else class="app-shell" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
       <aside class="sidebar">
         <NTooltip placement="right">
@@ -32,7 +37,7 @@
         <nav aria-label="主导航">
           <NTooltip v-for="item in nav" :key="item.id" placement="right" :disabled="!sidebarCollapsed">
             <template #trigger>
-              <NButton quaternary :class="{ active: activeView === item.id }" :aria-current="activeView === item.id ? 'page' : undefined" @click="activeView = item.id">
+              <NButton quaternary :class="{ active: activeView === item.id }" :aria-current="activeView === item.id ? 'page' : undefined" @click="navigateToView(item.id)">
                 <span class="nav-icon"><component :is="item.icon" :size="18" /></span><span class="nav-text">{{ item.label }}</span><span class="nav-text-mobile">{{ item.shortLabel }}</span>
               </NButton>
             </template>
@@ -42,7 +47,7 @@
         <div class="profile-menu">
           <NTooltip placement="right" :disabled="!sidebarCollapsed">
             <template #trigger>
-              <NButton quaternary class="profile-button" :class="{ active: activeView === 'profile' }" @click="activeView = 'profile'">
+              <NButton quaternary class="profile-button" :class="{ active: activeView === 'profile' }" @click="navigateToView('profile')">
                 <UserAvatar class="user-avatar" :size="36" :username="user.username" :src="user.avatar_url" />
                 <span class="profile-copy"><strong>{{ user.username }}</strong><small>{{ user.email }}</small></span>
                 <ChevronRight class="profile-chevron" :size="16" />
@@ -74,7 +79,7 @@
         </header>
         <div class="workspace-body">
           <Transition name="toast"><NAlert v-if="notice.text" class="notice" :type="notice.type" closable @close="notice.text = ''">{{ notice.text }}</NAlert></Transition>
-          <OnboardingGuide v-if="activeView === 'dashboard' && showOnboarding" :accounts="accounts" :plans="plans" :keys="keys" :user="user" @navigate="activeView = $event" @invite="openPlanInvite" @setup-key="openKeySetup" />
+          <OnboardingGuide v-if="activeView === 'dashboard' && showOnboarding" :accounts="accounts" :plans="plans" :keys="keys" :user="user" @navigate="navigateToView" @invite="openPlanInvite" @setup-key="openKeySetup" />
           <DashboardView v-else-if="activeView === 'dashboard'" :dashboard="dashboard" :loading="busy" :theme="resolvedTheme" />
           <LobbyView v-else-if="activeView === 'lobby'" :plans="publicPlans" :user="user" @changed="refreshAll" @message="showMessage" />
           <PlansView v-else-if="activeView === 'plans'" :accounts="accounts" :plans="plans" :user="user" :initial-plan-id="selectedPlanID" :invite-plan-id="invitePlanID" @invite-opened="invitePlanID = ''" @changed="refreshAll" @message="showMessage" />
@@ -99,7 +104,7 @@
 </template>
 
 <script setup lang="ts">
-import { darkTheme, NAlert, NButton, NConfigProvider, NTooltip } from 'naive-ui'
+import { darkTheme, NAlert, NButton, NConfigProvider, NSpin, NTooltip } from 'naive-ui'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ChevronRight, Compass, KeyRound, Layers3, LayoutDashboard, LogOut, PanelLeftClose, PanelLeftOpen, Settings, UsersRound } from 'lucide-vue-next'
 import { api, clearSessionToken, sessionToken } from './api'
@@ -121,8 +126,8 @@ import UserAvatar from './components/UserAvatar.vue'
 import { darkThemeOverrides, lightThemeOverrides } from './theme'
 import { locationWithoutHash, parseNavigationIntent, type InviteIntent } from './navigationIntent'
 import { isThemeMode, resolveTheme, type ThemeMode } from './themePreference'
+import { appRoutePath, parseAppRoute, type AppRoute, type ViewID } from './appRoutes'
 
-type ViewID = 'dashboard' | 'lobby' | 'plans' | 'accounts' | 'keys' | 'profile'
 const nav = [
   { id: 'dashboard' as const, label: '仪表盘', shortLabel: '仪表盘', icon: LayoutDashboard },
   { id: 'lobby' as const, label: '探索大厅', shortLabel: '大厅', icon: Compass },
@@ -137,7 +142,9 @@ const plans = ref<Plan[]>([])
 const keys = ref<APIKey[]>([])
 const publicPlans = ref<PublicPlan[]>([])
 const dashboard = ref<Dashboard | null>(null)
-const activeView = ref<ViewID>('dashboard')
+const initialRoute = parseAppRoute(window.location.pathname)
+const activeView = ref<ViewID>(initialRoute?.kind === 'view' ? initialRoute.view : 'dashboard')
+const authChecking = ref(true)
 const busy = ref(false)
 const bootstrapped = ref(false)
 const keySetupVisible = ref(false)
@@ -181,8 +188,34 @@ async function onAuthenticated(value: User) {
   bootstrapped.value = false
   startNotificationPolling()
   if (inviteIntent.value) await acceptPendingInvite()
-  else await refreshAll()
+  else {
+    navigateToView('dashboard', true)
+    await refreshAll()
+  }
   await refreshNotifications()
+}
+
+function updateRoute(route: AppRoute, replace = false) {
+  const path = appRoutePath(route)
+  if (window.location.pathname === path) return
+  const location = `${path}${window.location.search}${window.location.hash}`
+  if (replace) window.history.replaceState(null, '', location)
+  else window.history.pushState(null, '', location)
+}
+
+function navigateToView(view: ViewID, replace = false) {
+  activeView.value = view
+  updateRoute({ kind: 'view', view }, replace)
+}
+
+function navigateToLogin(replace = false) { updateRoute({ kind: 'login' }, replace) }
+
+function syncPathRoute() {
+  const route = parseAppRoute(window.location.pathname)
+  if (user.value) {
+    if (route?.kind === 'view') activeView.value = route.view
+    else navigateToView('dashboard', true)
+  } else if (route?.kind !== 'login') navigateToLogin(true)
 }
 
 async function refreshAll() {
@@ -257,10 +290,10 @@ async function openNotification(notification: UserNotification) {
     selectedPlanID.value = ''
     await nextTick()
     selectedPlanID.value = notification.resource_id
-    activeView.value = 'plans'
+    navigateToView('plans')
     if (notification.type === 'application_approved') openKeySetup(notification.resource_id)
-  } else if (notification.resource_type === 'account') activeView.value = 'accounts'
-  else if (notification.resource_type === 'api_key') activeView.value = 'keys'
+  } else if (notification.resource_type === 'account') navigateToView('accounts')
+  else if (notification.resource_type === 'api_key') navigateToView('keys')
 }
 
 function startNotificationPolling() {
@@ -291,7 +324,7 @@ async function acceptPendingInvite() {
     clearInviteIntent()
     await Promise.all([refreshAll(), refreshNotifications()])
     selectedPlanID.value = member.plan_id
-    activeView.value = 'plans'
+    navigateToView('plans')
     openKeySetup(member.plan_id)
     showMessage('success', '已加入 Plan，接下来配置你的 API Key')
   } catch (error) {
@@ -322,7 +355,7 @@ function clearInviteIntent() {
 
 function discardInvite() { clearInviteIntent() }
 async function switchInviteAccount() { inviteError.value = ''; await logout(); await loadInvitePreview() }
-function openPlanInvite(planID: string) { selectedPlanID.value = ''; invitePlanID.value = planID; activeView.value = 'plans' }
+function openPlanInvite(planID: string) { selectedPlanID.value = ''; invitePlanID.value = planID; navigateToView('plans') }
 function openKeySetup(planID: string) { keySetupPlanID.value = planID; keySetupVisible.value = true }
 function onUserUpdated(value: User) {
   user.value = value
@@ -349,21 +382,31 @@ async function logout() {
     unreadNotificationCount.value = 0
     bootstrapped.value = false
     activeView.value = 'dashboard'
+    navigateToLogin(true)
   }
 }
 
 onMounted(async () => {
   systemThemeQuery.addEventListener('change', updateSystemTheme)
   window.addEventListener('hashchange', syncNavigationIntent)
+  window.addEventListener('popstate', syncPathRoute)
   if (inviteIntent.value) await loadInvitePreview()
-  if (!sessionToken()) return
+  if (!sessionToken()) {
+    syncPathRoute()
+    authChecking.value = false
+    return
+  }
   try {
     user.value = await api.me()
   } catch {
     clearSessionToken()
     user.value = null
+    syncPathRoute()
+    authChecking.value = false
     return
   }
+  syncPathRoute()
+  authChecking.value = false
   startNotificationPolling()
   if (inviteIntent.value) await acceptPendingInvite()
   else await refreshAll()
@@ -372,6 +415,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   systemThemeQuery.removeEventListener('change', updateSystemTheme)
   window.removeEventListener('hashchange', syncNavigationIntent)
+  window.removeEventListener('popstate', syncPathRoute)
   clearTimeout(noticeTimer)
   clearInterval(notificationTimer)
 })

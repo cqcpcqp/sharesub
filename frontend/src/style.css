@@ -117,6 +117,7 @@ code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 11px; }
 .icon-button.n-button { width: 40px; min-width: 40px; padding: 0; }
 .row-actions { display: flex; align-items: center; gap: 7px; }
 .auth-theme-switcher { position: fixed; z-index: 12; top: 24px; right: 24px; }
+.app-bootstrap { min-height: 100vh; display: grid; place-content: center; justify-items: center; gap: 18px; background: var(--canvas); }
 .theme-option-label { min-width: 112px; display: flex; align-items: center; justify-content: space-between; gap: 18px; }
 
 .brand-logo { display: block; flex: 0 0 auto; border-radius: 8px; box-shadow: 0 5px 14px rgba(185, 61, 43, .18); }
