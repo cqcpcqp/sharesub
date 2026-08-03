@@ -148,7 +148,7 @@
     :wide="true"
     @close="editing = null"
   >
-    <AccountConfigFields v-model="editConfig" :show-status="true" />
+    <AccountConfigFields v-model="editConfig" :show-status="true" :policy-user-options="policyUserOptions" />
     <template #footer>
       <NButton @click="editing = null">取消</NButton>
       <NButton type="primary" :loading="saving" :disabled="!editConfig.name.trim()" @click="saveEdit">
@@ -161,17 +161,18 @@
 
 <script setup lang="ts">
 import { NAlert, NButton } from 'naive-ui'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { Bot, CalendarClock, Check, ExternalLink, Gauge, Network, Pencil, Plus, RotateCw, Save, TimerReset } from 'lucide-vue-next'
 import { api, parseOAuthCallback } from '../api'
-import type { Account, AccountConfigInput, OAuthStart } from '../types'
+import type { Account, AccountConfigInput, Member, OAuthStart, Plan } from '../types'
 import AccountConfigFields from '../components/AccountConfigFields.vue'
 import AppInput from '../components/AppInput.vue'
 import EmptyState from '../components/EmptyState.vue'
 import ModalShell from '../components/ModalShell.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 
-defineProps<{ accounts: Account[] }>()
+const props = withDefaults(defineProps<{ accounts: Account[]; plans?: Plan[] }>(), { plans: () => [] })
+const accounts = computed(() => props.accounts)
 const emit = defineEmits<{ changed: []; message: [type: 'success' | 'error', text: string] }>()
 const oauth = ref<OAuthStart | null>(null)
 const callback = ref('')
@@ -186,6 +187,8 @@ const completing = ref(false)
 const saving = ref(false)
 const createConfig = ref<AccountConfigInput>(emptyConfig())
 const editConfig = ref<AccountConfigInput>(emptyConfig())
+const policyMembers = ref<Member[]>([])
+const policyUserOptions = computed(() => policyMembers.value.map(member => ({ label: member.email ? `${member.username} · ${member.email}` : member.username, value: member.user_id })))
 
 function updateCallback(value: string) { callback.value = value }
 function updateReauthorizeCallback(value: string) { reauthorizeCallback.value = value }
@@ -258,15 +261,26 @@ async function completeReauthorize() {
   }
 }
 
-function openEdit(account: Account) {
+async function openEdit(account: Account) {
   editing.value = account
+  policyMembers.value = []
   editConfig.value = {
     name: account.name,
     notes: account.notes,
     proxy_url: account.proxy_url,
     max_concurrency: account.max_concurrency,
     rpm_limit: account.rpm_limit,
+    fast_policy: account.fast_policy.map(rule => ({ ...rule, user_ids: [...rule.user_ids], model_whitelist: [...rule.model_whitelist] })),
     status: account.status,
+  }
+  const plan = props.plans.find(candidate => candidate.account_id === account.id)
+  if (plan) {
+    try {
+      const members = (await api.plan(plan.id)).members
+      if (editing.value?.id === account.id) policyMembers.value = members
+    } catch (error) {
+      notifyError(error)
+    }
   }
 }
 
@@ -286,7 +300,7 @@ async function saveEdit() {
 }
 
 function emptyConfig(): AccountConfigInput {
-  return { name: '', notes: '', proxy_url: '', max_concurrency: 0, rpm_limit: 0, status: 'active' }
+  return { name: '', notes: '', proxy_url: '', max_concurrency: 0, rpm_limit: 0, fast_policy: [], status: 'active' }
 }
 
 function notifyError(value: unknown) {

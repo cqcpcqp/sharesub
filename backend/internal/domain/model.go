@@ -40,23 +40,34 @@ type UserAvatar struct {
 }
 
 type Account struct {
-	ID                     string    `json:"id"`
-	OwnerUserID            string    `json:"owner_user_id"`
-	Name                   string    `json:"name"`
-	Notes                  string    `json:"notes"`
-	Email                  string    `json:"email"`
-	ChatGPTAccountID       string    `json:"chatgpt_account_id"`
-	PlanType               string    `json:"plan_type"`
-	AccessTokenCiphertext  []byte    `json:"-"`
-	RefreshTokenCiphertext []byte    `json:"-"`
-	ProxyURLCiphertext     []byte    `json:"-"`
-	ProxyURL               string    `json:"proxy_url"`
-	MaxConcurrency         int       `json:"max_concurrency"`
-	RPMLimit               int       `json:"rpm_limit"`
-	TokenExpiresAt         time.Time `json:"token_expires_at"`
-	Status                 string    `json:"status"`
-	LastError              string    `json:"last_error,omitempty"`
-	CreatedAt              time.Time `json:"created_at"`
+	ID                     string           `json:"id"`
+	OwnerUserID            string           `json:"owner_user_id"`
+	Name                   string           `json:"name"`
+	Notes                  string           `json:"notes"`
+	Email                  string           `json:"email"`
+	ChatGPTAccountID       string           `json:"chatgpt_account_id"`
+	PlanType               string           `json:"plan_type"`
+	AccessTokenCiphertext  []byte           `json:"-"`
+	RefreshTokenCiphertext []byte           `json:"-"`
+	ProxyURLCiphertext     []byte           `json:"-"`
+	ProxyURL               string           `json:"proxy_url"`
+	MaxConcurrency         int              `json:"max_concurrency"`
+	RPMLimit               int              `json:"rpm_limit"`
+	FastPolicy             []FastPolicyRule `json:"fast_policy"`
+	TokenExpiresAt         time.Time        `json:"token_expires_at"`
+	Status                 string           `json:"status"`
+	LastError              string           `json:"last_error,omitempty"`
+	CreatedAt              time.Time        `json:"created_at"`
+}
+
+type FastPolicyRule struct {
+	ServiceTier          string   `json:"service_tier"`
+	Action               string   `json:"action"`
+	UserIDs              []string `json:"user_ids"`
+	ErrorMessage         string   `json:"error_message"`
+	ModelWhitelist       []string `json:"model_whitelist"`
+	FallbackAction       string   `json:"fallback_action"`
+	FallbackErrorMessage string   `json:"fallback_error_message"`
 }
 
 type Plan struct {

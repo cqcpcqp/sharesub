@@ -162,19 +162,22 @@ func (s *Store) ConsumeOAuthFlow(ctx context.Context, stateHash []byte, now time
 }
 
 func (s *Store) UpsertAccount(ctx context.Context, account domain.Account) (domain.Account, error) {
+	if account.FastPolicy == nil {
+		account.FastPolicy = make([]domain.FastPolicyRule, 0)
+	}
 	var out domain.Account
 	err := s.pool.QueryRow(ctx, `
-		INSERT INTO openai_accounts(id,owner_user_id,name,notes,email,chatgpt_account_id,plan_type,access_token_ciphertext,refresh_token_ciphertext,proxy_url_ciphertext,max_concurrency,rpm_limit,token_expires_at,status,created_at,updated_at)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$15)
-		ON CONFLICT(owner_user_id,chatgpt_account_id) DO UPDATE SET name=EXCLUDED.name,notes=EXCLUDED.notes,email=EXCLUDED.email,plan_type=EXCLUDED.plan_type,access_token_ciphertext=EXCLUDED.access_token_ciphertext,refresh_token_ciphertext=EXCLUDED.refresh_token_ciphertext,proxy_url_ciphertext=EXCLUDED.proxy_url_ciphertext,max_concurrency=EXCLUDED.max_concurrency,rpm_limit=EXCLUDED.rpm_limit,token_expires_at=EXCLUDED.token_expires_at,status='active',last_error='',updated_at=now()
-		RETURNING id,owner_user_id,name,notes,email,chatgpt_account_id,plan_type,access_token_ciphertext,refresh_token_ciphertext,proxy_url_ciphertext,max_concurrency,rpm_limit,token_expires_at,status,last_error,created_at`,
-		account.ID, account.OwnerUserID, account.Name, account.Notes, account.Email, account.ChatGPTAccountID, account.PlanType, account.AccessTokenCiphertext, account.RefreshTokenCiphertext, account.ProxyURLCiphertext, account.MaxConcurrency, account.RPMLimit, account.TokenExpiresAt, account.Status, account.CreatedAt,
-	).Scan(&out.ID, &out.OwnerUserID, &out.Name, &out.Notes, &out.Email, &out.ChatGPTAccountID, &out.PlanType, &out.AccessTokenCiphertext, &out.RefreshTokenCiphertext, &out.ProxyURLCiphertext, &out.MaxConcurrency, &out.RPMLimit, &out.TokenExpiresAt, &out.Status, &out.LastError, &out.CreatedAt)
+		INSERT INTO openai_accounts(id,owner_user_id,name,notes,email,chatgpt_account_id,plan_type,access_token_ciphertext,refresh_token_ciphertext,proxy_url_ciphertext,max_concurrency,rpm_limit,fast_policy,token_expires_at,status,created_at,updated_at)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$16)
+		ON CONFLICT(owner_user_id,chatgpt_account_id) DO UPDATE SET name=EXCLUDED.name,notes=EXCLUDED.notes,email=EXCLUDED.email,plan_type=EXCLUDED.plan_type,access_token_ciphertext=EXCLUDED.access_token_ciphertext,refresh_token_ciphertext=EXCLUDED.refresh_token_ciphertext,proxy_url_ciphertext=EXCLUDED.proxy_url_ciphertext,max_concurrency=EXCLUDED.max_concurrency,rpm_limit=EXCLUDED.rpm_limit,fast_policy=EXCLUDED.fast_policy,token_expires_at=EXCLUDED.token_expires_at,status='active',last_error='',updated_at=now()
+		RETURNING id,owner_user_id,name,notes,email,chatgpt_account_id,plan_type,access_token_ciphertext,refresh_token_ciphertext,proxy_url_ciphertext,max_concurrency,rpm_limit,fast_policy,token_expires_at,status,last_error,created_at`,
+		account.ID, account.OwnerUserID, account.Name, account.Notes, account.Email, account.ChatGPTAccountID, account.PlanType, account.AccessTokenCiphertext, account.RefreshTokenCiphertext, account.ProxyURLCiphertext, account.MaxConcurrency, account.RPMLimit, account.FastPolicy, account.TokenExpiresAt, account.Status, account.CreatedAt,
+	).Scan(&out.ID, &out.OwnerUserID, &out.Name, &out.Notes, &out.Email, &out.ChatGPTAccountID, &out.PlanType, &out.AccessTokenCiphertext, &out.RefreshTokenCiphertext, &out.ProxyURLCiphertext, &out.MaxConcurrency, &out.RPMLimit, &out.FastPolicy, &out.TokenExpiresAt, &out.Status, &out.LastError, &out.CreatedAt)
 	return out, mapError(err)
 }
 
 func (s *Store) ListAccounts(ctx context.Context, userID string) ([]domain.Account, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id,owner_user_id,name,notes,email,chatgpt_account_id,plan_type,proxy_url_ciphertext,max_concurrency,rpm_limit,token_expires_at,status,last_error,created_at FROM openai_accounts WHERE owner_user_id=$1 ORDER BY created_at DESC`, userID)
+	rows, err := s.pool.Query(ctx, `SELECT id,owner_user_id,name,notes,email,chatgpt_account_id,plan_type,proxy_url_ciphertext,max_concurrency,rpm_limit,fast_policy,token_expires_at,status,last_error,created_at FROM openai_accounts WHERE owner_user_id=$1 ORDER BY created_at DESC`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -182,7 +185,7 @@ func (s *Store) ListAccounts(ctx context.Context, userID string) ([]domain.Accou
 	out := make([]domain.Account, 0)
 	for rows.Next() {
 		var a domain.Account
-		if err := rows.Scan(&a.ID, &a.OwnerUserID, &a.Name, &a.Notes, &a.Email, &a.ChatGPTAccountID, &a.PlanType, &a.ProxyURLCiphertext, &a.MaxConcurrency, &a.RPMLimit, &a.TokenExpiresAt, &a.Status, &a.LastError, &a.CreatedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.OwnerUserID, &a.Name, &a.Notes, &a.Email, &a.ChatGPTAccountID, &a.PlanType, &a.ProxyURLCiphertext, &a.MaxConcurrency, &a.RPMLimit, &a.FastPolicy, &a.TokenExpiresAt, &a.Status, &a.LastError, &a.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, a)
@@ -192,13 +195,16 @@ func (s *Store) ListAccounts(ctx context.Context, userID string) ([]domain.Accou
 
 func (s *Store) AccountByID(ctx context.Context, id string) (domain.Account, error) {
 	var a domain.Account
-	err := s.pool.QueryRow(ctx, `SELECT id,owner_user_id,name,notes,email,chatgpt_account_id,plan_type,access_token_ciphertext,refresh_token_ciphertext,proxy_url_ciphertext,max_concurrency,rpm_limit,token_expires_at,status,last_error,created_at FROM openai_accounts WHERE id=$1`, id).Scan(&a.ID, &a.OwnerUserID, &a.Name, &a.Notes, &a.Email, &a.ChatGPTAccountID, &a.PlanType, &a.AccessTokenCiphertext, &a.RefreshTokenCiphertext, &a.ProxyURLCiphertext, &a.MaxConcurrency, &a.RPMLimit, &a.TokenExpiresAt, &a.Status, &a.LastError, &a.CreatedAt)
+	err := s.pool.QueryRow(ctx, `SELECT id,owner_user_id,name,notes,email,chatgpt_account_id,plan_type,access_token_ciphertext,refresh_token_ciphertext,proxy_url_ciphertext,max_concurrency,rpm_limit,fast_policy,token_expires_at,status,last_error,created_at FROM openai_accounts WHERE id=$1`, id).Scan(&a.ID, &a.OwnerUserID, &a.Name, &a.Notes, &a.Email, &a.ChatGPTAccountID, &a.PlanType, &a.AccessTokenCiphertext, &a.RefreshTokenCiphertext, &a.ProxyURLCiphertext, &a.MaxConcurrency, &a.RPMLimit, &a.FastPolicy, &a.TokenExpiresAt, &a.Status, &a.LastError, &a.CreatedAt)
 	return a, mapError(err)
 }
 
 func (s *Store) UpdateAccountConfig(ctx context.Context, userID string, account domain.Account) (domain.Account, error) {
+	if account.FastPolicy == nil {
+		account.FastPolicy = make([]domain.FastPolicyRule, 0)
+	}
 	var out domain.Account
-	err := s.pool.QueryRow(ctx, `UPDATE openai_accounts SET name=$3,notes=$4,proxy_url_ciphertext=$5,max_concurrency=$6,rpm_limit=$7,status=$8,last_error=CASE WHEN $8='active' THEN '' ELSE last_error END,updated_at=now() WHERE id=$1 AND owner_user_id=$2 RETURNING id,owner_user_id,name,notes,email,chatgpt_account_id,plan_type,proxy_url_ciphertext,max_concurrency,rpm_limit,token_expires_at,status,last_error,created_at`, account.ID, userID, account.Name, account.Notes, account.ProxyURLCiphertext, account.MaxConcurrency, account.RPMLimit, account.Status).Scan(&out.ID, &out.OwnerUserID, &out.Name, &out.Notes, &out.Email, &out.ChatGPTAccountID, &out.PlanType, &out.ProxyURLCiphertext, &out.MaxConcurrency, &out.RPMLimit, &out.TokenExpiresAt, &out.Status, &out.LastError, &out.CreatedAt)
+	err := s.pool.QueryRow(ctx, `UPDATE openai_accounts SET name=$3,notes=$4,proxy_url_ciphertext=$5,max_concurrency=$6,rpm_limit=$7,fast_policy=$8,status=$9,last_error=CASE WHEN $9='active' THEN '' ELSE last_error END,updated_at=now() WHERE id=$1 AND owner_user_id=$2 RETURNING id,owner_user_id,name,notes,email,chatgpt_account_id,plan_type,proxy_url_ciphertext,max_concurrency,rpm_limit,fast_policy,token_expires_at,status,last_error,created_at`, account.ID, userID, account.Name, account.Notes, account.ProxyURLCiphertext, account.MaxConcurrency, account.RPMLimit, account.FastPolicy, account.Status).Scan(&out.ID, &out.OwnerUserID, &out.Name, &out.Notes, &out.Email, &out.ChatGPTAccountID, &out.PlanType, &out.ProxyURLCiphertext, &out.MaxConcurrency, &out.RPMLimit, &out.FastPolicy, &out.TokenExpiresAt, &out.Status, &out.LastError, &out.CreatedAt)
 	return out, mapError(err)
 }
 

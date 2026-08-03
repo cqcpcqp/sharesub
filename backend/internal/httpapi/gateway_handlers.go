@@ -101,11 +101,22 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 
 	excludedAccountIDs := make([]string, 0, maxUpstreamAccountSwitches)
 	var upstream *http.Response
+	effectiveMetadata := billingMetadata
 	for switches := 0; ; {
-		upstream, err = s.gateway.Forward(r.Context(), r, forwardBody, billingMetadata, access.AccessToken, access.Credential.Account.ChatGPTAccountID, access.Credential.APIKeyID, access.ProxyURL)
+		policyBody, policyMetadata, policyErr := openai.ApplyFastPolicy(forwardBody, billingMetadata, access.Credential.Account.FastPolicy, access.Credential.Member.UserID)
+		if policyErr != nil {
+			if blocked, ok := policyErr.(*openai.FastPolicyBlockedError); ok {
+				writeGatewayErrorStatus(w, http.StatusForbidden, "permission_error", blocked.Message)
+				return
+			}
+			writeGatewayErrorStatus(w, http.StatusInternalServerError, "policy_error", policyErr.Error())
+			return
+		}
+		effectiveMetadata = policyMetadata
+		upstream, err = s.gateway.Forward(r.Context(), r, policyBody, policyMetadata, access.AccessToken, access.Credential.Account.ChatGPTAccountID, access.Credential.APIKeyID, access.ProxyURL)
 		if err != nil {
 			requestID, _ := security.NewID()
-			_ = s.app.RecordGatewayMetric(r.Context(), access, requestID, billingMetadata.Model, billingMetadata.ServiceTier, http.StatusBadGateway, 0, time.Since(startedAt), domain.TokenUsage{})
+			_ = s.app.RecordGatewayMetric(r.Context(), access, requestID, policyMetadata.Model, policyMetadata.ServiceTier, http.StatusBadGateway, 0, time.Since(startedAt), domain.TokenUsage{})
 			writeGatewayErrorStatus(w, http.StatusBadGateway, "upstream_unavailable", err.Error())
 			return
 		}
@@ -142,13 +153,13 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 			s.logger.Warn("record Codex quota signal", "request_id", requestID, "account_id", access.Credential.Account.ID, "error", err)
 		}
 	}
-	metrics, copyErr := openai.CopyResponseForRequest(w, upstream, startedAt, billingMetadata.Stream && !compact)
+	metrics, copyErr := openai.CopyResponseForRequest(w, upstream, startedAt, effectiveMetadata.Stream && !compact)
 	tokenUsage := domain.TokenUsage{InputTokens: metrics.InputTokens, OutputTokens: metrics.OutputTokens, CachedTokens: metrics.CachedTokens, TotalTokens: metrics.InputTokens + metrics.OutputTokens}
 	metricStatus := upstream.StatusCode
 	if copyErr != nil {
 		metricStatus = http.StatusBadGateway
 	}
-	if err := s.app.RecordGatewayMetric(r.Context(), access, requestID, billingMetadata.Model, billingMetadata.ServiceTier, metricStatus, metrics.TTFT, metrics.Duration, tokenUsage); err != nil {
+	if err := s.app.RecordGatewayMetric(r.Context(), access, requestID, effectiveMetadata.Model, effectiveMetadata.ServiceTier, metricStatus, metrics.TTFT, metrics.Duration, tokenUsage); err != nil {
 		s.logger.Warn("record gateway metric", "error", err)
 	}
 	if copyErr != nil {

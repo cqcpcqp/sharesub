@@ -83,7 +83,7 @@
           <DashboardView v-else-if="activeView === 'dashboard'" :dashboard="dashboard" :loading="busy" :theme="resolvedTheme" />
           <LobbyView v-else-if="activeView === 'lobby'" :plans="publicPlans" :user="user" @changed="refreshAll" @message="showMessage" />
           <PlansView v-else-if="activeView === 'plans'" :accounts="accounts" :plans="plans" :user="user" :initial-plan-id="selectedPlanID" :invite-plan-id="invitePlanID" @invite-opened="invitePlanID = ''" @changed="refreshAll" @message="showMessage" />
-          <AccountsView v-else-if="activeView === 'accounts'" :accounts="accounts" @changed="refreshAll" @message="showMessage" />
+          <AccountsView v-else-if="activeView === 'accounts'" :accounts="accounts" :plans="plans" @changed="refreshAll" @message="showMessage" />
           <KeysView v-else-if="activeView === 'keys'" :keys="keys" :plans="plans" @changed="refreshAll" @message="showMessage" />
           <ProfileView v-else v-model:theme-mode="themeMode" :user="user" @updated="onUserUpdated" @message="showMessage" />
         </div>

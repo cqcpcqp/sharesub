@@ -69,7 +69,10 @@ OAuth 开始接口返回 `authorization_url` 和 `flow_id`。完成授权后，�
 | `proxy_url` | 空字符串，或 `http://`、`https://`、`socks5://` URL | 该账号的独立出站代理 |
 | `max_concurrency` | `0..100` | 最大并发请求数，`0` 表示不限制 |
 | `rpm_limit` | `0..10000` | 每分钟请求上限，`0` 表示不限制 |
+| `fast_policy` | 规则数组，最多 50 条 | 当前账号的 OpenAI Fast/Flex 策略；空数组表示原样透传 |
 | `status` | `active`、`disabled`、`refresh_required` | 调度状态；OAuth 接入时固定保存为 `active` |
+
+`fast_policy` 规则按顺序首条命中，指定成员规则优先于全局规则。每条规则包含 `service_tier`（`all`、`priority`、`flex`）、`action`（`pass`、`filter`、`force_priority`、`block`）、`user_ids`、`error_message`、`model_whitelist`、`fallback_action` 和 `fallback_error_message`。`model_whitelist` 支持精确模型名与末尾 `*` 通配符；未命中白名单时执行 fallback 动作。过滤或强制改写后的实际 service tier 同步用于请求成本统计。
 
 账号列表与 Plan 详情中的 `account` 返回 `id`、`owner_user_id`、上述配置、OpenAI 邮箱、ChatGPT Account ID、套餐类型、Token 到期时间、状态、最近错误和创建时间。OAuth access token、refresh token 以及任何密文字段永远不会进入 JSON 响应。只有账号所有者可以修改配置；Plan 的所有有效成员都能通过 Plan 详情查看该账号的完整配置。
 

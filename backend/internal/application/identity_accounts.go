@@ -182,7 +182,7 @@ func (s *Service) CompleteOpenAIConnect(ctx context.Context, userID, state, code
 	account := domain.Account{
 		ID: id, OwnerUserID: userID, Name: config.Name, Notes: config.Notes, Email: normalizeEmail(token.Email), ChatGPTAccountID: token.ChatGPTAccountID,
 		PlanType: token.PlanType, AccessTokenCiphertext: access, RefreshTokenCiphertext: refresh,
-		MaxConcurrency: config.MaxConcurrency, RPMLimit: config.RPMLimit,
+		MaxConcurrency: config.MaxConcurrency, RPMLimit: config.RPMLimit, FastPolicy: config.FastPolicy,
 		TokenExpiresAt: token.ExpiresAt, Status: config.Status, CreatedAt: s.now(),
 	}
 	if err := s.setAccountProxy(&account, config.ProxyURL); err != nil {
@@ -285,6 +285,7 @@ func (s *Service) UpdateAccountConfig(ctx context.Context, userID, accountID str
 	account.Notes = config.Notes
 	account.MaxConcurrency = config.MaxConcurrency
 	account.RPMLimit = config.RPMLimit
+	account.FastPolicy = config.FastPolicy
 	account.Status = config.Status
 	if err := s.setAccountProxy(&account, config.ProxyURL); err != nil {
 		return domain.Account{}, err

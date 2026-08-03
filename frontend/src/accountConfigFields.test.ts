@@ -10,6 +10,7 @@ describe('AccountConfigFields', () => {
       proxy_url: 'http://127.0.0.1:7890',
       max_concurrency: 2,
       rpm_limit: 60,
+      fast_policy: [],
       status: 'active',
     }
     expect(updateAccountText(modelValue, field, '')).toEqual({ ...modelValue, [field]: '' })

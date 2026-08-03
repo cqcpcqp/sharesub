@@ -156,7 +156,8 @@ func TestUpdateAccountConfigEncryptsProxyAndChecksOwnership(t *testing.T) {
 	manager := testSecurityManager(t)
 	store := &accountConfigStore{account: domain.Account{ID: "account", OwnerUserID: "owner", ChatGPTAccountID: "chatgpt"}}
 	service := &Service{store: store, security: manager}
-	config := AccountConfigInput{Name: "团队主账号", Notes: "仅用于 Codex", ProxyURL: "socks5://proxy.example:1080", MaxConcurrency: 8, RPMLimit: 120, Status: domain.StatusActive}
+	policy := []domain.FastPolicyRule{{ServiceTier: "priority", Action: "filter", UserIDs: []string{"member"}, ModelWhitelist: []string{"gpt-5.5*"}, FallbackAction: "pass"}}
+	config := AccountConfigInput{Name: "团队主账号", Notes: "仅用于 Codex", ProxyURL: "socks5://proxy.example:1080", MaxConcurrency: 8, RPMLimit: 120, FastPolicy: policy, Status: domain.StatusActive}
 
 	account, err := service.UpdateAccountConfig(context.Background(), "owner", "account", config)
 	if err != nil {
@@ -164,6 +165,9 @@ func TestUpdateAccountConfigEncryptsProxyAndChecksOwnership(t *testing.T) {
 	}
 	if account.ProxyURL != config.ProxyURL || string(store.updated.ProxyURLCiphertext) == config.ProxyURL {
 		t.Fatalf("updated account = %+v", account)
+	}
+	if len(store.updated.FastPolicy) != 1 || store.updated.FastPolicy[0].ServiceTier != "priority" {
+		t.Fatalf("updated fast policy = %+v", store.updated.FastPolicy)
 	}
 	plaintext, err := manager.Decrypt(store.updated.ProxyURLCiphertext, []byte("owner:chatgpt:proxy"))
 	if err != nil || plaintext != config.ProxyURL {
@@ -182,6 +186,8 @@ func TestNormalizeAccountConfigRejectsUnsupportedValues(t *testing.T) {
 		{Name: "账号", MaxConcurrency: 101, Status: domain.StatusActive},
 		{Name: "账号", RPMLimit: 10_001, Status: domain.StatusActive},
 		{Name: "账号", Status: "unknown"},
+		{Name: "账号", FastPolicy: []domain.FastPolicyRule{{ServiceTier: "turbo", Action: "pass", FallbackAction: "pass"}}, Status: domain.StatusActive},
+		{Name: "账号", FastPolicy: []domain.FastPolicyRule{{ServiceTier: "priority", Action: "filter", ModelWhitelist: []string{"gpt-*-codex"}, FallbackAction: "pass"}}, Status: domain.StatusActive},
 	}
 	if _, err := normalizeAccountConfig(valid); err != nil {
 		t.Fatalf("valid config rejected: %v", err)

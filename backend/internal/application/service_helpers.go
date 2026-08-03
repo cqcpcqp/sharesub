@@ -32,6 +32,9 @@ func normalizeAccountConfig(config AccountConfigInput) (AccountConfigInput, erro
 	config.Name = strings.TrimSpace(config.Name)
 	config.Notes = strings.TrimSpace(config.Notes)
 	config.ProxyURL = strings.TrimSpace(config.ProxyURL)
+	if config.FastPolicy == nil {
+		config.FastPolicy = make([]domain.FastPolicyRule, 0)
+	}
 	if utf8.RuneCountInString(config.Name) < 1 || utf8.RuneCountInString(config.Name) > 100 || utf8.RuneCountInString(config.Notes) > 2000 {
 		return AccountConfigInput{}, domain.ErrInvalidInput
 	}
@@ -40,6 +43,54 @@ func normalizeAccountConfig(config AccountConfigInput) (AccountConfigInput, erro
 	}
 	if config.Status != domain.StatusActive && config.Status != domain.StatusDisabled && config.Status != domain.StatusRefreshRequired {
 		return AccountConfigInput{}, domain.ErrInvalidInput
+	}
+	if len(config.FastPolicy) > 50 {
+		return AccountConfigInput{}, domain.ErrInvalidInput
+	}
+	validTiers := map[string]bool{"all": true, "priority": true, "flex": true}
+	validActions := map[string]bool{"pass": true, "filter": true, "block": true, "force_priority": true}
+	for index := range config.FastPolicy {
+		rule := &config.FastPolicy[index]
+		if rule.UserIDs == nil {
+			rule.UserIDs = make([]string, 0)
+		}
+		if rule.ModelWhitelist == nil {
+			rule.ModelWhitelist = make([]string, 0)
+		}
+		rule.ServiceTier = strings.ToLower(strings.TrimSpace(rule.ServiceTier))
+		rule.Action = strings.ToLower(strings.TrimSpace(rule.Action))
+		rule.ErrorMessage = strings.TrimSpace(rule.ErrorMessage)
+		rule.FallbackAction = strings.ToLower(strings.TrimSpace(rule.FallbackAction))
+		rule.FallbackErrorMessage = strings.TrimSpace(rule.FallbackErrorMessage)
+		if !validTiers[rule.ServiceTier] || !validActions[rule.Action] || !validActions[rule.FallbackAction] || utf8.RuneCountInString(rule.ErrorMessage) > 500 || utf8.RuneCountInString(rule.FallbackErrorMessage) > 500 {
+			return AccountConfigInput{}, domain.ErrInvalidInput
+		}
+		if len(rule.UserIDs) > 500 || len(rule.ModelWhitelist) > 100 {
+			return AccountConfigInput{}, domain.ErrInvalidInput
+		}
+		seenUsers := make(map[string]struct{}, len(rule.UserIDs))
+		for userIndex := range rule.UserIDs {
+			rule.UserIDs[userIndex] = strings.TrimSpace(rule.UserIDs[userIndex])
+			if rule.UserIDs[userIndex] == "" {
+				return AccountConfigInput{}, domain.ErrInvalidInput
+			}
+			if _, exists := seenUsers[rule.UserIDs[userIndex]]; exists {
+				return AccountConfigInput{}, domain.ErrInvalidInput
+			}
+			seenUsers[rule.UserIDs[userIndex]] = struct{}{}
+		}
+		seenModels := make(map[string]struct{}, len(rule.ModelWhitelist))
+		for modelIndex := range rule.ModelWhitelist {
+			rule.ModelWhitelist[modelIndex] = strings.TrimSpace(rule.ModelWhitelist[modelIndex])
+			pattern := rule.ModelWhitelist[modelIndex]
+			if pattern == "" || utf8.RuneCountInString(pattern) > 100 || strings.Count(pattern, "*") > 1 || (strings.Contains(pattern, "*") && !strings.HasSuffix(pattern, "*")) {
+				return AccountConfigInput{}, domain.ErrInvalidInput
+			}
+			if _, exists := seenModels[pattern]; exists {
+				return AccountConfigInput{}, domain.ErrInvalidInput
+			}
+			seenModels[pattern] = struct{}{}
+		}
 	}
 	if config.ProxyURL != "" {
 		parsed, err := url.Parse(config.ProxyURL)

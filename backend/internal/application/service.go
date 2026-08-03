@@ -43,12 +43,13 @@ type CreatedAPIKey struct {
 }
 
 type AccountConfigInput struct {
-	Name           string `json:"name"`
-	Notes          string `json:"notes"`
-	ProxyURL       string `json:"proxy_url"`
-	MaxConcurrency int    `json:"max_concurrency"`
-	RPMLimit       int    `json:"rpm_limit"`
-	Status         string `json:"status"`
+	Name           string                  `json:"name"`
+	Notes          string                  `json:"notes"`
+	ProxyURL       string                  `json:"proxy_url"`
+	MaxConcurrency int                     `json:"max_concurrency"`
+	RPMLimit       int                     `json:"rpm_limit"`
+	FastPolicy     []domain.FastPolicyRule `json:"fast_policy"`
+	Status         string                  `json:"status"`
 }
 
 func NewService(store Store, securityManager *security.Manager, oauth OpenAIOAuth, sessionTTL time.Duration, redirectURI, publicURL string) *Service {

@@ -61,6 +61,15 @@
 .account-form-section > header small { color: var(--muted); font-size: 9px; }
 .account-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .account-form-full { grid-column: 1 / -1; }
+.fast-policy-section > header > span { background: var(--amber-soft); color: var(--amber); }
+.fast-policy-empty { padding: 18px; border: 1px dashed var(--line-strong); border-radius: 7px; color: var(--muted); font-size: 10px; text-align: center; }
+.fast-policy-rule { display: grid; gap: 13px; padding: 15px; border: 1px solid var(--line-strong); border-radius: 7px; }
+.fast-policy-rule > header { display: flex; align-items: center; justify-content: space-between; }
+.fast-policy-rule > header strong { color: var(--ink-strong); font-size: 11px; }
+.fast-policy-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.fast-policy-grid label > small { display: block; margin: 2px 0 6px; color: var(--muted-light); font-size: 8px; font-weight: 400; }
+.fast-policy-add { justify-self: start; }
+.fast-policy-hint { color: var(--muted-light); font-size: 8px; }
 
 .plans-layout { display: block; }
 .plan-detail-pane { min-width: 0; padding-bottom: 38px; }
@@ -397,7 +406,7 @@
   .key-form-grid, .publication-fields { grid-template-columns: 1fr; }
   .route-option { align-items: stretch; flex-direction: column; gap: 10px; padding: 12px 0; }
   .priority-input { justify-content: space-between; }
-  .account-card dl, .account-form-grid, .account-config-list { grid-template-columns: 1fr; }
+  .account-card dl, .account-form-grid, .fast-policy-grid, .account-config-list { grid-template-columns: 1fr; }
   .account-form-full { grid-column: auto; }
   .account-config-list > div:nth-child(odd), .account-config-list > div:nth-child(even) { padding: 15px 0; border-left: 0; }
   .oauth-step { align-items: flex-start; flex-wrap: wrap; }

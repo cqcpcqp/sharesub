@@ -25,10 +25,24 @@ export interface Account {
   proxy_url: string
   max_concurrency: number
   rpm_limit: number
+  fast_policy: FastPolicyRule[]
   token_expires_at: string
   status: AccountStatus
   last_error?: string
   created_at: string
+}
+
+export type FastPolicyTier = 'all' | 'priority' | 'flex'
+export type FastPolicyAction = 'pass' | 'filter' | 'block' | 'force_priority'
+
+export interface FastPolicyRule {
+  service_tier: FastPolicyTier
+  action: FastPolicyAction
+  user_ids: string[]
+  error_message: string
+  model_whitelist: string[]
+  fallback_action: FastPolicyAction
+  fallback_error_message: string
 }
 
 export interface AccountConfigInput {
@@ -37,6 +51,7 @@ export interface AccountConfigInput {
   proxy_url: string
   max_concurrency: number
   rpm_limit: number
+  fast_policy: FastPolicyRule[]
   status: AccountStatus
 }
 
