@@ -328,7 +328,29 @@ server {
 
 ### 4. 升级与回滚准备
 
-升级前先备份数据库，再拉取新代码并重新构建：
+生产环境固定为 `share.underelay.com`、SSH 别名固定为 `underelay` 时，推荐在本机从干净且已经推送到 `origin/main` 的 `main` 分支执行一键发布：
+
+```bash
+make deploy
+```
+
+发布脚本会运行完整测试、使用 `git archive` 同步当前提交、依次构建 API 与 Web 镜像、备份生产数据库、更新容器并验证公网健康接口。构建或备份失败时不会切换当前容器；不包含迁移的版本健康检查失败时会自动恢复上一组镜像。仓库中的 Nginx 配置发生变化时，脚本会停止并要求先人工安装配置。
+
+常用生产管理命令：
+
+```bash
+make deploy-status
+make deploy-logs
+make deploy-backup
+```
+
+检测到 `backend/migrations` 变化时，必须明确确认后发布：
+
+```bash
+SHARESUB_DEPLOY_ALLOW_MIGRATIONS=1 make deploy
+```
+
+迁移版本不会自动恢复旧数据库；发布前生成的压缩备份会保存在服务器 `/home/cqcpcqp/share2api/backups/`。手工升级时也必须先备份数据库，再拉取新代码并重新构建：
 
 ```bash
 docker compose --env-file .env -f deploy/docker-compose.yml exec -T postgres \

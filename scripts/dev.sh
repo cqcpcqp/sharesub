@@ -221,6 +221,7 @@ run_tests() {
   )
   (
     cd "$ROOT/frontend"
+    pnpm test:run
     pnpm typecheck
     pnpm build
   )

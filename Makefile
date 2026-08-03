@@ -1,6 +1,7 @@
 DEV_SCRIPT := ./scripts/dev.sh
+DEPLOY_SCRIPT := ./scripts/deploy.sh
 
-.PHONY: help init check dev status logs stop down restart test
+.PHONY: help init check dev status logs stop down restart test deploy deploy-status deploy-logs deploy-backup
 
 help:
 	@$(DEV_SCRIPT) help
@@ -31,3 +32,15 @@ restart:
 
 test:
 	@$(DEV_SCRIPT) test
+
+deploy:
+	@$(DEPLOY_SCRIPT) deploy
+
+deploy-status:
+	@$(DEPLOY_SCRIPT) status
+
+deploy-logs:
+	@$(DEPLOY_SCRIPT) logs
+
+deploy-backup:
+	@$(DEPLOY_SCRIPT) backup
