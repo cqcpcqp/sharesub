@@ -185,6 +185,8 @@ pnpm dev
 成员密钥可调用以下入口：
 
 - `GET /v1/models`
+- `GET /models`
+- `GET /backend-api/codex/models`
 - `POST /v1/responses`
 - `POST /v1/responses/compact`
 - `POST /responses`
@@ -192,7 +194,7 @@ pnpm dev
 - `POST /backend-api/codex/responses`
 - `POST /backend-api/codex/responses/compact`
 
-推荐使用 `/v1` 开头的标准入口，其余路径用于兼容已有 Codex/sub2api 客户端配置。
+推荐普通 OpenAI 客户端使用 `/v1` 开头的标准入口；Codex 会通过 `/models?client_version=...` 获取所选 Plan 账号的实时模型 manifest，其余路径用于兼容已有 Codex/sub2api 客户端配置。
 
 示例：
 

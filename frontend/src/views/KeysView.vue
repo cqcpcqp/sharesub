@@ -121,7 +121,7 @@ function useKey(key: APIKey) { if (key.status === 'active' && key.key_available)
 function importToCCS(key: APIKey) {
   if (key.status !== 'active' || !key.key_available) return
   const homepage = window.location.origin.replace(/\/+$/, '')
-  const deepLink = buildCCSwitchImportDeepLink({ homepage, endpoint: gatewayBaseURL(homepage), apiKey: key.key, providerName: 'ShareSub' })
+  const deepLink = buildCCSwitchImportDeepLink({ homepage, endpoint: homepage, apiKey: key.key, providerName: 'ShareSub' })
   if (!openCCSwitchImport(deepLink)) emit('message', 'error', '无法唤起 CC Switch，请确认已安装并允许浏览器打开外部应用')
 }
 function closeUpgrade() { if (!upgrading.value) upgradeTarget.value = null }

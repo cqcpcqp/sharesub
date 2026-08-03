@@ -19,6 +19,9 @@ func TestGatewayCompatibilityRoutesAreRegistered(t *testing.T) {
 		path   string
 	}{
 		{http.MethodGet, "/v1/models"},
+		{http.MethodGet, "/models"},
+		{http.MethodGet, "/models?client_version=0.137.0"},
+		{http.MethodGet, "/backend-api/codex/models"},
 		{http.MethodPost, "/v1/responses"},
 		{http.MethodPost, "/v1/responses/compact"},
 		{http.MethodPost, "/responses"},
@@ -58,6 +61,19 @@ func TestShouldSwitchUpstreamAccountOnlyForExplicitRejection(t *testing.T) {
 	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusRequestTimeout, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable} {
 		if shouldSwitchUpstreamAccount(status) {
 			t.Fatalf("status %d must not switch account", status)
+		}
+	}
+}
+
+func TestShouldSwitchModelsAccountForRetryableFailure(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable} {
+		if !shouldSwitchModelsAccount(status) {
+			t.Fatalf("status %d should switch models account", status)
+		}
+	}
+	for _, status := range []int{http.StatusOK, http.StatusNotModified, http.StatusBadRequest, http.StatusForbidden, 600} {
+		if shouldSwitchModelsAccount(status) {
+			t.Fatalf("status %d must not switch models account", status)
 		}
 	}
 }

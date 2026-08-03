@@ -1,4 +1,4 @@
-export const CODEX_MODEL = 'gpt-5.4'
+export const CODEX_MODEL = 'gpt-5.5'
 
 export interface KeyConfigFile {
   path: string
@@ -47,7 +47,7 @@ export function openCodeConfig(baseURL: string, apiKey: string): KeyConfigFile {
           options: { baseURL, apiKey },
           models: {
             [CODEX_MODEL]: {
-              name: 'GPT-5.4',
+              name: 'GPT-5.5',
               options: { store: false },
               variants: { low: {}, medium: {}, high: {}, xhigh: {} },
             },
@@ -85,7 +85,8 @@ export function buildCCSwitchImportDeepLink(input: {
 
 export function openCCSwitchImport(deepLink: string): boolean {
   try {
-    return window.open(deepLink, '_self') !== null
+    window.open(deepLink, '_self')
+    return true
   } catch {
     return false
   }

@@ -139,7 +139,7 @@ function close() {
 }
 
 function importToCCS() {
-  const deepLink = buildCCSwitchImportDeepLink({ homepage: homepage.value, endpoint: baseURL.value, apiKey: secret.value, providerName: 'ShareSub' })
+  const deepLink = buildCCSwitchImportDeepLink({ homepage: homepage.value, endpoint: homepage.value, apiKey: secret.value, providerName: 'ShareSub' })
   if (!openCCSwitchImport(deepLink)) emit('message', 'error', '无法唤起 CC Switch，请确认已安装并允许浏览器打开外部应用')
 }
 

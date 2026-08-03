@@ -13,11 +13,69 @@ import (
 )
 
 func (s *Server) models(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("client_version") != "" {
+		s.codexModels(w, r)
+		return
+	}
 	if err := s.app.AuthenticateGatewayKey(r.Context(), bearerToken(r)); err != nil {
 		writeGatewayDomainError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": openai.CodexModels})
+}
+
+func (s *Server) codexModels(w http.ResponseWriter, r *http.Request) {
+	apiKey := bearerToken(r)
+	access, err := s.app.ResolveGatewayAccess(r.Context(), apiKey)
+	if err != nil {
+		writeGatewayDomainError(w, err)
+		return
+	}
+	defer func() { releaseGatewayAccess(&access) }()
+
+	excludedAccountIDs := make([]string, 0, maxUpstreamAccountSwitches)
+	var upstream *http.Response
+	for switches := 0; ; {
+		upstream, err = s.gateway.FetchModels(r.Context(), r, access.AccessToken, access.Credential.Account.ChatGPTAccountID, access.ProxyURL)
+		if err == nil && !shouldSwitchModelsAccount(upstream.StatusCode) {
+			break
+		}
+		if switches >= maxUpstreamAccountSwitches {
+			break
+		}
+
+		excludedAccountIDs = append(excludedAccountIDs, access.Credential.Account.ID)
+		releaseGatewayAccess(&access)
+		next, resolveErr := s.app.ResolveGatewayAccess(r.Context(), apiKey, excludedAccountIDs...)
+		if resolveErr != nil {
+			break
+		}
+		if upstream != nil {
+			drainAndCloseResponse(upstream)
+		}
+		access = next
+		switches++
+	}
+	if err != nil {
+		writeGatewayErrorStatus(w, http.StatusBadGateway, "upstream_unavailable", err.Error())
+		return
+	}
+	defer upstream.Body.Close()
+	copyModelsResponse(w, upstream)
+}
+
+func shouldSwitchModelsAccount(status int) bool {
+	return status == http.StatusUnauthorized || status == http.StatusTooManyRequests || (status >= http.StatusInternalServerError && status < 600)
+}
+
+func copyModelsResponse(w http.ResponseWriter, upstream *http.Response) {
+	for _, key := range []string{"Content-Type", "Cache-Control", "ETag", "Retry-After"} {
+		for _, value := range upstream.Header.Values(key) {
+			w.Header().Add(key, value)
+		}
+	}
+	w.WriteHeader(upstream.StatusCode)
+	_, _ = io.Copy(w, upstream.Body)
 }
 
 func (s *Server) responses(w http.ResponseWriter, r *http.Request) {

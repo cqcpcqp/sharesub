@@ -8,6 +8,10 @@ afterEach(() => {
 })
 
 describe('API key usage configuration', () => {
+  it('uses the current Codex model', () => {
+    expect(CODEX_MODEL).toBe('gpt-5.5')
+  })
+
   it('builds the gateway URL without a duplicate slash', () => {
     expect(gatewayBaseURL('https://sharesub.example.com/')).toBe('https://sharesub.example.com/v1')
   })
@@ -23,7 +27,7 @@ describe('API key usage configuration', () => {
   it('matches the CC Switch provider import protocol', () => {
     const deepLink = buildCCSwitchImportDeepLink({
       homepage: 'https://sharesub.example.com',
-      endpoint: 'https://sharesub.example.com/v1',
+      endpoint: 'https://sharesub.example.com',
       apiKey: 'sk-sharesub-test',
       providerName: 'ShareSub',
     })
@@ -32,7 +36,7 @@ describe('API key usage configuration', () => {
     expect(params.get('resource')).toBe('provider')
     expect(params.get('app')).toBe('codex')
     expect(params.get('model')).toBe(CODEX_MODEL)
-    expect(params.get('endpoint')).toBe('https://sharesub.example.com/v1')
+    expect(params.get('endpoint')).toBe('https://sharesub.example.com')
     expect(params.get('apiKey')).toBe('sk-sharesub-test')
   })
 
@@ -44,8 +48,14 @@ describe('API key usage configuration', () => {
     expect(open).toHaveBeenCalledWith(deepLink, '_self')
   })
 
-  it('reports when the browser refuses to open CC Switch', () => {
+  it('does not treat a null WindowProxy as an import failure', () => {
     vi.spyOn(window, 'open').mockReturnValue(null)
+
+    expect(openCCSwitchImport('ccswitch://v1/import?resource=provider')).toBe(true)
+  })
+
+  it('reports a synchronous protocol launch error', () => {
+    vi.spyOn(window, 'open').mockImplementation(() => { throw new Error('blocked') })
 
     expect(openCCSwitchImport('ccswitch://v1/import?resource=provider')).toBe(false)
   })

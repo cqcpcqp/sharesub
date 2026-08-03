@@ -80,6 +80,8 @@ func (s *Server) routes() {
 	s.mux.Handle("PATCH /api/notifications/{notificationID}", s.requireUser(http.HandlerFunc(s.updateNotification)))
 	s.mux.Handle("POST /api/notifications/read-all", s.requireUser(http.HandlerFunc(s.readAllNotifications)))
 	s.mux.HandleFunc("GET /v1/models", s.models)
+	s.mux.HandleFunc("GET /models", s.models)
+	s.mux.HandleFunc("GET /backend-api/codex/models", s.codexModels)
 	s.mux.HandleFunc("POST /v1/responses", s.responses)
 	s.mux.HandleFunc("POST /v1/responses/compact", s.responses)
 	s.mux.HandleFunc("POST /responses", s.responses)

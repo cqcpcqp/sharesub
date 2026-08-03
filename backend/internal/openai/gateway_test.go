@@ -259,6 +259,64 @@ func TestForwardCompactUsesCompactEndpointAndHeaders(t *testing.T) {
 	}
 }
 
+func TestFetchModelsForwardsCodexDiscoveryHeaders(t *testing.T) {
+	var captured *http.Request
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		captured = req
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}, "ETag": []string{`"manifest"`}},
+			Body:       io.NopCloser(strings.NewReader(`{"models":[{"slug":"gpt-5.5"}]}`)),
+			Request:    req,
+		}, nil
+	})}
+	inbound := httptest.NewRequest(http.MethodGet, "http://gateway.test/models?client_version=0.137.0", nil)
+	inbound.Header.Set("If-None-Match", `"previous"`)
+
+	response, err := NewGateway(client).FetchModels(context.Background(), inbound, "access", "account", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if captured.URL.String() != codexModelsURL+"?client_version=0.137.0" || captured.Host != "chatgpt.com" {
+		t.Fatalf("request target = %s (Host %q)", captured.URL, captured.Host)
+	}
+	wantHeaders := map[string]string{
+		"Authorization":      "Bearer access",
+		"Chatgpt-Account-Id": "account",
+		"Accept":             "application/json",
+		"Originator":         "codex_cli_rs",
+		"Version":            "0.137.0",
+		"User-Agent":         codexProbeUserAgent,
+		"If-None-Match":      `"previous"`,
+	}
+	for key, want := range wantHeaders {
+		if got := captured.Header.Get(key); got != want {
+			t.Errorf("%s = %q, want %q", key, got, want)
+		}
+	}
+}
+
+func TestFetchModelsUsesDefaultClientVersion(t *testing.T) {
+	var captured *http.Request
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		captured = req
+		return &http.Response{StatusCode: http.StatusNotModified, Header: make(http.Header), Body: http.NoBody, Request: req}, nil
+	})}
+
+	response, err := NewGateway(client).FetchModels(context.Background(), httptest.NewRequest(http.MethodGet, "http://gateway.test/backend-api/codex/models", nil), "access", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if got := captured.URL.Query().Get("client_version"); got != codexProbeVersion {
+		t.Fatalf("client_version = %q, want %q", got, codexProbeVersion)
+	}
+	if got := captured.Header.Get("Chatgpt-Account-Id"); got != "" {
+		t.Fatalf("empty account id produced header %q", got)
+	}
+}
+
 func TestClientForProxyOverridesBaseTransport(t *testing.T) {
 	baseTransport := &http.Transport{Proxy: http.ProxyFromEnvironment}
 	gateway := NewGateway(&http.Client{Transport: baseTransport})

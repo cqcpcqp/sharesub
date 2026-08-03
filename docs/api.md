@@ -133,7 +133,9 @@ Plan 详情的 `insights.window_usage` 按当前 OpenAI 账号实际返回的 5h
 
 | 方法 | 路径 | 鉴权 | 用途 |
 |---|---|---|---|
-| `GET` | `/v1/models` | 用户 API Key | 列出支持配置的 Codex 模型 |
+| `GET` | `/v1/models` | 用户 API Key | 列出支持配置的 Codex 模型；携带 `client_version` 时返回实时 Codex manifest |
+| `GET` | `/models` | 用户 API Key | 不带 `/v1` 的模型列表与 Codex manifest 兼容入口 |
+| `GET` | `/backend-api/codex/models` | 用户 API Key | 转发实时 Codex models manifest |
 | `POST` | `/v1/responses` | 用户 API Key | 转发 OpenAI Responses 请求 |
 | `POST` | `/v1/responses/compact` | 用户 API Key | 请求远程上下文压缩 |
 | `POST` | `/responses` | 用户 API Key | 不带 `/v1` 的 Responses 兼容入口 |
@@ -141,7 +143,7 @@ Plan 详情的 `insights.window_usage` 按当前 OpenAI 账号实际返回的 5h
 | `POST` | `/backend-api/codex/responses` | 用户 API Key | 转发 Codex Responses 请求 |
 | `POST` | `/backend-api/codex/responses/compact` | 用户 API Key | Codex compact 兼容入口 |
 
-网关请求体上限为 32 MiB。`priority` 按数字从小到大选路，并在请求发出前跳过不可用路由；`balanced` 在固定分配模式按当前成员消耗占个人份额的比例选择，在共享模式按账号总额度使用比例选择。上游明确返回 `429` 或 `529` 时最多切换 3 个账号；连接错误、超时和其他响应不重试。
+网关请求体上限为 32 MiB。`priority` 按数字从小到大选路，并在请求发出前跳过不可用路由；`balanced` 在固定分配模式按当前成员消耗占个人份额的比例选择，在共享模式按账号总额度使用比例选择。Responses 上游明确返回 `429` 或 `529` 时最多切换 3 个账号；models manifest 在连接失败或上游返回 `401`、`429`、`5xx` 时最多切换 3 个账号。
 
 固定分配模式的候选成员在 5 小时或 7 天窗口中达到个人份额后不可用；共享模式不限制个人用量，但账号任一有效窗口达到 100% 后不可用。所有候选都不可用时返回 `429 quota_exhausted`；没有有效路由时返回 `503 no_route_available`。只有完整额度响应头会更新额度快照；额度头缺失不会篡改或拦截上游成功响应。指标记录状态码、TTFT、总耗时、终止事件中的 Input/Output/Cached Token 和关联成员，不记录请求或响应内容。
 

@@ -23,14 +23,15 @@ import (
 const (
 	codexResponsesURL        = "https://chatgpt.com/backend-api/codex/responses"
 	codexCompactURL          = codexResponsesURL + "/compact"
+	codexModelsURL           = "https://chatgpt.com/backend-api/codex/models"
 	maxBufferedResponseBytes = 128 << 20
 )
 
 const (
 	codexProbeModel     = "gpt-5.4"
 	codexProbeTimeout   = 15 * time.Second
-	codexProbeVersion   = "0.125.0"
-	codexProbeUserAgent = "codex_cli_rs/0.125.0 (Ubuntu 22.4.0; x86_64) xterm-256color"
+	codexProbeVersion   = "0.144.1"
+	codexProbeUserAgent = "codex_cli_rs/0.144.1 (Ubuntu 22.4.0; x86_64) xterm-256color"
 )
 
 var requestHeaderAllowlist = map[string]struct{}{
@@ -297,6 +298,49 @@ func (g *Gateway) Forward(ctx context.Context, inbound *http.Request, body []byt
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("forward Codex request: %w", err)
+	}
+	return resp, nil
+}
+
+// FetchModels forwards Codex model discovery to the selected ChatGPT OAuth
+// account. The upstream manifest is returned unchanged to the caller.
+func (g *Gateway) FetchModels(ctx context.Context, inbound *http.Request, accessToken, accountID, proxyURL string) (*http.Response, error) {
+	clientVersion := strings.TrimSpace(inbound.URL.Query().Get("client_version"))
+	if clientVersion == "" {
+		clientVersion = codexProbeVersion
+	}
+	target, err := url.Parse(codexModelsURL)
+	if err != nil {
+		return nil, err
+	}
+	query := target.Query()
+	query.Set("client_version", clientVersion)
+	target.RawQuery = query.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Host = "chatgpt.com"
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	if accountID != "" {
+		req.Header.Set("Chatgpt-Account-Id", accountID)
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Originator", "codex_cli_rs")
+	req.Header.Set("Version", clientVersion)
+	req.Header.Set("User-Agent", codexProbeUserAgent)
+	if etag := strings.TrimSpace(inbound.Header.Get("If-None-Match")); etag != "" {
+		req.Header.Set("If-None-Match", etag)
+	}
+
+	client, err := g.clientForProxy(proxyURL)
+	if err != nil {
+		return nil, fmt.Errorf("configure account proxy: %w", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch Codex models: %w", err)
 	}
 	return resp, nil
 }

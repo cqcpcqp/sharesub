@@ -9,8 +9,8 @@ ShareSub 复用 sub2api 已验证的 OpenAI Codex 协议行为，但产品边界
 | Responses HTTP 流式请求 | 转发 SSE，逐事件 flush，并记录终止事件 usage |
 | Responses HTTP 非流式请求 | 上游使用 SSE，网关在终止事件后返回标准 JSON response |
 | Remote compact | 支持三个入口的 `/responses/compact`，转发到 ChatGPT Codex compact 上游 |
-| 模型列表 | `GET /v1/models` 返回 Codex 模型列表，并使用用户 API Key 鉴权 |
-| 路径兼容 | 支持 `/v1/responses`、`/responses`、`/backend-api/codex/responses` 及其 compact 路径 |
+| 模型列表 | 普通请求返回支持配置的模型；Codex `client_version` 请求通过所选 OAuth 账号透传实时 manifest 与 ETag |
+| 路径兼容 | 支持 `/v1/models`、`/models`、`/backend-api/codex/models`，以及三个 Responses/compact 前缀 |
 | OAuth 请求规范化 | 删除 ChatGPT 内部 API 不支持的顶层字段，强制 `store=false`，compact 只保留其协议字段 |
 | 会话隔离 | `session_id`、`conversation_id` 和 `prompt_cache_key` 按 ShareSub API Key 隔离 |
 | 上游请求头 | 注入 OAuth、ChatGPT Account ID、Codex Beta、Originator、Version 和必要 User-Agent |
