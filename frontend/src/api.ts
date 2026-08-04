@@ -38,13 +38,23 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (!(init.body instanceof FormData)) headers.set('Content-Type', 'application/json')
   const token = sessionToken()
   if (token) headers.set('Authorization', `Bearer ${token}`)
-  const response = await fetch(path, { ...init, headers })
-  const body = await response.json() as T | APIError
-  if (!response.ok) {
-    const error = (body as APIError).error
-    throw new APIRequestError(response.status, error.code, error.message)
+  const controller = new AbortController()
+  const abortFromCaller = () => controller.abort(init.signal?.reason)
+  if (init.signal?.aborted) abortFromCaller()
+  else init.signal?.addEventListener('abort', abortFromCaller, { once: true })
+  const timeout = setTimeout(() => controller.abort(new DOMException('请求超时', 'TimeoutError')), 120_000)
+  try {
+    const response = await fetch(path, { ...init, headers, signal: controller.signal })
+    const body = await response.json() as T | APIError
+    if (!response.ok) {
+      const error = (body as APIError).error
+      throw new APIRequestError(response.status, error.code, error.message)
+    }
+    return body as T
+  } finally {
+    clearTimeout(timeout)
+    init.signal?.removeEventListener('abort', abortFromCaller)
   }
-  return body as T
 }
 
 export class APIRequestError extends Error {

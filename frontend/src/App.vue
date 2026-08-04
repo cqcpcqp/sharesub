@@ -313,7 +313,17 @@ async function openNotification(notification: UserNotification) {
 
 function startNotificationPolling() {
   clearInterval(notificationTimer)
+  if (document.hidden || !user.value) return
   notificationTimer = setInterval(() => { void refreshNotifications() }, 60_000)
+}
+
+function handleVisibilityChange() {
+  if (document.hidden) {
+    clearInterval(notificationTimer)
+    return
+  }
+  startNotificationPolling()
+  void refreshNotifications()
 }
 
 async function loadInvitePreview() {
@@ -405,6 +415,7 @@ onMounted(async () => {
   systemThemeQuery.addEventListener('change', updateSystemTheme)
   window.addEventListener('hashchange', syncNavigationIntent)
   window.addEventListener('popstate', syncPathRoute)
+  document.addEventListener('visibilitychange', handleVisibilityChange)
   if (inviteIntent.value) await loadInvitePreview()
   if (!sessionToken()) {
     syncPathRoute()
@@ -431,6 +442,7 @@ onBeforeUnmount(() => {
   systemThemeQuery.removeEventListener('change', updateSystemTheme)
   window.removeEventListener('hashchange', syncNavigationIntent)
   window.removeEventListener('popstate', syncPathRoute)
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
   clearTimeout(noticeTimer)
   clearInterval(notificationTimer)
 })

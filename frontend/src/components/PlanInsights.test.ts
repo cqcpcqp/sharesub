@@ -67,4 +67,25 @@ describe('PlanInsights performance period', () => {
     expect(wrapper.find('.member-windows').text()).toContain('2.1%')
     expect(wrapper.find('.member-windows').text()).not.toContain('2.06%')
   })
+
+  it('shows total tokens before the token breakdown in every quota card', () => {
+    const wrapper = mount(PlanInsights, {
+      props: {
+        insights: {
+          account_windows: [],
+          member_quotas: [],
+          performance: { request_count: 0, success_count: 0, average_ttft_ms: 0, p95_ttft_ms: 0, average_duration_ms: 0, p95_duration_ms: 0 },
+          window_usage: [],
+          member_ranking: [],
+          member_rankings: [{ period: 'today', window_start: '2026-08-04T00:00:00Z', window_end: '2026-08-04T10:00:00Z', members: [] }],
+        },
+        members: [],
+        allocationMode: 'shared',
+      },
+    })
+
+    for (const tokenGrid of wrapper.findAll('.token-grid')) {
+      expect(tokenGrid.findAll('dt').map(item => item.text())).toEqual(['Total Token', 'Input', 'Output', 'Cached'])
+    }
+  })
 })

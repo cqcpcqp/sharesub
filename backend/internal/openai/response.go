@@ -11,6 +11,10 @@ import (
 	"time"
 )
 
+const maxSSELineBytes = 16 << 20
+
+var errSSELineTooLarge = fmt.Errorf("upstream SSE event exceeds %d bytes", maxSSELineBytes)
+
 type ProxyMetrics struct {
 	TTFT         time.Duration
 	Duration     time.Duration
@@ -58,7 +62,7 @@ func copySSE(dst http.ResponseWriter, src *http.Response, startedAt time.Time) (
 	var usage responseUsage
 	terminalSeen := false
 	for {
-		line, err := reader.ReadBytes('\n')
+		line, err := readLimitedLine(reader)
 		if len(line) > 0 {
 			now := time.Now()
 			if firstByteAt.IsZero() {
@@ -103,7 +107,7 @@ func copySSEAsJSON(dst http.ResponseWriter, src *http.Response, startedAt time.T
 	var usage responseUsage
 	var finalResponse json.RawMessage
 	for {
-		line, err := reader.ReadBytes('\n')
+		line, err := readLimitedLine(reader)
 		if len(line) > 0 {
 			now := time.Now()
 			if firstByteAt.IsZero() {
@@ -143,6 +147,21 @@ func copySSEAsJSON(dst http.ResponseWriter, src *http.Response, startedAt time.T
 	dst.WriteHeader(src.StatusCode)
 	_, err := dst.Write(finalResponse)
 	return proxyMetrics(startedAt, firstByteAt, firstTokenAt, usage), err
+}
+
+func readLimitedLine(reader *bufio.Reader) ([]byte, error) {
+	line := make([]byte, 0, 4096)
+	for {
+		fragment, err := reader.ReadSlice('\n')
+		if len(line)+len(fragment) > maxSSELineBytes {
+			return nil, errSSELineTooLarge
+		}
+		line = append(line, fragment...)
+		if err == bufio.ErrBufferFull {
+			continue
+		}
+		return line, err
+	}
 }
 
 func copyBufferedResponse(dst http.ResponseWriter, src *http.Response, startedAt time.Time) (ProxyMetrics, error) {

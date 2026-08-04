@@ -204,6 +204,9 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
   }
 
   async function refreshQuotaAutomatically(planID: string, requestSequence: number) {
+    for (const [cachedPlanID, refreshedAt] of automaticQuotaRefreshes) {
+      if (Date.now() - refreshedAt >= automaticQuotaRefreshTTL) automaticQuotaRefreshes.delete(cachedPlanID)
+    }
     const lastRefresh = automaticQuotaRefreshes.get(planID)
     if (lastRefresh !== undefined && Date.now() - lastRefresh < automaticQuotaRefreshTTL) return
     automaticQuotaRefreshes.set(planID, Date.now())
@@ -224,6 +227,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
   }
 
   function syncDetail(value: PlanDetail) {
+    for (const memberID of Object.keys(shareDrafts)) delete shareDrafts[memberID]
     for (const member of value.members) shareDrafts[member.id] = Math.round(member.share_basis_points / 100)
     publication.visibility = value.plan.visibility
     publication.slots = value.plan.visibility === 'private' ? 1 : value.plan.public_slots

@@ -126,10 +126,19 @@ openssl rand -base64 32
 | `SHARESUB_WEB_PORT` | Docker Web 宿主机端口 | `8081` |
 | `SHARESUB_DATABASE_PORT` | 本地开发 PostgreSQL 宿主机端口 | `5432` |
 | `SHARESUB_SESSION_TTL` | 登录会话有效期 | `720h` |
+| `SHARESUB_CLEANUP_INTERVAL` | 过期资源清理周期 | `6h` |
+| `SHARESUB_GATEWAY_METRIC_RETENTION` | 网关请求明细保留期；至少 7 天，清理边界按 UTC 整日对齐，清理前会汇总 | `2160h`（90 天） |
+| `SHARESUB_QUOTA_EVENT_RETENTION` | 额度归因事件保留期 | `2160h`（90 天） |
+| `SHARESUB_AUDIT_EVENT_RETENTION` | 审计记录保留期 | `8760h`（365 天） |
+| `SHARESUB_READ_NOTIFICATION_RETENTION` | 已读通知保留期；未读通知不自动删除 | `2160h`（90 天） |
+| `SHARESUB_TERMINAL_RECORD_RETENTION` | 已结束邀请、申请及撤销 Key 保留期 | `2160h`（90 天） |
+| `SHARESUB_GATEWAY_MAX_CONCURRENCY` | 单 API 实例的网关及额度探测总并发上限 | `8` |
 | `SHARESUB_OAUTH_REDIRECT_URI` | OpenAI OAuth 回调地址 | `http://localhost:1455/auth/callback` |
 | `SHARESUB_OUTBOUND_PROXY` | OpenAI OAuth 和网关出站代理 | 留空，表示直连 |
 | `SHARESUB_TOKEN_PEPPER` | Token 哈希密钥 | 必填，32 字节 Base64 |
 | `SHARESUB_CREDENTIAL_KEY` | OAuth 凭据加密密钥 | 必填，32 字节 Base64 |
+
+生产 Compose 默认将 API、Web、PostgreSQL 的内存限制为 `1 GiB`、`256 MiB`、`1 GiB`，CPU 限制为 `2`、`0.5`、`2`；可通过对应的 `SHARESUB_*_MEMORY_LIMIT` 和 `SHARESUB_*_CPU_LIMIT` 环境变量调整。容器日志单文件最多 20 MiB、保留 5 份。部署脚本将数据库备份限制为最近 14 份且不超过 30 天，并为 API/Web 各保留最近 3 个发布及回滚镜像。
 
 ### 2. 启动 PostgreSQL
 

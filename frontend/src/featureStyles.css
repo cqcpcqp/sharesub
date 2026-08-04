@@ -133,25 +133,41 @@
 .account-config-list dt { display: flex; align-items: center; gap: 7px; color: var(--muted-light); font-size: 9px; font-weight: 760; text-transform: uppercase; }
 .account-config-list dd { min-width: 0; overflow-wrap: anywhere; margin: 0; color: var(--ink); font-size: 11px; line-height: 1.55; }
 .account-config-list code { white-space: normal; }
-.fast-policy-summary { display: grid; gap: 14px; margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--line); }
-.fast-policy-summary > header { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
-.fast-policy-summary > header > div { display: flex; min-width: 0; align-items: center; gap: 10px; }
-.fast-policy-summary > header > div > span { width: 34px; height: 34px; display: grid; flex: 0 0 auto; place-items: center; border-radius: 7px; background: var(--amber-soft); color: var(--amber); }
-.fast-policy-summary > header > div > div { display: grid; gap: 3px; }
-.fast-policy-summary > header strong { color: var(--ink-strong); font-size: 12px; }
-.fast-policy-summary > header small, .fast-policy-summary-order { color: var(--muted); font-size: 9px; }
-.fast-policy-summary-empty { padding: 20px; border: 1px dashed var(--line-strong); border-radius: 7px; color: var(--muted); background: var(--surface-soft); font-size: 10px; text-align: center; }
-.fast-policy-summary-rules { display: grid; gap: 12px; }
-.fast-policy-summary-rule { display: grid; gap: 13px; padding: 15px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--surface-soft); }
-.fast-policy-summary-rule > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.fast-policy-summary-rule > header strong { font-size: 11px; }
-.fast-policy-summary-rule dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px 20px; margin: 0; }
-.fast-policy-summary-rule dl > div { display: grid; min-width: 0; gap: 6px; }
-.fast-policy-summary-rule dt { color: var(--muted-light); font-size: 8px; font-weight: 760; text-transform: uppercase; }
-.fast-policy-summary-rule dd { min-width: 0; margin: 0; overflow-wrap: anywhere; color: var(--ink); font-size: 10px; line-height: 1.5; }
-.fast-policy-summary-full { grid-column: 1 / -1; }
+.fast-policy-summary { display: grid; gap: 12px; margin-top: 20px; padding: 18px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); box-shadow: var(--shadow-xs); }
+.fast-policy-summary > header { display: flex; min-height: 40px; align-items: center; justify-content: space-between; gap: 14px; }
+.fast-policy-summary-title { display: flex; min-width: 0; align-items: center; gap: 11px; }
+.fast-policy-summary-title > span { width: 38px; height: 38px; display: grid; flex: 0 0 auto; place-items: center; border-radius: 9px; background: var(--amber-soft); color: var(--amber); }
+.fast-policy-summary-title > div { display: grid; gap: 3px; }
+.fast-policy-summary-title strong { color: var(--ink-strong); font-size: 12px; }
+.fast-policy-summary-title small { color: var(--muted); font-size: 9px; }
+.fast-policy-summary-count { display: flex; flex: 0 0 auto; align-items: baseline; gap: 4px; padding: 6px 10px; border-radius: 7px; background: var(--amber-soft); color: var(--amber); }
+.fast-policy-summary-count strong { font-size: 14px; }
+.fast-policy-summary-count span { font-size: 9px; font-weight: 650; }
+.fast-policy-summary-empty { padding: 22px; border: 1px dashed var(--line-strong); border-radius: 8px; color: var(--muted); background: var(--surface-soft); font-size: 10px; text-align: center; }
+.fast-policy-summary-rules { display: grid; gap: 10px; }
+.fast-policy-summary-rule { overflow: hidden; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-soft); }
+.fast-policy-summary-rule > header { min-height: 42px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--line-soft); background: var(--surface); }
+.fast-policy-summary-rule > header > div { display: flex; align-items: center; gap: 9px; }
+.fast-policy-summary-rule > header > div > span { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 6px; background: var(--control-rail); color: var(--muted); font-family: "SFMono-Regular", Consolas, monospace; font-size: 8px; font-weight: 750; }
+.fast-policy-summary-rule > header strong { color: var(--ink-strong); font-size: 10px; }
+.fast-policy-summary-body { display: grid; grid-template-columns: minmax(280px, .8fr) minmax(0, 1.2fr); align-items: stretch; }
+.fast-policy-summary-flow { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 12px; padding: 17px; border-right: 1px solid var(--line-soft); }
+.fast-policy-summary-flow > div { display: grid; gap: 5px; }
+.fast-policy-summary-flow small { color: var(--muted-light); font-size: 8px; font-weight: 720; }
+.fast-policy-summary-flow strong { color: var(--ink-strong); font-size: 11px; line-height: 1.4; }
+.fast-policy-summary-flow > svg { color: var(--amber); }
+.fast-policy-summary-scope { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0; }
+.fast-policy-summary-scope > div { min-width: 0; display: grid; align-content: center; gap: 8px; padding: 14px 16px; }
+.fast-policy-summary-scope > div + div { border-left: 1px solid var(--line-soft); }
+.fast-policy-summary-scope dt { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 8px; font-weight: 720; }
+.fast-policy-summary-scope dd, .fast-policy-summary-details dd { min-width: 0; margin: 0; overflow-wrap: anywhere; color: var(--ink); font-size: 10px; line-height: 1.5; }
+.fast-policy-summary-details { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: 0; padding: 12px 16px; border-top: 1px solid var(--line-soft); background: var(--surface); }
+.fast-policy-summary-details > div { display: grid; min-width: 0; gap: 5px; }
+.fast-policy-summary-details dt { color: var(--muted-light); font-size: 8px; font-weight: 720; }
 .fast-policy-tags { display: flex; flex-wrap: wrap; gap: 6px; }
 .fast-policy-tags code { font-size: 9px; }
+.fast-policy-summary-order { display: flex; align-items: center; gap: 7px; padding: 2px 3px 0; color: var(--muted); font-size: 9px; line-height: 1.5; }
+.fast-policy-summary-order svg { flex: 0 0 auto; color: var(--muted-light); }
 
 .metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
 .metric-tile { --metric-color: var(--primary); --metric-bg: var(--primary-soft); min-height: 142px; display: grid; align-content: start; gap: 7px; padding: 15px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); box-shadow: var(--shadow-xs); }
@@ -426,8 +442,11 @@
   .route-option { align-items: stretch; flex-direction: column; gap: 10px; padding: 12px 0; }
   .priority-input { justify-content: space-between; }
   .account-card dl, .account-form-grid, .fast-policy-grid, .account-config-list { grid-template-columns: 1fr; }
-  .fast-policy-summary-rule dl { grid-template-columns: 1fr; }
-  .fast-policy-summary-full { grid-column: auto; }
+  .fast-policy-summary { padding: 14px; }
+  .fast-policy-summary-body { grid-template-columns: 1fr; }
+  .fast-policy-summary-flow { border-right: 0; border-bottom: 1px solid var(--line-soft); }
+  .fast-policy-summary-scope, .fast-policy-summary-details { grid-template-columns: 1fr; }
+  .fast-policy-summary-scope > div + div { border-top: 1px solid var(--line-soft); border-left: 0; }
   .account-form-full { grid-column: auto; }
   .account-config-list > div:nth-child(odd), .account-config-list > div:nth-child(even) { padding: 15px 0; border-left: 0; }
   .oauth-step { align-items: flex-start; flex-wrap: wrap; }

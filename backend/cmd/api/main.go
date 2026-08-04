@@ -68,8 +68,20 @@ func main() {
 	}
 	oauthClient := openai.NewOAuthClient(cfg.OutboundProxy)
 	app := application.NewService(store, securityManager, oauthClient, cfg.SessionTTL, cfg.OAuthRedirect, cfg.PublicURL)
-	api := httpapi.New(app, openai.NewGateway(httpClient), logger)
-	server := &http.Server{Addr: cfg.HTTPAddr, Handler: api.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 120 * time.Second}
+	gateway := openai.NewGateway(httpClient, cfg.GatewayMaxConcurrency)
+	defer gateway.Close()
+	api := httpapi.New(app, gateway, logger)
+	server := &http.Server{
+		Addr: cfg.HTTPAddr, Handler: api.Handler(),
+		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 2 * time.Minute,
+		IdleTimeout: 120 * time.Second, MaxHeaderBytes: 64 << 10,
+	}
+	retention := postgres.RetentionPolicy{
+		GatewayMetrics: cfg.GatewayMetricRetention, QuotaEvents: cfg.QuotaEventRetention,
+		AuditEvents: cfg.AuditEventRetention, ReadNotifications: cfg.ReadNotificationRetention,
+		TerminalRecords: cfg.TerminalRecordRetention,
+	}
+	go runResourceCleanup(ctx, store, retention, cfg.CleanupInterval, logger)
 
 	go func() {
 		logger.Info("ShareSub API listening", "address", cfg.HTTPAddr)
@@ -83,5 +95,29 @@ func main() {
 	defer cancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		logger.Error("shutdown API", "error", err)
+	}
+}
+
+func runResourceCleanup(ctx context.Context, store *postgres.Store, policy postgres.RetentionPolicy, interval time.Duration, logger *slog.Logger) {
+	cleanup := func() {
+		result, err := store.CleanupResources(ctx, time.Now(), policy)
+		if err != nil {
+			if ctx.Err() == nil {
+				logger.Error("clean expired resources", "error", err)
+			}
+			return
+		}
+		logger.Info("resource cleanup completed", "gateway_metrics", result.GatewayMetrics, "quota_events", result.QuotaEvents, "audit_events", result.AuditEvents, "read_notifications", result.ReadNotifications, "sessions", result.Sessions, "oauth_flows", result.OAuthFlows, "invites", result.Invites, "applications", result.Applications, "api_keys", result.APIKeys)
+	}
+	cleanup()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			cleanup()
+		}
 	}
 }

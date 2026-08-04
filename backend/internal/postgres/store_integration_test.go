@@ -448,4 +448,31 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM audit_events WHERE id='delete-shared')`).Scan(&deleteAuditExists); err != nil || !deleteAuditExists {
 		t.Fatalf("delete audit exists = %v, %v", deleteAuditExists, err)
 	}
+
+	cleanupNow := now.Add(91 * 24 * time.Hour)
+	cleaned, err := store.CleanupResources(ctx, cleanupNow, RetentionPolicy{
+		GatewayMetrics: 90 * 24 * time.Hour, QuotaEvents: 90 * 24 * time.Hour,
+		AuditEvents: 365 * 24 * time.Hour, ReadNotifications: 90 * 24 * time.Hour,
+		TerminalRecords: 90 * 24 * time.Hour,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cleaned.GatewayMetrics != 2 {
+		t.Fatalf("cleaned gateway metrics = %d, want 2", cleaned.GatewayMetrics)
+	}
+	dashboard, err = store.Dashboard(ctx, "applicant", cleanupNow.Add(-12*time.Hour), cleanupNow.Add(-23*time.Hour), cleanupNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dashboard.TodayTokens.TotalTokens != 0 || dashboard.TotalTokens.TotalTokens != 1500 {
+		t.Fatalf("rolled-up dashboard totals = today %+v, total %+v", dashboard.TodayTokens, dashboard.TotalTokens)
+	}
+	ranking, err := store.memberUsageRanking(ctx, "plan", now.Add(-time.Hour), cleanupNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ranking) != 2 || ranking[0].TokenUsage.TotalTokens != 10_000 || ranking[1].TokenUsage.TotalTokens != 1500 {
+		t.Fatalf("rolled-up member ranking = %+v", ranking)
+	}
 }

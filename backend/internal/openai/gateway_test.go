@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -335,6 +336,57 @@ func TestClientForProxyOverridesBaseTransport(t *testing.T) {
 	}
 	if direct, err := gateway.clientForProxy(""); err != nil || direct != gateway.httpClient {
 		t.Fatalf("empty proxy client = %p, %v", direct, err)
+	}
+}
+
+func TestGatewayConcurrencyLimitReleasesExactlyOnce(t *testing.T) {
+	gateway := NewGateway(&http.Client{}, 1)
+	release, ok := gateway.TryAcquire()
+	if !ok {
+		t.Fatal("first gateway slot was rejected")
+	}
+	if _, ok := gateway.TryAcquire(); ok {
+		t.Fatal("gateway accepted more requests than its concurrency limit")
+	}
+	release()
+	release()
+	if releaseAgain, ok := gateway.TryAcquire(); !ok {
+		t.Fatal("released gateway slot was not reusable")
+	} else {
+		releaseAgain()
+	}
+}
+
+func TestProxyClientCacheEvictsOldAndExpiredEntries(t *testing.T) {
+	baseTransport := &http.Transport{Proxy: http.ProxyFromEnvironment}
+	gateway := NewGateway(&http.Client{Transport: baseTransport})
+	now := time.Date(2026, 8, 4, 0, 0, 0, 0, time.UTC)
+	gateway.now = func() time.Time { return now }
+	for index := 0; index <= maxProxyClients; index++ {
+		if _, err := gateway.clientForProxy(fmt.Sprintf("http://proxy-%d.example:8080", index)); err != nil {
+			t.Fatal(err)
+		}
+		now = now.Add(time.Second)
+	}
+	if len(gateway.proxyClients) != maxProxyClients {
+		t.Fatalf("proxy cache size = %d, want %d", len(gateway.proxyClients), maxProxyClients)
+	}
+	if gateway.proxyClients["http://proxy-0.example:8080"] != nil {
+		t.Fatal("oldest proxy client was not evicted")
+	}
+	now = now.Add(proxyClientTTL)
+	if _, err := gateway.clientForProxy("http://fresh-proxy.example:8080"); err != nil {
+		t.Fatal(err)
+	}
+	if len(gateway.proxyClients) != 1 {
+		t.Fatalf("expired proxy clients remain cached: %d", len(gateway.proxyClients))
+	}
+}
+
+func TestReadLimitedLineRejectsOversizedSSEEvent(t *testing.T) {
+	reader := bufio.NewReader(strings.NewReader(strings.Repeat("x", maxSSELineBytes+1)))
+	if _, err := readLimitedLine(reader); !errors.Is(err, errSSELineTooLarge) {
+		t.Fatalf("oversized SSE error = %v", err)
 	}
 }
 

@@ -95,10 +95,10 @@
             </div>
           </dl>
           <dl class="token-grid">
+            <div class="token-total"><dt>Total Token</dt><dd>{{ item.usage ? formatTokens(item.usage.token_usage.total_tokens) : '--' }}</dd></div>
             <div><dt>Input</dt><dd>{{ item.usage ? formatTokens(item.usage.token_usage.input_tokens) : '--' }}</dd></div>
             <div><dt>Output</dt><dd>{{ item.usage ? formatTokens(item.usage.token_usage.output_tokens) : '--' }}</dd></div>
             <div><dt>Cached</dt><dd>{{ item.usage ? formatTokens(item.usage.token_usage.cached_tokens) : '--' }}</dd></div>
-            <div class="token-total"><dt>Total Token</dt><dd>{{ item.usage ? formatTokens(item.usage.token_usage.total_tokens) : '--' }}</dd></div>
           </dl>
         </article>
       </div>
@@ -377,7 +377,7 @@ function usagePeriod(usage: WindowUsage | undefined) {
 .window-summary dd,
 .token-grid dd { overflow-wrap: anywhere; margin: 4px 0 0; color: var(--ink-strong); font-size: 13px; font-weight: 720; font-variant-numeric: tabular-nums; }
 .cost-summary dd { color: var(--window-accent); }
-.token-grid { display: grid; grid-template-columns: repeat(3, minmax(0, .8fr)) minmax(110px, 1.35fr); align-items: stretch; gap: 8px; }
+.token-grid { display: grid; grid-template-columns: minmax(110px, 1.35fr) repeat(3, minmax(0, .8fr)); align-items: stretch; gap: 8px; }
 .token-grid > div { min-width: 0; padding: 8px 0; }
 .token-grid dd { font-size: 11px; }
 .token-grid .token-total {

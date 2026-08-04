@@ -70,7 +70,7 @@ wait_for_remote_health() {
 create_backup() {
   local label="$1"
   ssh "${SSH_OPTIONS[@]}" "$DEPLOY_HOST" \
-    "set -eu; cd '$DEPLOY_DIR'; install -d -m 700 backups; backup=\"backups/sharesub-${label}-\$(date +%Y%m%d-%H%M%S).dump\"; $COMPOSE exec -T postgres pg_dump -U sharesub -d sharesub -Fc > \"\$backup\"; chmod 600 \"\$backup\"; $COMPOSE exec -T postgres pg_restore --list < \"\$backup\" >/dev/null; printf '%s/%s\n' '$DEPLOY_DIR' \"\$backup\""
+    "set -eu; cd '$DEPLOY_DIR'; install -d -m 700 backups; backup=\"backups/sharesub-${label}-\$(date +%Y%m%d-%H%M%S).dump\"; $COMPOSE exec -T postgres pg_dump -U sharesub -d sharesub -Fc > \"\$backup\"; chmod 600 \"\$backup\"; $COMPOSE exec -T postgres pg_restore --list < \"\$backup\" >/dev/null; find backups -maxdepth 1 -type f -name 'sharesub-*.dump' -mtime +30 -delete; find backups -maxdepth 1 -type f -name 'sharesub-*.dump' -printf '%T@ %p\n' | sort -nr | awk 'NR>14 {print \$2}' | xargs -r rm --; printf '%s/%s\n' '$DEPLOY_DIR' \"\$backup\""
 }
 
 preserve_running_images() {
@@ -80,6 +80,11 @@ preserve_running_images() {
 
   ssh "${SSH_OPTIONS[@]}" "$DEPLOY_HOST" \
     "set -eu; api_id=\$(docker inspect sharesub-api-1 --format '{{.Image}}'); web_id=\$(docker inspect sharesub-web-1 --format '{{.Image}}'); docker image tag \"\$api_id\" '$api_rollback_image'; docker image tag \"\$web_id\" '$web_rollback_image'"
+}
+
+prune_release_images() {
+  ssh "${SSH_OPTIONS[@]}" "$DEPLOY_HOST" \
+    "set -eu; for repository in sharesub-api sharesub-web ghcr.io/cqcpcqp/sharesub-api ghcr.io/cqcpcqp/sharesub-web; do docker image ls \"\$repository\" --format '{{.CreatedAt}}|{{.Repository}}:{{.Tag}}' | sort -r | awk -F'|' 'NR>3 {print \$2}' | while IFS= read -r image; do test -z \"\$image\" || docker image rm \"\$image\" >/dev/null 2>&1 || true; done; done; docker image prune -f --filter until=720h >/dev/null"
 }
 
 rollback_running_services() {
@@ -248,6 +253,9 @@ run_deploy() {
 
   curl -fsS --connect-timeout 10 --max-time 30 -o /dev/null https://www.underelay.com/health
   curl -fsS --connect-timeout 10 --max-time 30 -o /dev/null https://stats.underelay.com/
+
+  info "清理过期发布镜像"
+  prune_release_images
 
   info "发布完成"
   printf '版本：%s\n' "$current_commit"

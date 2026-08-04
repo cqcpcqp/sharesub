@@ -1,20 +1,42 @@
 name: sharesub
 
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
 services:
   api:
     image: ${SHARESUB_API_IMAGE:-ghcr.io/cqcpcqp/sharesub-api:main}
     restart: unless-stopped
     environment:
       SHARESUB_HTTP_ADDR: 0.0.0.0:8080
-      SHARESUB_DATABASE_URL: postgres://sharesub:sharesub@postgres:5432/sharesub?sslmode=disable
+      SHARESUB_DATABASE_URL: postgres://sharesub:sharesub@postgres:5432/sharesub?sslmode=disable&pool_max_conns=10&pool_min_conns=1&pool_max_conn_idle_time=5m
       SHARESUB_PUBLIC_URL: ${SHARESUB_DOCKER_PUBLIC_URL:-http://127.0.0.1:8081}
       SHARESUB_OAUTH_REDIRECT_URI: ${SHARESUB_OAUTH_REDIRECT_URI:-http://localhost:1455/auth/callback}
       SHARESUB_OUTBOUND_PROXY: ${SHARESUB_OUTBOUND_PROXY:-}
       SHARESUB_TOKEN_PEPPER: ${SHARESUB_TOKEN_PEPPER:?SHARESUB_TOKEN_PEPPER is required}
       SHARESUB_CREDENTIAL_KEY: ${SHARESUB_CREDENTIAL_KEY:?SHARESUB_CREDENTIAL_KEY is required}
+      SHARESUB_CLEANUP_INTERVAL: ${SHARESUB_CLEANUP_INTERVAL:-6h}
+      SHARESUB_GATEWAY_METRIC_RETENTION: ${SHARESUB_GATEWAY_METRIC_RETENTION:-2160h}
+      SHARESUB_QUOTA_EVENT_RETENTION: ${SHARESUB_QUOTA_EVENT_RETENTION:-2160h}
+      SHARESUB_AUDIT_EVENT_RETENTION: ${SHARESUB_AUDIT_EVENT_RETENTION:-8760h}
+      SHARESUB_READ_NOTIFICATION_RETENTION: ${SHARESUB_READ_NOTIFICATION_RETENTION:-2160h}
+      SHARESUB_TERMINAL_RECORD_RETENTION: ${SHARESUB_TERMINAL_RECORD_RETENTION:-2160h}
+      SHARESUB_GATEWAY_MAX_CONCURRENCY: ${SHARESUB_GATEWAY_MAX_CONCURRENCY:-8}
+    mem_limit: ${SHARESUB_API_MEMORY_LIMIT:-1g}
+    cpus: ${SHARESUB_API_CPU_LIMIT:-2}
+    pids_limit: 256
+    logging: *default-logging
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health | grep -q '\"status\":\"ok\"'"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
 
   web:
     image: ${SHARESUB_WEB_IMAGE:-ghcr.io/cqcpcqp/sharesub-web:main}
@@ -22,7 +44,17 @@ services:
     ports:
       - "${SHARESUB_WEB_BIND_HOST:-127.0.0.1}:${SHARESUB_WEB_PORT:-8081}:80"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/health | grep -q '\"status\":\"ok\"'"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    mem_limit: ${SHARESUB_WEB_MEMORY_LIMIT:-256m}
+    cpus: ${SHARESUB_WEB_CPU_LIMIT:-0.5}
+    pids_limit: 128
+    logging: *default-logging
 
   postgres:
     image: postgres:17-alpine
@@ -37,6 +69,10 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    mem_limit: ${SHARESUB_POSTGRES_MEMORY_LIMIT:-1g}
+    cpus: ${SHARESUB_POSTGRES_CPU_LIMIT:-2}
+    pids_limit: 256
+    logging: *default-logging
 
 volumes:
   sharesub_postgres:

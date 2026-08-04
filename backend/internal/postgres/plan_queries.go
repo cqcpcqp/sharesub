@@ -256,13 +256,23 @@ func (s *Store) PlanPerformance(ctx context.Context, planID, userID string, wind
 
 func (s *Store) memberUsageRanking(ctx context.Context, planID string, windowStart, windowEnd time.Time) ([]domain.MemberUsageRank, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT m.id,u.username,count(g.id),COALESCE(sum(g.input_tokens),0),COALESCE(sum(g.output_tokens),0),COALESCE(sum(g.cached_tokens),0),COALESCE(sum(g.estimated_cost_micros),0)
-		FROM gateway_request_metrics g
+		WITH usage AS (
+			SELECT g.member_id,1::bigint AS request_count,g.input_tokens,g.output_tokens,g.cached_tokens,g.estimated_cost_micros
+			FROM gateway_request_metrics g
+			WHERE g.plan_id=$1 AND g.created_at>=$2 AND g.created_at<$3
+			UNION ALL
+			SELECT r.member_id,r.request_count,r.input_tokens,r.output_tokens,r.cached_tokens,r.estimated_cost_micros
+			FROM gateway_metric_daily_rollups r
+			WHERE r.plan_id=$1
+				AND r.usage_day>=($2 AT TIME ZONE 'UTC')::date
+				AND r.usage_day<=($3 AT TIME ZONE 'UTC')::date
+		)
+		SELECT m.id,u.username,COALESCE(sum(g.request_count),0),COALESCE(sum(g.input_tokens),0),COALESCE(sum(g.output_tokens),0),COALESCE(sum(g.cached_tokens),0),COALESCE(sum(g.estimated_cost_micros),0)
+		FROM usage g
 		JOIN plan_members m ON m.id=g.member_id
 		JOIN users u ON u.id=m.user_id
-		WHERE g.plan_id=$1 AND g.created_at>=$2 AND g.created_at<$3
 		GROUP BY m.id,u.username
-		ORDER BY COALESCE(sum(g.input_tokens+g.output_tokens),0) DESC,count(g.id) DESC,u.username`, planID, windowStart, windowEnd)
+		ORDER BY COALESCE(sum(g.input_tokens+g.output_tokens),0) DESC,COALESCE(sum(g.request_count),0) DESC,u.username`, planID, windowStart, windowEnd)
 	if err != nil {
 		return nil, err
 	}

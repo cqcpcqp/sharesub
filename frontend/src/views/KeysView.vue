@@ -103,7 +103,13 @@ const strategyOptions = [
 const routeValues = computed(() => props.plans.map(plan => routeDrafts[plan.id]))
 const canSave = computed(() => canSubmitKeyConfig(nameDraft.value, routeValues.value))
 
-function resetRoutes(key: APIKey) { for (const plan of props.plans) { const route = key.routes.find(item => item.plan_id === plan.id); routeDrafts[plan.id] = { enabled: route?.enabled ?? false, priority: route?.priority ?? 100 } } }
+function resetRoutes(key: APIKey) {
+  for (const planID of Object.keys(routeDrafts)) delete routeDrafts[planID]
+  for (const plan of props.plans) {
+    const route = key.routes.find(item => item.plan_id === plan.id)
+    routeDrafts[plan.id] = { enabled: route?.enabled ?? false, priority: route?.priority ?? 100 }
+  }
+}
 function openEdit(key: APIKey) { nameDraft.value = key.name; strategyDraft.value = key.strategy; resetRoutes(key); editing.value = key }
 function closeEdit() { if (!saving.value) editing.value = null }
 function updateNameDraft(value: string) { nameDraft.value = value }

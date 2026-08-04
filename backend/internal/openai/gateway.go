@@ -24,7 +24,9 @@ const (
 	codexResponsesURL        = "https://chatgpt.com/backend-api/codex/responses"
 	codexCompactURL          = codexResponsesURL + "/compact"
 	codexModelsURL           = "https://chatgpt.com/backend-api/codex/models"
-	maxBufferedResponseBytes = 128 << 20
+	maxBufferedResponseBytes = 64 << 20
+	maxProxyClients          = 16
+	proxyClientTTL           = 30 * time.Minute
 )
 
 const (
@@ -62,7 +64,14 @@ var ErrIncompleteStream = errors.New("upstream stream ended before a terminal re
 type Gateway struct {
 	httpClient   *http.Client
 	proxyMu      sync.Mutex
-	proxyClients map[string]*http.Client
+	proxyClients map[string]*proxyClientEntry
+	slots        chan struct{}
+	now          func() time.Time
+}
+
+type proxyClientEntry struct {
+	client   *http.Client
+	lastUsed time.Time
 }
 
 type codexProbePayload struct {
@@ -173,8 +182,35 @@ func prepareRequest(body []byte, compact, normalize bool) ([]byte, RequestBillin
 	return normalized, metadata, nil
 }
 
-func NewGateway(httpClient *http.Client) *Gateway {
-	return &Gateway{httpClient: httpClient, proxyClients: make(map[string]*http.Client)}
+func NewGateway(httpClient *http.Client, maxConcurrency ...int) *Gateway {
+	gateway := &Gateway{httpClient: httpClient, proxyClients: make(map[string]*proxyClientEntry), now: time.Now}
+	if len(maxConcurrency) > 0 && maxConcurrency[0] > 0 {
+		gateway.slots = make(chan struct{}, maxConcurrency[0])
+	}
+	return gateway
+}
+
+func (g *Gateway) TryAcquire() (func(), bool) {
+	if g.slots == nil {
+		return func() {}, true
+	}
+	select {
+	case g.slots <- struct{}{}:
+		var once sync.Once
+		return func() { once.Do(func() { <-g.slots }) }, true
+	default:
+		return nil, false
+	}
+}
+
+func (g *Gateway) Close() {
+	g.proxyMu.Lock()
+	defer g.proxyMu.Unlock()
+	for key, entry := range g.proxyClients {
+		closeClientIdleConnections(entry.client)
+		delete(g.proxyClients, key)
+	}
+	closeClientIdleConnections(g.httpClient)
 }
 
 // ProbeQuota actively obtains the current Codex quota windows for an OAuth account.
@@ -368,8 +404,11 @@ func (g *Gateway) clientForProxy(rawURL string) (*http.Client, error) {
 	}
 	g.proxyMu.Lock()
 	defer g.proxyMu.Unlock()
-	if client := g.proxyClients[rawURL]; client != nil {
-		return client, nil
+	now := g.now()
+	g.pruneProxyClients(now)
+	if entry := g.proxyClients[rawURL]; entry != nil {
+		entry.lastUsed = now
+		return entry.client, nil
 	}
 	proxyURL, err := url.Parse(rawURL)
 	if err != nil {
@@ -382,8 +421,45 @@ func (g *Gateway) clientForProxy(rawURL string) (*http.Client, error) {
 	transport := baseTransport.Clone()
 	transport.Proxy = http.ProxyURL(proxyURL)
 	client := &http.Client{Transport: transport, Timeout: g.httpClient.Timeout}
-	g.proxyClients[rawURL] = client
+	if len(g.proxyClients) >= maxProxyClients {
+		g.evictOldestProxyClient()
+	}
+	g.proxyClients[rawURL] = &proxyClientEntry{client: client, lastUsed: now}
 	return client, nil
+}
+
+func (g *Gateway) pruneProxyClients(now time.Time) {
+	for key, entry := range g.proxyClients {
+		if now.Sub(entry.lastUsed) < proxyClientTTL {
+			continue
+		}
+		closeClientIdleConnections(entry.client)
+		delete(g.proxyClients, key)
+	}
+}
+
+func (g *Gateway) evictOldestProxyClient() {
+	var oldestKey string
+	var oldestTime time.Time
+	for key, entry := range g.proxyClients {
+		if oldestKey == "" || entry.lastUsed.Before(oldestTime) {
+			oldestKey, oldestTime = key, entry.lastUsed
+		}
+	}
+	if oldestKey == "" {
+		return
+	}
+	closeClientIdleConnections(g.proxyClients[oldestKey].client)
+	delete(g.proxyClients, oldestKey)
+}
+
+func closeClientIdleConnections(client *http.Client) {
+	if client == nil {
+		return
+	}
+	if transport, ok := client.Transport.(interface{ CloseIdleConnections() }); ok {
+		transport.CloseIdleConnections()
+	}
 }
 
 func isolateSession(apiKeyID, value string) string {

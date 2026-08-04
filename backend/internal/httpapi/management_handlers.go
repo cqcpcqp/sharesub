@@ -241,6 +241,12 @@ func (s *Server) manualQuotaRefresh(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"account_id": probe.AccountID, "signals": []domain.QuotaSignal{}})
 		return
 	}
+	releaseSlot, ok := s.gateway.TryAcquire()
+	if !ok {
+		writeErrorStatus(w, http.StatusServiceUnavailable, "server_overloaded", "gateway concurrency limit reached")
+		return
+	}
+	defer releaseSlot()
 	signals, err := s.gateway.ProbeQuota(r.Context(), probe.AccessToken, probe.ChatGPTAccountID, probe.ProxyURL)
 	if err != nil {
 		s.logger.Error("probe OpenAI quota", "error", err, "plan_id", planID)

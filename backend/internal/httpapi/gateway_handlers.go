@@ -32,6 +32,12 @@ func (s *Server) codexModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { releaseGatewayAccess(&access) }()
+	releaseSlot, ok := s.gateway.TryAcquire()
+	if !ok {
+		writeGatewayErrorStatus(w, http.StatusServiceUnavailable, "server_overloaded", "gateway concurrency limit reached")
+		return
+	}
+	defer releaseSlot()
 
 	excludedAccountIDs := make([]string, 0, maxUpstreamAccountSwitches)
 	var upstream *http.Response
@@ -87,6 +93,12 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { releaseGatewayAccess(&access) }()
+	releaseSlot, ok := s.gateway.TryAcquire()
+	if !ok {
+		writeGatewayErrorStatus(w, http.StatusServiceUnavailable, "server_overloaded", "gateway concurrency limit reached")
+		return
+	}
+	defer releaseSlot()
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxGatewayBody))
 	if err != nil {
 		writeGatewayErrorStatus(w, http.StatusRequestEntityTooLarge, "request_too_large", "request body exceeds 32 MiB")
