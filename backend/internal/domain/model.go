@@ -235,6 +235,26 @@ type DashboardTrendPoint struct {
 	CachedTokens int64     `json:"cached_tokens"`
 }
 
+type ModelUsage struct {
+	Model               string     `json:"model"`
+	RequestCount        int64      `json:"request_count"`
+	TokenUsage          TokenUsage `json:"token_usage"`
+	EstimatedCostMicros int64      `json:"estimated_cost_micros"`
+}
+
+type MemberUsageTrend struct {
+	MemberID string                `json:"member_id"`
+	Username string                `json:"username"`
+	Trend    []DashboardTrendPoint `json:"trend"`
+}
+
+type PlanPerformance struct {
+	PerformanceSummary
+	ModelUsage  []ModelUsage          `json:"model_usage"`
+	TokenTrend  []DashboardTrendPoint `json:"token_trend"`
+	RecentUsage []MemberUsageTrend    `json:"recent_usage"`
+}
+
 type Dashboard struct {
 	TodayTokens TokenUsage            `json:"today_tokens"`
 	TotalTokens TokenUsage            `json:"total_tokens"`
@@ -249,6 +269,9 @@ type PlanInsights struct {
 	WindowUsage    []WindowUsage         `json:"window_usage"`
 	MemberRanking  []MemberUsageRank     `json:"member_ranking"`
 	MemberRankings []MemberRankingPeriod `json:"member_rankings"`
+	ModelUsage     []ModelUsage          `json:"model_usage"`
+	TokenTrend     []DashboardTrendPoint `json:"token_trend"`
+	RecentUsage    []MemberUsageTrend    `json:"recent_usage"`
 }
 
 type PlanDetail struct {

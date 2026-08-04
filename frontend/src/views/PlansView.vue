@@ -89,6 +89,7 @@
                 :refreshing="quotaRefreshing"
                 :performance-period="performancePeriod"
                 :performance-loading="performanceLoading"
+                :theme="theme"
                 @refresh="refreshQuota"
                 @update:performance-period="loadPerformance"
               />
@@ -550,6 +551,7 @@ import {
 } from 'lucide-vue-next'
 import { allocationModeLabel, formatShareBasisPoints } from '../planAllocation'
 import type { Account, Plan, User } from '../types'
+import type { ResolvedTheme } from '../themePreference'
 import AccountConfigSummary from '../components/AccountConfigSummary.vue'
 import EmptyState from '../components/EmptyState.vue'
 import ModalShell from '../components/ModalShell.vue'
@@ -563,6 +565,7 @@ const props = withDefaults(defineProps<{
   accounts: Account[]
   plans: Plan[]
   user: User
+  theme: ResolvedTheme
   initialPlanId?: string
   invitePlanId?: string
 }>(), {

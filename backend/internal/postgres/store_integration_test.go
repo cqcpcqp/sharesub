@@ -247,6 +247,7 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 
 	if err := store.RecordGatewayMetric(ctx, domain.GatewayMetric{
 		RequestID: "applicant-request", APIKeyID: "legacy-key", PlanID: "plan", AccountID: "account", MemberID: "applicant-member",
+		Model: "gpt-5.6-sol", AccountCostMicros: 125,
 		StatusCode: http.StatusOK, TTFT: 120 * time.Millisecond, Duration: 850 * time.Millisecond,
 		TokenUsage: domain.TokenUsage{InputTokens: 1200, OutputTokens: 300, CachedTokens: 400}, CreatedAt: now,
 	}); err != nil {
@@ -254,6 +255,7 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	}
 	if err := store.RecordGatewayMetric(ctx, domain.GatewayMetric{
 		RequestID: "owner-request", APIKeyID: "legacy-key", PlanID: "plan", AccountID: "account", MemberID: "owner-member",
+		Model: "gpt-5.6-terra", AccountCostMicros: 850,
 		StatusCode: http.StatusInternalServerError, TTFT: 300 * time.Millisecond, Duration: 1300 * time.Millisecond,
 		TokenUsage: domain.TokenUsage{InputTokens: 9000, OutputTokens: 1000, CachedTokens: 2000}, CreatedAt: now,
 	}); err != nil {
@@ -271,6 +273,19 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	}
 	if len(dashboard.Trend) != 24 || dashboard.Trend[23].InputTokens != 1200 || dashboard.Trend[23].OutputTokens != 300 {
 		t.Fatalf("dashboard trend = %+v", dashboard.Trend)
+	}
+	usageDetail, err := store.PlanDetail(ctx, "plan", "applicant", now.Truncate(24*time.Hour), now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(usageDetail.Insights.ModelUsage) != 2 || usageDetail.Insights.ModelUsage[0].Model != "gpt-5.6-terra" || usageDetail.Insights.ModelUsage[1].EstimatedCostMicros != 125 {
+		t.Fatalf("plan model usage = %+v", usageDetail.Insights.ModelUsage)
+	}
+	if len(usageDetail.Insights.TokenTrend) != 24 || usageDetail.Insights.TokenTrend[23].InputTokens != 10200 || usageDetail.Insights.TokenTrend[23].OutputTokens != 1300 {
+		t.Fatalf("plan token trend = %+v", usageDetail.Insights.TokenTrend)
+	}
+	if len(usageDetail.Insights.RecentUsage) != 2 || usageDetail.Insights.RecentUsage[0].MemberID != "owner-member" || len(usageDetail.Insights.RecentUsage[0].Trend) != 24 {
+		t.Fatalf("plan recent usage = %+v", usageDetail.Insights.RecentUsage)
 	}
 
 	if err := store.CreateUser(ctx, domain.User{ID: "invitee", Username: "invitee", Email: "invitee@example.com", PasswordHash: "hash", Status: domain.StatusActive, CreatedAt: now}); err != nil {

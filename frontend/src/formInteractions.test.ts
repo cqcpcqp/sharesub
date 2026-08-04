@@ -1,9 +1,10 @@
 // @vitest-environment happy-dom
 
 import { flushPromises, mount } from '@vue/test-utils'
+import { effectScope, reactive } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from './api'
-import type { APIKey, Account, Plan, PlanDetail, PublicPlan, User } from './types'
+import type { APIKey, Account, Plan, PlanDetail, PlanPerformance, PublicPlan, User } from './types'
 import APIKeySetupWizard from './components/APIKeySetupWizard.vue'
 import AccountsView from './views/AccountsView.vue'
 import AuthView from './views/AuthView.vue'
@@ -11,6 +12,7 @@ import KeysView from './views/KeysView.vue'
 import LobbyView from './views/LobbyView.vue'
 import PlansView from './views/PlansView.vue'
 import ProfileView from './views/ProfileView.vue'
+import { usePlansView } from './views/usePlansView'
 
 const createdAt = '2026-08-03T00:00:00Z'
 const owner: User = {
@@ -93,6 +95,9 @@ const detail: PlanDetail = {
       { period: 'last_7_days', window_start: '2026-07-27T12:00:00Z', window_end: '2026-08-03T12:00:00Z', members: [] },
       { period: 'account_lifecycle', window_start: '2026-08-01T00:00:00Z', window_end: '2026-08-03T12:00:00Z', members: [] },
     ],
+    model_usage: [],
+    token_trend: [],
+    recent_usage: [],
   },
 }
 const activePlan: Plan = { ...archivedPlan, id: 'plan-active', name: '共享 Plan', status: 'active', archived_at: undefined }
@@ -157,7 +162,7 @@ describe('form interactions', () => {
     vi.spyOn(api, 'plan').mockResolvedValue(detail)
     const wrapper = mount(PlansView, {
       attachTo: document.body,
-      props: { accounts: [account], plans: [archivedPlan], user: owner },
+      props: { accounts: [account], plans: [archivedPlan], user: owner, theme: 'light' },
       global: { stubs: { teleport: true } },
     })
     await flushPromises()
@@ -191,7 +196,7 @@ describe('form interactions', () => {
     const refreshQuota = vi.spyOn(api, 'refreshPlanQuota').mockResolvedValue({ account_id: account.id, signals: [] })
     const wrapper = mount(PlansView, {
       attachTo: document.body,
-      props: { accounts: [account], plans: [activePlan], user: owner },
+      props: { accounts: [account], plans: [activePlan], user: owner, theme: 'light' },
       global: { stubs: { teleport: true } },
     })
     await flushPromises()
@@ -216,12 +221,55 @@ describe('form interactions', () => {
     const refreshQuota = vi.spyOn(api, 'refreshPlanQuota').mockResolvedValue({ account_id: account.id, signals: [] })
     mount(PlansView, {
       attachTo: document.body,
-      props: { accounts: [], plans: [memberPlan], user: member },
+      props: { accounts: [], plans: [memberPlan], user: member, theme: 'light' },
       global: { stubs: { teleport: true } },
     })
 
     await flushPromises()
     expect(refreshQuota).toHaveBeenCalledWith(memberPlan.id, true)
+  })
+
+  it('keeps the selected performance period data after automatic quota refresh', async () => {
+    const plan = { ...activePlan, id: 'plan-performance-refresh' }
+    const planDetail = { ...activeDetail, plan }
+    const selectedPerformance: PlanPerformance = {
+      request_count: 6,
+      success_count: 5,
+      average_ttft_ms: 10,
+      p95_ttft_ms: 20,
+      average_duration_ms: 30,
+      p95_duration_ms: 40,
+      model_usage: [{
+        model: 'gpt-5.6-sol',
+        request_count: 6,
+        token_usage: { input_tokens: 600, output_tokens: 60, cached_tokens: 30, total_tokens: 660 },
+        estimated_cost_micros: 120,
+      }],
+      token_trend: [{ bucket_start: createdAt, input_tokens: 600, output_tokens: 60, cached_tokens: 30 }],
+      recent_usage: [{ member_id: 'member', username: owner.username, trend: [{ bucket_start: createdAt, input_tokens: 600, output_tokens: 60, cached_tokens: 30 }] }],
+    }
+    let finishRefresh!: () => void
+    const refreshPending = new Promise<void>(resolve => { finishRefresh = resolve })
+    vi.spyOn(api, 'plan').mockImplementation(async () => structuredClone(planDetail))
+    vi.spyOn(api, 'planPerformance').mockResolvedValue(selectedPerformance)
+    vi.spyOn(api, 'refreshPlanQuota').mockImplementation(async () => {
+      await refreshPending
+      return { account_id: account.id, signals: [] }
+    })
+
+    const scope = effectScope()
+    const view = scope.run(() => usePlansView(reactive({ accounts: [account], plans: [plan], user: owner, initialPlanId: '', invitePlanId: '' }), vi.fn()))!
+    await flushPromises()
+    await view.loadPerformance('6h')
+    expect(view.detail.value?.insights.model_usage).toEqual(selectedPerformance.model_usage)
+
+    finishRefresh()
+    await flushPromises()
+    expect(view.detail.value?.insights.performance).toEqual(selectedPerformance)
+    expect(view.detail.value?.insights.model_usage).toEqual(selectedPerformance.model_usage)
+    expect(view.detail.value?.insights.token_trend).toEqual(selectedPerformance.token_trend)
+    expect(view.detail.value?.insights.recent_usage).toEqual(selectedPerformance.recent_usage)
+    scope.stop()
   })
 
   it('edits and clears login credentials', async () => {

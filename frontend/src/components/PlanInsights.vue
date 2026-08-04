@@ -36,6 +36,50 @@
       </article>
     </div>
 
+    <section class="analytics-grid" aria-label="最近 24 小时使用分析">
+      <article class="analytics-panel model-distribution-panel">
+        <header class="analytics-heading">
+          <div><span class="section-label">{{ performancePeriodLabel }}</span><h4>模型分布</h4></div>
+          <strong>{{ formatTokens(modelUsageTotal) }} Token</strong>
+        </header>
+        <div v-if="insights.model_usage.length" class="model-distribution-body">
+          <div class="model-chart-wrap"><ModelDistributionChart :usage="insights.model_usage" :theme="theme" /></div>
+          <div class="model-table-scroll">
+            <table class="model-table">
+              <thead><tr><th>模型</th><th>请求</th><th>Token</th><th>账号费用</th></tr></thead>
+              <tbody>
+                <tr v-for="(item, index) in insights.model_usage" :key="item.model">
+                  <td><span class="model-color" :style="{ backgroundColor: modelColors[index % modelColors.length] }" />{{ item.model }}</td>
+                  <td>{{ formatNumber(item.request_count) }}</td>
+                  <td>{{ formatTokens(item.token_usage.total_tokens) }}</td>
+                  <td class="model-cost">{{ formatUSD(item.estimated_cost_micros) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <p v-else class="analytics-empty">{{ performancePeriodLabel }}还没有模型使用记录。</p>
+      </article>
+
+      <article class="analytics-panel token-trend-panel">
+        <header class="analytics-heading">
+          <div><span class="section-label">{{ performancePeriodLabel }}</span><h4>Token 使用趋势</h4></div>
+          <strong>{{ formatTokens(tokenTrendTotal) }} Token</strong>
+        </header>
+        <div v-if="insights.token_trend.length" class="analytics-chart-wrap"><TokenUsageChart :trend="insights.token_trend" :theme="theme" /></div>
+        <p v-else class="analytics-empty">{{ performancePeriodLabel }}还没有 Token 使用记录。</p>
+      </article>
+    </section>
+
+    <section class="analytics-panel recent-usage-panel">
+      <header class="analytics-heading">
+        <div><span class="section-label">TOP 12 · {{ performancePeriodLabel }}</span><h4>最近使用</h4></div>
+        <strong>{{ insights.recent_usage.length }} 位成员</strong>
+      </header>
+      <div v-if="insights.recent_usage.length" class="recent-chart-wrap"><MemberUsageChart :usage="insights.recent_usage" :theme="theme" /></div>
+      <p v-else class="analytics-empty">{{ performancePeriodLabel }}还没有成员使用记录。</p>
+    </section>
+
     <section class="quota-section">
       <header class="panel-heading quota-heading">
         <div>
@@ -176,9 +220,13 @@ import { computed, ref } from 'vue'
 import { NButton, NProgress, NSelect, NTooltip } from 'naive-ui'
 import { Activity, CircleHelp, Clock3, Gauge, RefreshCw, Timer, Zap } from 'lucide-vue-next'
 import type { Member, MemberRankingPeriodID, PerformancePeriod, PlanAllocationMode, PlanInsights, QuotaWindow, WindowUsage } from '../types'
+import type { ResolvedTheme } from '../themePreference'
 import { formatShareBasisPoints } from '../planAllocation'
 import { formatMilliseconds, formatTokens } from '../dashboardFormat'
 import UserAvatar from './UserAvatar.vue'
+import MemberUsageChart from './MemberUsageChart.vue'
+import ModelDistributionChart from './ModelDistributionChart.vue'
+import TokenUsageChart from './TokenUsageChart.vue'
 
 const props = withDefaults(defineProps<{
   insights: PlanInsights
@@ -188,6 +236,7 @@ const props = withDefaults(defineProps<{
   refreshing?: boolean
   performancePeriod?: PerformancePeriod
   performanceLoading?: boolean
+  theme: ResolvedTheme
 }>(), {
   canRefresh: false,
   refreshing: false,
@@ -197,6 +246,7 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{ refresh: []; 'update:performancePeriod': [value: PerformancePeriod] }>()
 const performancePeriodLabels: Record<PerformancePeriod, string> = {
+  today: '本日',
   '30m': '最近 30 分钟',
   '6h': '最近 6 小时',
   '12h': '最近 12 小时',
@@ -228,6 +278,9 @@ const quotaCards = computed(() => quotaKinds.map(item => ({
 const successRate = computed(() => props.insights.performance.request_count === 0
   ? '--'
   : `${((props.insights.performance.success_count / props.insights.performance.request_count) * 100).toFixed(1)}%`)
+const modelColors = ['#4b7bec', '#18a27f', '#d59020', '#8b5cf6', '#e45b78', '#18a6b8', '#eb7f43', '#6f7a8a', '#57b86d', '#a66dd4', '#e3b341', '#3d93d8']
+const modelUsageTotal = computed(() => props.insights.model_usage.reduce((total, item) => total + item.token_usage.total_tokens, 0))
+const tokenTrendTotal = computed(() => props.insights.token_trend.reduce((total, point) => total + point.input_tokens + point.output_tokens, 0))
 
 const numberFormatter = new Intl.NumberFormat('zh-CN')
 const percentFormatter = new Intl.NumberFormat('zh-CN', { minimumFractionDigits: 1, maximumFractionDigits: 2 })
@@ -298,6 +351,24 @@ function usagePeriod(usage: WindowUsage | undefined) {
 .insights-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .insights-heading > div { min-width: 0; }
 .performance-period-select { width: 132px; flex: 0 0 auto; }
+
+.analytics-grid { min-width: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.analytics-panel { min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); box-shadow: var(--shadow-xs); }
+.analytics-heading { min-height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 13px 16px; border-bottom: 1px solid var(--line-soft); }
+.analytics-heading h4 { margin: 3px 0 0; color: var(--ink-strong); font-size: 13px; }
+.analytics-heading > strong { color: var(--ink); font-size: 10px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.model-distribution-body { min-width: 0; height: 258px; display: grid; grid-template-columns: 180px minmax(0, 1fr); align-items: center; }
+.model-chart-wrap { height: 180px; padding: 8px; }
+.model-table-scroll { min-width: 0; max-height: 238px; overflow: auto; padding-right: 8px; }
+.model-table { min-width: 390px; }
+.model-table th { height: 30px; padding: 0 8px; }
+.model-table td { height: 36px; padding: 6px 8px; }
+.model-table td:first-child { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-strong); font-weight: 700; }
+.model-color { width: 7px; height: 7px; display: inline-block; margin-right: 7px; border-radius: 50%; }
+.model-cost { color: var(--teal); font-weight: 700; }
+.analytics-chart-wrap { height: 258px; padding: 10px 14px 14px; }
+.recent-chart-wrap { height: 300px; padding: 10px 14px 14px; }
+.analytics-empty { height: 180px; display: grid; place-items: center; margin: 0; color: var(--muted); font-size: 10px; }
 
 .performance-grid {
   display: grid;
@@ -426,12 +497,16 @@ tbody tr:hover { background: var(--surface-hover); }
 
 @media (max-width: 1120px) {
   .performance-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .analytics-grid { grid-template-columns: 1fr; }
   .usage-columns { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 720px) {
   .quota-grid { grid-template-columns: 1fr; }
   .quota-card-heading > small { max-width: 48%; }
+  .model-distribution-body { height: auto; grid-template-columns: 1fr; }
+  .model-chart-wrap { height: 200px; }
+  .model-table-scroll { max-height: 220px; padding: 0 10px 10px; }
 }
 
 @media (max-width: 520px) {
@@ -439,6 +514,9 @@ tbody tr:hover { background: var(--surface-hover); }
   .insights-heading { align-items: stretch; flex-direction: column; }
   .performance-period-select { width: 100%; }
   .performance-grid { gap: 8px; }
+  .analytics-heading { align-items: flex-start; flex-direction: column; gap: 5px; }
+  .analytics-chart-wrap { height: 235px; padding-inline: 7px; }
+  .recent-chart-wrap { height: 270px; padding-inline: 7px; }
   .performance-card { min-height: 108px; grid-template-columns: 30px minmax(0, 1fr); gap: 9px; padding: 12px 10px; }
   .performance-icon { width: 30px; height: 30px; }
   .performance-card strong { font-size: 18px; }

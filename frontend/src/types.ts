@@ -141,7 +141,7 @@ export interface QuotaWindow {
 
 export interface MemberQuota { member_id: string; windows: QuotaWindow[] }
 
-export type PerformancePeriod = '30m' | '6h' | '12h' | '24h'
+export type PerformancePeriod = 'today' | '30m' | '6h' | '12h' | '24h'
 
 export interface PerformanceSummary {
   request_count: number
@@ -202,6 +202,25 @@ export interface DashboardTrendPoint {
   cached_tokens: number
 }
 
+export interface ModelUsage {
+  model: string
+  request_count: number
+  token_usage: TokenUsage
+  estimated_cost_micros: number
+}
+
+export interface MemberUsageTrend {
+  member_id: string
+  username: string
+  trend: DashboardTrendPoint[]
+}
+
+export interface PlanPerformance extends PerformanceSummary {
+  model_usage: ModelUsage[]
+  token_trend: DashboardTrendPoint[]
+  recent_usage: MemberUsageTrend[]
+}
+
 export interface Dashboard {
   today_tokens: TokenUsage
   total_tokens: TokenUsage
@@ -216,6 +235,9 @@ export interface PlanInsights {
   window_usage: WindowUsage[]
   member_ranking: MemberUsageRank[]
   member_rankings: MemberRankingPeriod[]
+  model_usage: ModelUsage[]
+  token_trend: DashboardTrendPoint[]
+  recent_usage: MemberUsageTrend[]
 }
 
 export interface PlanDetail {

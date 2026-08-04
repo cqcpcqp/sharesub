@@ -77,18 +77,45 @@ func (s *Service) PlanDetail(ctx context.Context, userID, planID, timezone strin
 	return detail, nil
 }
 
-func (s *Service) PlanPerformance(ctx context.Context, userID, planID, period string) (domain.PerformanceSummary, error) {
-	durations := map[string]time.Duration{
-		"30m": 30 * time.Minute,
-		"6h":  6 * time.Hour,
-		"12h": 12 * time.Hour,
-		"24h": 24 * time.Hour,
+func (s *Service) PlanPerformance(ctx context.Context, userID, planID, period, timezone string) (domain.PlanPerformance, error) {
+	type periodConfig struct {
+		duration   time.Duration
+		bucketSize time.Duration
 	}
-	duration, ok := durations[period]
+	periods := map[string]periodConfig{
+		"30m": {duration: 30 * time.Minute, bucketSize: time.Minute},
+		"6h":  {duration: 6 * time.Hour, bucketSize: 15 * time.Minute},
+		"12h": {duration: 12 * time.Hour, bucketSize: 30 * time.Minute},
+		"24h": {duration: 24 * time.Hour, bucketSize: time.Hour},
+	}
+	now := s.now()
+	if period == "today" {
+		if timezone == "" {
+			timezone = "UTC"
+		}
+		location, err := time.LoadLocation(timezone)
+		if err != nil {
+			return domain.PlanPerformance{}, domain.ErrInvalidInput
+		}
+		localNow := now.In(location)
+		windowStart := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, location)
+		duration := now.Sub(windowStart)
+		bucketSize := time.Hour
+		switch {
+		case duration <= 30*time.Minute:
+			bucketSize = time.Minute
+		case duration <= 6*time.Hour:
+			bucketSize = 15 * time.Minute
+		case duration <= 12*time.Hour:
+			bucketSize = 30 * time.Minute
+		}
+		return s.store.PlanPerformance(ctx, planID, userID, windowStart, now, bucketSize)
+	}
+	config, ok := periods[period]
 	if !ok {
-		return domain.PerformanceSummary{}, domain.ErrInvalidInput
+		return domain.PlanPerformance{}, domain.ErrInvalidInput
 	}
-	return s.store.PlanPerformance(ctx, planID, userID, s.now().Add(-duration))
+	return s.store.PlanPerformance(ctx, planID, userID, now.Add(-config.duration), now, config.bucketSize)
 }
 
 func (s *Service) ListPublicPlans(ctx context.Context, userID string) ([]domain.PublicPlan, error) {

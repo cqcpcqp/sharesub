@@ -39,16 +39,20 @@ type accountConfigStore struct {
 type planAccountStore struct {
 	Store
 	detail               domain.PlanDetail
-	performance          domain.PerformanceSummary
+	performance          domain.PlanPerformance
 	performancePlanID    string
 	performanceUserID    string
 	performanceStartedAt time.Time
+	performanceEndedAt   time.Time
+	performanceBucket    time.Duration
 }
 
-func (s *planAccountStore) PlanPerformance(_ context.Context, planID, userID string, startedAt time.Time) (domain.PerformanceSummary, error) {
+func (s *planAccountStore) PlanPerformance(_ context.Context, planID, userID string, startedAt, endedAt time.Time, bucketSize time.Duration) (domain.PlanPerformance, error) {
 	s.performancePlanID = planID
 	s.performanceUserID = userID
 	s.performanceStartedAt = startedAt
+	s.performanceEndedAt = endedAt
+	s.performanceBucket = bucketSize
 	return s.performance, nil
 }
 
@@ -256,28 +260,43 @@ func TestPlanMemberSeesHydratedAccountConfiguration(t *testing.T) {
 
 func TestPlanPerformanceUsesRequestedFixedPeriod(t *testing.T) {
 	now := time.Date(2026, 8, 4, 10, 0, 0, 0, time.UTC)
-	periods := map[string]time.Duration{
-		"30m": 30 * time.Minute,
-		"6h":  6 * time.Hour,
-		"12h": 12 * time.Hour,
-		"24h": 24 * time.Hour,
+	type periodConfig struct{ duration, bucket time.Duration }
+	periods := map[string]periodConfig{
+		"30m": {duration: 30 * time.Minute, bucket: time.Minute},
+		"6h":  {duration: 6 * time.Hour, bucket: 15 * time.Minute},
+		"12h": {duration: 12 * time.Hour, bucket: 30 * time.Minute},
+		"24h": {duration: 24 * time.Hour, bucket: time.Hour},
 	}
-	for period, duration := range periods {
+	for period, config := range periods {
 		t.Run(period, func(t *testing.T) {
-			store := &planAccountStore{performance: domain.PerformanceSummary{RequestCount: 12}}
+			store := &planAccountStore{performance: domain.PlanPerformance{PerformanceSummary: domain.PerformanceSummary{RequestCount: 12}, ModelUsage: []domain.ModelUsage{{Model: "gpt-5.6-sol"}}}}
 			service := &Service{store: store, now: func() time.Time { return now }}
-			performance, err := service.PlanPerformance(context.Background(), "member", "plan", period)
+			performance, err := service.PlanPerformance(context.Background(), "member", "plan", period, "Asia/Shanghai")
 			if err != nil {
 				t.Fatal(err)
 			}
-			if performance.RequestCount != 12 || store.performancePlanID != "plan" || store.performanceUserID != "member" || !store.performanceStartedAt.Equal(now.Add(-duration)) {
+			if performance.RequestCount != 12 || len(performance.ModelUsage) != 1 || store.performancePlanID != "plan" || store.performanceUserID != "member" || !store.performanceStartedAt.Equal(now.Add(-config.duration)) || !store.performanceEndedAt.Equal(now) || store.performanceBucket != config.bucket {
 				t.Fatalf("performance = %+v, plan = %q, user = %q, start = %s", performance, store.performancePlanID, store.performanceUserID, store.performanceStartedAt)
 			}
 		})
 	}
+	t.Run("today", func(t *testing.T) {
+		store := &planAccountStore{performance: domain.PlanPerformance{}}
+		service := &Service{store: store, now: func() time.Time { return now }}
+		if _, err := service.PlanPerformance(context.Background(), "member", "plan", "today", "Asia/Shanghai"); err != nil {
+			t.Fatal(err)
+		}
+		wantStart := time.Date(2026, 8, 4, 0, 0, 0, 0, time.FixedZone("CST", 8*60*60))
+		if !store.performanceStartedAt.Equal(wantStart) || store.performanceBucket != time.Hour {
+			t.Fatalf("today start = %s, bucket = %s", store.performanceStartedAt, store.performanceBucket)
+		}
+	})
 	service := &Service{store: &planAccountStore{}, now: func() time.Time { return now }}
-	if _, err := service.PlanPerformance(context.Background(), "member", "plan", "1h"); err != domain.ErrInvalidInput {
+	if _, err := service.PlanPerformance(context.Background(), "member", "plan", "1h", "Asia/Shanghai"); err != domain.ErrInvalidInput {
 		t.Fatalf("invalid period error = %v, want invalid input", err)
+	}
+	if _, err := service.PlanPerformance(context.Background(), "member", "plan", "today", "invalid/timezone"); err != domain.ErrInvalidInput {
+		t.Fatalf("invalid timezone error = %v, want invalid input", err)
 	}
 }
 

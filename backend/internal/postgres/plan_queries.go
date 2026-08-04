@@ -79,6 +79,9 @@ func (s *Store) PlanDetail(ctx context.Context, planID, userID string, todayStar
 			WindowUsage:    make([]domain.WindowUsage, 0),
 			MemberRanking:  make([]domain.MemberUsageRank, 0),
 			MemberRankings: make([]domain.MemberRankingPeriod, 0),
+			ModelUsage:     make([]domain.ModelUsage, 0),
+			TokenTrend:     make([]domain.DashboardTrendPoint, 0),
+			RecentUsage:    make([]domain.MemberUsageTrend, 0),
 		},
 	}
 	err := s.pool.QueryRow(ctx, `SELECT p.id,p.owner_user_id,p.account_id,p.name,p.status,p.visibility,p.public_slots,p.public_share_basis_points,p.allocation_mode,p.created_at,p.archived_at,a.id,a.owner_user_id,a.name,a.notes,a.email,a.chatgpt_account_id,a.plan_type,a.proxy_url_ciphertext,a.max_concurrency,a.rpm_limit,a.fast_policy,a.token_expires_at,a.status,a.last_error,a.created_at FROM shared_plans p JOIN plan_members viewer ON viewer.plan_id=p.id AND viewer.user_id=$2 AND viewer.status='active' JOIN openai_accounts a ON a.id=p.account_id WHERE p.id=$1`, planID, userID).Scan(&out.Plan.ID, &out.Plan.OwnerUserID, &out.Plan.AccountID, &out.Plan.Name, &out.Plan.Status, &out.Plan.Visibility, &out.Plan.PublicSlots, &out.Plan.PublicShareBasisPoints, &out.Plan.AllocationMode, &out.Plan.CreatedAt, &out.Plan.ArchivedAt, &out.Account.ID, &out.Account.OwnerUserID, &out.Account.Name, &out.Account.Notes, &out.Account.Email, &out.Account.ChatGPTAccountID, &out.Account.PlanType, &out.Account.ProxyURLCiphertext, &out.Account.MaxConcurrency, &out.Account.RPMLimit, &out.Account.FastPolicy, &out.Account.TokenExpiresAt, &out.Account.Status, &out.Account.LastError, &out.Account.CreatedAt)
@@ -131,6 +134,9 @@ func (s *Store) planInsights(ctx context.Context, planID, userID, accountID stri
 		WindowUsage:    make([]domain.WindowUsage, 0, 2),
 		MemberRanking:  make([]domain.MemberUsageRank, 0, len(members)),
 		MemberRankings: make([]domain.MemberRankingPeriod, 0, 4),
+		ModelUsage:     make([]domain.ModelUsage, 0),
+		TokenTrend:     make([]domain.DashboardTrendPoint, 0, 24),
+		RecentUsage:    make([]domain.MemberUsageTrend, 0, 12),
 	}
 	memberIndexes := make(map[string]int, len(members))
 	for _, member := range members {
@@ -223,15 +229,123 @@ func (s *Store) planInsights(ctx context.Context, planID, userID, accountID stri
 		}
 	}
 
-	out.Performance, err = s.PlanPerformance(ctx, planID, userID, now.Add(-24*time.Hour))
+	performance, err := s.PlanPerformance(ctx, planID, userID, now.Add(-24*time.Hour), now, time.Hour)
 	if err != nil {
 		return out, err
 	}
+	out.Performance = performance.PerformanceSummary
+	out.ModelUsage = performance.ModelUsage
+	out.TokenTrend = performance.TokenTrend
+	out.RecentUsage = performance.RecentUsage
 	return out, nil
 }
 
-func (s *Store) PlanPerformance(ctx context.Context, planID, userID string, windowStart time.Time) (domain.PerformanceSummary, error) {
-	var out domain.PerformanceSummary
+func (s *Store) planModelUsage(ctx context.Context, planID string, windowStart, windowEnd time.Time) ([]domain.ModelUsage, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT model,count(*),sum(input_tokens),sum(output_tokens),sum(cached_tokens),sum(estimated_cost_micros)
+		FROM gateway_request_metrics
+		WHERE plan_id=$1 AND created_at>=$2 AND created_at<=$3
+		GROUP BY model
+		ORDER BY sum(input_tokens+output_tokens) DESC,count(*) DESC,model`, planID, windowStart, windowEnd)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]domain.ModelUsage, 0)
+	for rows.Next() {
+		var usage domain.ModelUsage
+		if err := rows.Scan(&usage.Model, &usage.RequestCount, &usage.TokenUsage.InputTokens, &usage.TokenUsage.OutputTokens, &usage.TokenUsage.CachedTokens, &usage.EstimatedCostMicros); err != nil {
+			return nil, err
+		}
+		usage.TokenUsage.TotalTokens = usage.TokenUsage.InputTokens + usage.TokenUsage.OutputTokens
+		out = append(out, usage)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) planTokenTrend(ctx context.Context, planID string, trendStart, now time.Time, bucketSize time.Duration) ([]domain.DashboardTrendPoint, error) {
+	rows, err := s.pool.Query(ctx, `
+		WITH buckets AS (
+			SELECT generate_series($2::timestamptz,$3::timestamptz - INTERVAL '1 microsecond',$4::interval) AS bucket_start
+		), usage AS (
+			SELECT date_bin($4::interval,created_at,$2::timestamptz) AS bucket_start,
+				sum(input_tokens) AS input_tokens,sum(output_tokens) AS output_tokens,sum(cached_tokens) AS cached_tokens
+			FROM gateway_request_metrics
+			WHERE plan_id=$1 AND created_at>=$2 AND created_at<=$3
+			GROUP BY 1
+		)
+		SELECT b.bucket_start,COALESCE(u.input_tokens,0),COALESCE(u.output_tokens,0),COALESCE(u.cached_tokens,0)
+		FROM buckets b LEFT JOIN usage u ON u.bucket_start=b.bucket_start
+		ORDER BY b.bucket_start`, planID, trendStart, now, bucketSize.String())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]domain.DashboardTrendPoint, 0, 24)
+	for rows.Next() {
+		var point domain.DashboardTrendPoint
+		if err := rows.Scan(&point.BucketStart, &point.InputTokens, &point.OutputTokens, &point.CachedTokens); err != nil {
+			return nil, err
+		}
+		out = append(out, point)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) planRecentUsage(ctx context.Context, planID string, trendStart, now time.Time, bucketSize time.Duration) ([]domain.MemberUsageTrend, error) {
+	rows, err := s.pool.Query(ctx, `
+		WITH top_members AS (
+			SELECT g.member_id,u.username,sum(g.input_tokens+g.output_tokens) AS total_tokens
+			FROM gateway_request_metrics g
+			JOIN plan_members m ON m.id=g.member_id
+			JOIN users u ON u.id=m.user_id
+			WHERE g.plan_id=$1 AND g.created_at>=$2 AND g.created_at<=$3
+			GROUP BY g.member_id,u.username
+			ORDER BY total_tokens DESC,g.member_id
+			LIMIT 12
+		), buckets AS (
+			SELECT generate_series($2::timestamptz,$3::timestamptz - INTERVAL '1 microsecond',$4::interval) AS bucket_start
+		), usage AS (
+			SELECT g.member_id,date_bin($4::interval,g.created_at,$2::timestamptz) AS bucket_start,
+				sum(g.input_tokens) AS input_tokens,sum(g.output_tokens) AS output_tokens,sum(g.cached_tokens) AS cached_tokens
+			FROM gateway_request_metrics g
+			JOIN top_members top ON top.member_id=g.member_id
+			WHERE g.plan_id=$1 AND g.created_at>=$2 AND g.created_at<=$3
+			GROUP BY g.member_id,2
+		)
+		SELECT top.member_id,top.username,b.bucket_start,COALESCE(u.input_tokens,0),COALESCE(u.output_tokens,0),COALESCE(u.cached_tokens,0)
+		FROM top_members top CROSS JOIN buckets b
+		LEFT JOIN usage u ON u.member_id=top.member_id AND u.bucket_start=b.bucket_start
+		ORDER BY top.total_tokens DESC,top.member_id,b.bucket_start`, planID, trendStart, now, bucketSize.String())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]domain.MemberUsageTrend, 0, 12)
+	memberIndexes := make(map[string]int, 12)
+	for rows.Next() {
+		var memberID, username string
+		var point domain.DashboardTrendPoint
+		if err := rows.Scan(&memberID, &username, &point.BucketStart, &point.InputTokens, &point.OutputTokens, &point.CachedTokens); err != nil {
+			return nil, err
+		}
+		index, ok := memberIndexes[memberID]
+		if !ok {
+			index = len(out)
+			memberIndexes[memberID] = index
+			out = append(out, domain.MemberUsageTrend{MemberID: memberID, Username: username, Trend: make([]domain.DashboardTrendPoint, 0, 24)})
+		}
+		out[index].Trend = append(out[index].Trend, point)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) PlanPerformance(ctx context.Context, planID, userID string, windowStart, windowEnd time.Time, bucketSize time.Duration) (domain.PlanPerformance, error) {
+	out := domain.PlanPerformance{
+		ModelUsage:  make([]domain.ModelUsage, 0),
+		TokenTrend:  make([]domain.DashboardTrendPoint, 0),
+		RecentUsage: make([]domain.MemberUsageTrend, 0),
+	}
 	err := s.pool.QueryRow(ctx, `
 		WITH authorized AS (
 			SELECT p.id
@@ -245,11 +359,23 @@ func (s *Store) PlanPerformance(ctx context.Context, planID, userID string, wind
 			COALESCE(avg(g.duration_ms),0)::float8,
 			COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY g.duration_ms),0)::float8
 		FROM authorized a
-		LEFT JOIN gateway_request_metrics g ON g.plan_id=a.id AND g.created_at>=$3
-		GROUP BY a.id`, planID, userID, windowStart,
+		LEFT JOIN gateway_request_metrics g ON g.plan_id=a.id AND g.created_at>=$3 AND g.created_at<=$4
+		GROUP BY a.id`, planID, userID, windowStart, windowEnd,
 	).Scan(&out.RequestCount, &out.SuccessCount, &out.AverageTTFTMs, &out.P95TTFTMs, &out.AverageDurationMs, &out.P95DurationMs)
 	if err != nil {
-		return domain.PerformanceSummary{}, mapError(err)
+		return domain.PlanPerformance{}, mapError(err)
+	}
+	out.ModelUsage, err = s.planModelUsage(ctx, planID, windowStart, windowEnd)
+	if err != nil {
+		return domain.PlanPerformance{}, err
+	}
+	out.TokenTrend, err = s.planTokenTrend(ctx, planID, windowStart, windowEnd, bucketSize)
+	if err != nil {
+		return domain.PlanPerformance{}, err
+	}
+	out.RecentUsage, err = s.planRecentUsage(ctx, planID, windowStart, windowEnd, bucketSize)
+	if err != nil {
+		return domain.PlanPerformance{}, err
 	}
 	return out, nil
 }

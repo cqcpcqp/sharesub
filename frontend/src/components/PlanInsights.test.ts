@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest'
 import PlanInsights from './PlanInsights.vue'
 
 describe('PlanInsights performance period', () => {
-  it('offers the four fixed periods and emits a selection change', async () => {
+  it('offers today and the four fixed periods and emits a selection change', async () => {
     const wrapper = mount(PlanInsights, {
       props: {
         insights: {
@@ -25,16 +25,22 @@ describe('PlanInsights performance period', () => {
           member_rankings: [
             { period: 'today', window_start: '2026-08-04T00:00:00Z', window_end: '2026-08-04T10:00:00Z', members: [] },
           ],
+          model_usage: [], token_trend: [], recent_usage: [],
         },
         members: [],
         allocationMode: 'shared',
         performancePeriod: '24h',
+        theme: 'light',
       },
     })
 
     const selects = wrapper.findAllComponents(NSelect)
+    expect(wrapper.text()).toContain('模型分布')
+    expect(wrapper.text()).toContain('Token 使用趋势')
+    expect(wrapper.text()).toContain('最近使用')
     const performanceSelect = selects.find(select => select.attributes('aria-label') === '性能统计时间段')!
     expect(performanceSelect.props('options')).toEqual([
+      { value: 'today', label: '本日' },
       { value: '30m', label: '最近 30 分钟' },
       { value: '6h', label: '最近 6 小时' },
       { value: '12h', label: '最近 12 小时' },
@@ -43,7 +49,10 @@ describe('PlanInsights performance period', () => {
     performanceSelect.vm.$emit('update:value', '6h')
     await wrapper.vm.$nextTick()
     expect(wrapper.emitted('update:performancePeriod')).toEqual([['6h']])
-    const rankingSelect = selects.find(select => (select.props('options') as Array<{ value: string }>).some(option => option.value === 'today'))!
+    await wrapper.setProps({ performancePeriod: '6h' })
+    expect(wrapper.find('.analytics-grid').text()).toContain('最近 6 小时')
+    expect(wrapper.find('.recent-usage-panel').text()).toContain('TOP 12 · 最近 6 小时')
+    const rankingSelect = selects.find(select => select !== performanceSelect && (select.props('options') as Array<{ value: string }>).some(option => option.value === 'today'))!
     expect(rankingSelect.props('value')).toBe('today')
   })
 
@@ -57,9 +66,11 @@ describe('PlanInsights performance period', () => {
           window_usage: [],
           member_ranking: [],
           member_rankings: [{ period: 'today', window_start: '2026-08-04T00:00:00Z', window_end: '2026-08-04T10:00:00Z', members: [] }],
+          model_usage: [], token_trend: [], recent_usage: [],
         },
         members: [{ id: 'member', plan_id: 'plan', user_id: 'user', username: '成员', avatar_url: '', email: 'member@example.com', role: 'member', status: 'active', share_basis_points: 0, created_at: '2026-08-04T00:00:00Z' }],
         allocationMode: 'shared',
+        theme: 'light',
       },
     })
 
@@ -78,9 +89,11 @@ describe('PlanInsights performance period', () => {
           window_usage: [],
           member_ranking: [],
           member_rankings: [{ period: 'today', window_start: '2026-08-04T00:00:00Z', window_end: '2026-08-04T10:00:00Z', members: [] }],
+          model_usage: [], token_trend: [], recent_usage: [],
         },
         members: [],
         allocationMode: 'shared',
+        theme: 'light',
       },
     })
 

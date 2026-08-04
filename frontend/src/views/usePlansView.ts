@@ -196,6 +196,9 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
       const value = await api.planPerformance(planID, period)
       if (requestSequence !== performanceRequestSequence || detail.value?.plan.id !== planID) return
       detail.value.insights.performance = value
+      detail.value.insights.model_usage = value.model_usage
+      detail.value.insights.token_trend = value.token_trend
+      detail.value.insights.recent_usage = value.recent_usage
     } catch (error) {
       if (requestSequence === performanceRequestSequence) notifyError(error)
     } finally {
@@ -215,7 +218,12 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
       await api.refreshPlanQuota(planID, true)
       const value = await api.plan(planID)
       if (requestSequence !== planRequestSequence) return
-      if (performancePeriod.value !== '24h' && detail.value?.plan.id === planID) value.insights.performance = detail.value.insights.performance
+      if (performancePeriod.value !== '24h' && detail.value?.plan.id === planID) {
+        value.insights.performance = detail.value.insights.performance
+        value.insights.model_usage = detail.value.insights.model_usage
+        value.insights.token_trend = detail.value.insights.token_trend
+        value.insights.recent_usage = detail.value.insights.recent_usage
+      }
       detail.value = value
       syncDetail(value)
     } catch (error) {
