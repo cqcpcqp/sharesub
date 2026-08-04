@@ -34,7 +34,7 @@
         </NTooltip>
         <div class="brand"><BrandMark :size="38" /><div><strong>ShareSub</strong><span>Access together</span></div></div>
         <span class="nav-label">工作台</span>
-        <nav aria-label="主导航">
+        <nav class="desktop-nav" aria-label="主导航">
           <NTooltip v-for="item in navItems" :key="item.id" placement="right" :disabled="!sidebarCollapsed">
             <template #trigger>
               <NButton quaternary :class="{ active: activeView === item.id }" :aria-current="activeView === item.id ? 'page' : undefined" @click="navigateToView(item.id)">
@@ -43,6 +43,48 @@
             </template>
             {{ item.label }}
           </NTooltip>
+        </nav>
+        <nav class="mobile-nav" aria-label="移动端主导航">
+          <NButton
+            v-for="item in mobilePrimaryItems"
+            :key="item.id"
+            quaternary
+            :class="{ active: activeView === item.id }"
+            :aria-current="activeView === item.id ? 'page' : undefined"
+            @click="navigateToView(item.id)"
+          >
+            <span class="nav-icon"><component :is="item.icon" :size="18" /></span>
+            <span class="nav-text-mobile">{{ item.shortLabel }}</span>
+          </NButton>
+          <NPopover v-model:show="mobileMoreOpen" trigger="click" placement="top-end" :show-arrow="false">
+            <template #trigger>
+              <NButton
+                quaternary
+                :class="{ active: mobileSecondaryItems.some(item => item.id === activeView) }"
+                aria-label="更多导航"
+                :aria-expanded="mobileMoreOpen"
+              >
+                <span class="nav-icon"><Ellipsis :size="18" /></span>
+                <span class="nav-text-mobile">更多</span>
+              </NButton>
+            </template>
+            <div class="mobile-more-menu" aria-label="更多功能">
+              <NButton
+                v-for="item in mobileSecondaryItems"
+                :key="item.id"
+                quaternary
+                :class="{ active: activeView === item.id }"
+                @click="navigateFromMobileMenu(item.id)"
+              >
+                <template #icon><component :is="item.icon" :size="18" /></template>
+                {{ item.label }}
+              </NButton>
+              <NButton quaternary type="error" @click="logoutFromMobileMenu">
+                <template #icon><LogOut :size="18" /></template>
+                退出登录
+              </NButton>
+            </div>
+          </NPopover>
         </nav>
         <div class="profile-menu">
           <NTooltip placement="right" :disabled="!sidebarCollapsed">
@@ -106,9 +148,9 @@
 </template>
 
 <script setup lang="ts">
-import { darkTheme, NAlert, NButton, NConfigProvider, NSpin, NTooltip } from 'naive-ui'
+import { darkTheme, NAlert, NButton, NConfigProvider, NPopover, NSpin, NTooltip } from 'naive-ui'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { ChevronRight, Compass, KeyRound, Layers3, LayoutDashboard, LogOut, PanelLeftClose, PanelLeftOpen, Settings, ShieldCheck, UsersRound } from 'lucide-vue-next'
+import { ChevronRight, Compass, Ellipsis, KeyRound, Layers3, LayoutDashboard, LogOut, PanelLeftClose, PanelLeftOpen, Settings, ShieldCheck, UsersRound } from 'lucide-vue-next'
 import { api, clearSessionToken, sessionToken } from './api'
 import type { Account, APIKey, Dashboard, InvitePreview, Notification as UserNotification, Plan, PublicPlan, User } from './types'
 import AccountsView from './views/AccountsView.vue'
@@ -177,6 +219,9 @@ const resolvedTheme = computed(() => resolveTheme(themeMode.value, systemPrefers
 const naiveTheme = computed(() => resolvedTheme.value === 'dark' ? darkTheme : null)
 const activeThemeOverrides = computed(() => resolvedTheme.value === 'dark' ? darkThemeOverrides : lightThemeOverrides)
 const navItems = computed(() => user.value?.is_admin ? [...nav.slice(0, -1), adminNav, nav[nav.length - 1]] : nav)
+const mobilePrimaryItems = computed(() => navItems.value.filter(item => ['dashboard', 'lobby', 'plans', 'keys'].includes(item.id)))
+const mobileSecondaryItems = computed(() => navItems.value.filter(item => !mobilePrimaryItems.value.includes(item)))
+const mobileMoreOpen = ref(false)
 const usablePlanIDs = computed(() => new Set(plans.value.map(plan => plan.id)))
 const hasUsableKey = computed(() => keys.value.some(key => key.status === 'active' && key.routes.some(route => route.enabled && usablePlanIDs.value.has(route.plan_id))))
 const showOnboarding = computed(() => bootstrapped.value && (plans.value.length === 0 || !hasUsableKey.value))
@@ -226,6 +271,16 @@ function navigateToView(view: ViewID, replace = false) {
   if (view === 'admin' && !user.value?.is_admin) return
   activeView.value = view
   updateRoute({ kind: 'view', view }, replace)
+}
+
+function navigateFromMobileMenu(view: ViewID) {
+  mobileMoreOpen.value = false
+  navigateToView(view)
+}
+
+async function logoutFromMobileMenu() {
+  mobileMoreOpen.value = false
+  await logout()
 }
 
 function navigateToLogin(replace = false) { updateRoute({ kind: 'login' }, replace) }
