@@ -3,6 +3,9 @@ import { APIRequestError, api } from '../api'
 import { allocationShareBasisPoints, formatShareBasisPoints } from '../planAllocation'
 import type { Account, AuditEvent, Member, Plan, PlanAllocationMode, PlanDetail, User } from '../types'
 
+const automaticQuotaRefreshes = new Map<string, number>()
+const automaticQuotaRefreshTTL = 5 * 60 * 1000
+
 export interface PlansViewProps { accounts: Account[]; plans: Plan[]; user: User; initialPlanId: string; invitePlanId: string }
 export interface PlansViewEmit {
   (event: 'changed'): void
@@ -170,10 +173,30 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
       detail.value = value
       syncDetail(value)
       if (activeTab.value === 'activity') void loadAudit(id)
+      if (value.plan.status !== 'archived') void refreshQuotaAutomatically(id, requestSequence)
     } catch (error) {
       if (requestSequence === planRequestSequence) notifyError(error)
     } finally {
       if (requestSequence === planRequestSequence) planLoading.value = false
+    }
+  }
+
+  async function refreshQuotaAutomatically(planID: string, requestSequence: number) {
+    const lastRefresh = automaticQuotaRefreshes.get(planID)
+    if (lastRefresh !== undefined && Date.now() - lastRefresh < automaticQuotaRefreshTTL) return
+    automaticQuotaRefreshes.set(planID, Date.now())
+    quotaRefreshing.value = true
+    try {
+      await api.refreshPlanQuota(planID, true)
+      const value = await api.plan(planID)
+      if (requestSequence !== planRequestSequence) return
+      detail.value = value
+      syncDetail(value)
+    } catch (error) {
+      automaticQuotaRefreshes.delete(planID)
+      console.error('Failed to refresh Plan quota automatically:', error)
+    } finally {
+      if (requestSequence === planRequestSequence) quotaRefreshing.value = false
     }
   }
 

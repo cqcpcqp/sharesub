@@ -388,6 +388,36 @@ func (s *Store) PlanQuotaCredential(ctx context.Context, planID, ownerID string)
 	return out, nil
 }
 
+func (s *Store) PlanQuotaCredentialForMember(ctx context.Context, planID, userID string) (domain.PlanQuotaCredential, error) {
+	var out domain.PlanQuotaCredential
+	err := s.pool.QueryRow(ctx, `
+		SELECT p.id,a.id,owner_member.id,a.owner_user_id,a.chatgpt_account_id,a.access_token_ciphertext,a.refresh_token_ciphertext,a.proxy_url_ciphertext,a.token_expires_at
+		FROM shared_plans p
+		JOIN plan_members viewer ON viewer.plan_id=p.id AND viewer.user_id=$2 AND viewer.status='active'
+		JOIN plan_members owner_member ON owner_member.plan_id=p.id AND owner_member.role='owner' AND owner_member.status='active'
+		JOIN openai_accounts a ON a.id=p.account_id AND a.status='active'
+		WHERE p.id=$1 AND p.status='active'`, planID, userID,
+	).Scan(&out.PlanID, &out.AccountID, &out.OwnerMemberID, &out.AccountOwnerUserID, &out.ChatGPTAccountID, &out.AccessTokenCiphertext, &out.RefreshTokenCiphertext, &out.ProxyURLCiphertext, &out.TokenExpiresAt)
+	if err != nil {
+		return domain.PlanQuotaCredential{}, mapError(err)
+	}
+	return out, nil
+}
+
+func (s *Store) AccountQuotaUpdatedAt(ctx context.Context, accountID string) (time.Time, error) {
+	var updatedAt time.Time
+	err := s.pool.QueryRow(ctx, `
+		SELECT CASE
+			WHEN COUNT(DISTINCT window_type) FILTER (WHERE window_type IN ('5h','7d')) = 2
+			THEN MIN(updated_at) FILTER (WHERE window_type IN ('5h','7d'))
+			ELSE to_timestamp(0)
+		END
+		FROM account_quota_snapshots
+		WHERE account_id=$1`, accountID,
+	).Scan(&updatedAt)
+	return updatedAt, err
+}
+
 func (s *Store) ListNotifications(ctx context.Context, userID string) (domain.NotificationList, error) {
 	out := domain.NotificationList{Items: make([]domain.Notification, 0)}
 	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM notifications WHERE user_id=$1 AND read_at IS NULL`, userID).Scan(&out.UnreadCount); err != nil {

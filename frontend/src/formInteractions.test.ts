@@ -21,6 +21,14 @@ const owner: User = {
   status: 'active',
   created_at: createdAt,
 }
+const member: User = {
+  id: 'member-user',
+  username: '成员',
+  email: 'member@example.com',
+  avatar_url: '',
+  status: 'active',
+  created_at: createdAt,
+}
 const account: Account = {
   id: 'account',
   owner_user_id: owner.id,
@@ -114,6 +122,26 @@ const activeDetail: PlanDetail = {
   plan: activePlan,
   members: detail.members.map(member => ({ ...member, plan_id: activePlan.id })),
 }
+const memberPlan: Plan = { ...activePlan, id: 'plan-member-auto', owner_user_id: owner.id }
+const memberDetail: PlanDetail = {
+  ...activeDetail,
+  plan: memberPlan,
+  members: [
+    { ...activeDetail.members[0], plan_id: memberPlan.id },
+    {
+      id: 'member-record',
+      plan_id: memberPlan.id,
+      user_id: member.id,
+      username: member.username,
+      avatar_url: '',
+      email: member.email,
+      role: 'member',
+      status: 'active',
+      share_basis_points: 0,
+      created_at: createdAt,
+    },
+  ],
+}
 
 function findButton(wrapper: ReturnType<typeof mount>, text: string) {
   return wrapper.findAll('button').find(button => button.text().trim() === text)
@@ -160,12 +188,14 @@ describe('form interactions', () => {
 
   it('allows public seat input to be cleared while preventing an invalid save', async () => {
     vi.spyOn(api, 'plan').mockResolvedValue(activeDetail)
+    const refreshQuota = vi.spyOn(api, 'refreshPlanQuota').mockResolvedValue({ account_id: account.id, signals: [] })
     const wrapper = mount(PlansView, {
       attachTo: document.body,
       props: { accounts: [account], plans: [activePlan], user: owner },
       global: { stubs: { teleport: true } },
     })
     await flushPromises()
+    expect(refreshQuota).toHaveBeenCalledWith(activePlan.id, true)
     const settings = wrapper.findAll('.n-tabs-tab').find(tab => tab.text().includes('设置'))!
     await settings.trigger('click')
     await wrapper.get('.publication-control .n-switch').trigger('click')
@@ -179,6 +209,19 @@ describe('form interactions', () => {
     await slots.trigger('blur')
     expect(slots.element).toHaveProperty('value', '3')
     expect(findButton(wrapper, '保存设置')!.attributes('disabled')).toBeUndefined()
+  })
+
+  it('automatically refreshes quota when a regular member enters an active Plan', async () => {
+    vi.spyOn(api, 'plan').mockResolvedValue(memberDetail)
+    const refreshQuota = vi.spyOn(api, 'refreshPlanQuota').mockResolvedValue({ account_id: account.id, signals: [] })
+    mount(PlansView, {
+      attachTo: document.body,
+      props: { accounts: [], plans: [memberPlan], user: member },
+      global: { stubs: { teleport: true } },
+    })
+
+    await flushPromises()
+    expect(refreshQuota).toHaveBeenCalledWith(memberPlan.id, true)
   })
 
   it('edits and clears login credentials', async () => {

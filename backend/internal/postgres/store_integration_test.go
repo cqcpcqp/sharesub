@@ -388,6 +388,11 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if _, err := store.PlanQuotaCredential(ctx, sharedPlan.ID, "second"); err != nil {
 		t.Fatal(err)
 	}
+	if credential, err := store.PlanQuotaCredentialForMember(ctx, sharedPlan.ID, "owner"); err != nil {
+		t.Fatal(err)
+	} else if credential.OwnerMemberID != "shared-member" {
+		t.Fatalf("member-triggered quota credential owner = %q, want shared-member", credential.OwnerMemberID)
+	}
 	events, err := store.ListPlanAuditEvents(ctx, sharedPlan.ID, "owner")
 	if err != nil {
 		t.Fatal(err)
@@ -414,6 +419,9 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	}
 	if _, err := store.PlanQuotaCredential(ctx, sharedPlan.ID, "second"); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("archived Plan quota credential error = %v, want not found", err)
+	}
+	if _, err := store.PlanQuotaCredentialForMember(ctx, sharedPlan.ID, "owner"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("archived Plan member quota credential error = %v, want not found", err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO shared_plans(id,owner_user_id,account_id,name,status,visibility,allocation_mode,archived_at,created_at,updated_at) VALUES('legacy-duplicate-plan','second','second-account','旧归档 Plan','archived','private','shared',$1,$1,$1)`, now); err != nil {
 		t.Fatal(err)

@@ -226,11 +226,15 @@ func (s *Server) listPlanAuditEvents(w http.ResponseWriter, r *http.Request) {
 	writeResult(w, v, err)
 }
 func (s *Server) manualQuotaRefresh(w http.ResponseWriter, r *http.Request) {
-	ownerID := currentUser(r).ID
+	userID := currentUser(r).ID
 	planID := r.PathValue("planID")
-	probe, err := s.app.PreparePlanQuotaProbe(r.Context(), ownerID, planID)
+	probe, shouldProbe, err := s.prepareQuotaRefresh(r, userID, planID)
 	if err != nil {
 		writeError(w, err)
+		return
+	}
+	if !shouldProbe {
+		writeJSON(w, http.StatusOK, map[string]any{"account_id": probe.AccountID, "signals": []domain.QuotaSignal{}})
 		return
 	}
 	signals, err := s.gateway.ProbeQuota(r.Context(), probe.AccessToken, probe.ChatGPTAccountID, probe.ProxyURL)
@@ -239,11 +243,26 @@ func (s *Server) manualQuotaRefresh(w http.ResponseWriter, r *http.Request) {
 		writeErrorStatus(w, http.StatusBadGateway, "quota_probe_failed", "OpenAI quota query failed")
 		return
 	}
-	if err := s.app.RecordManualQuotaSignals(r.Context(), ownerID, planID, signals); err != nil {
+	if err := s.recordQuotaRefresh(r, userID, planID, signals); err != nil {
 		writeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"account_id": probe.AccountID, "signals": signals})
+}
+
+func (s *Server) recordQuotaRefresh(r *http.Request, userID, planID string, signals []domain.QuotaSignal) error {
+	if r.URL.Query().Get("automatic") == "true" {
+		return s.app.RecordAutomaticQuotaSignals(r.Context(), userID, planID, signals)
+	}
+	return s.app.RecordManualQuotaSignals(r.Context(), userID, planID, signals)
+}
+
+func (s *Server) prepareQuotaRefresh(r *http.Request, userID, planID string) (application.PlanQuotaProbe, bool, error) {
+	if r.URL.Query().Get("automatic") == "true" {
+		return s.app.PrepareAutomaticPlanQuotaProbe(r.Context(), userID, planID)
+	}
+	probe, err := s.app.PreparePlanQuotaProbe(r.Context(), userID, planID)
+	return probe, true, err
 }
 func (s *Server) listPublicPlans(w http.ResponseWriter, r *http.Request) {
 	v, err := s.app.ListPublicPlans(r.Context(), currentUser(r).ID)

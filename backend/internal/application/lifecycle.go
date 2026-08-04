@@ -17,6 +17,8 @@ type PlanQuotaProbe struct {
 	ProxyURL         string `json:"-"`
 }
 
+const automaticQuotaProbeTTL = 10 * time.Minute
+
 func (s *Service) RenamePlan(ctx context.Context, ownerID, planID, name string) (domain.Plan, error) {
 	name = strings.TrimSpace(name)
 	if utf8.RuneCountInString(name) < 1 || utf8.RuneCountInString(name) > 100 {
@@ -106,6 +108,26 @@ func (s *Service) PreparePlanQuotaProbe(ctx context.Context, ownerID, planID str
 	if err != nil {
 		return PlanQuotaProbe{}, err
 	}
+	return s.preparePlanQuotaProbe(ctx, credential)
+}
+
+func (s *Service) PrepareAutomaticPlanQuotaProbe(ctx context.Context, userID, planID string) (PlanQuotaProbe, bool, error) {
+	credential, err := s.store.PlanQuotaCredentialForMember(ctx, planID, userID)
+	if err != nil {
+		return PlanQuotaProbe{}, false, err
+	}
+	updatedAt, err := s.store.AccountQuotaUpdatedAt(ctx, credential.AccountID)
+	if err != nil {
+		return PlanQuotaProbe{}, false, err
+	}
+	if s.now().Sub(updatedAt) < automaticQuotaProbeTTL {
+		return PlanQuotaProbe{AccountID: credential.AccountID}, false, nil
+	}
+	probe, err := s.preparePlanQuotaProbe(ctx, credential)
+	return probe, true, err
+}
+
+func (s *Service) preparePlanQuotaProbe(ctx context.Context, credential domain.PlanQuotaCredential) (PlanQuotaProbe, error) {
 	scope := credential.AccountOwnerUserID + ":" + credential.ChatGPTAccountID
 	accessToken, err := s.security.Decrypt(credential.AccessTokenCiphertext, []byte(scope+":access"))
 	if err != nil {
@@ -146,6 +168,17 @@ func (s *Service) PreparePlanQuotaProbe(ctx context.Context, ownerID, planID str
 
 func (s *Service) RecordManualQuotaSignals(ctx context.Context, ownerID, planID string, signals []domain.QuotaSignal) error {
 	credential, err := s.store.PlanQuotaCredential(ctx, planID, ownerID)
+	if err != nil {
+		return err
+	}
+	if len(signals) == 0 {
+		return domain.ErrInvalidInput
+	}
+	return s.store.RecordQuotaSignals(ctx, credential.AccountID, credential.OwnerMemberID, signals, "", s.now())
+}
+
+func (s *Service) RecordAutomaticQuotaSignals(ctx context.Context, userID, planID string, signals []domain.QuotaSignal) error {
+	credential, err := s.store.PlanQuotaCredentialForMember(ctx, planID, userID)
 	if err != nil {
 		return err
 	}

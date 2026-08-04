@@ -90,7 +90,7 @@ export const api = {
   transferPlanOwnership: (id: string, memberID: string) => request<Plan>(`/api/plans/${id}/owner`, { method: 'PATCH', body: JSON.stringify({ member_id: memberID }) }),
   rebindPlanAccount: (id: string, accountID: string) => request<Plan>(`/api/plans/${id}/account`, { method: 'PATCH', body: JSON.stringify({ account_id: accountID }) }),
   planAuditEvents: (id: string) => request<AuditEvent[]>(`/api/plans/${id}/audit-events`),
-  refreshPlanQuota: (id: string) => request<QuotaRefreshResult>(`/api/plans/${id}/quota/refresh`, { method: 'POST' }),
+  refreshPlanQuota: (id: string, automatic = false) => request<QuotaRefreshResult>(`/api/plans/${id}/quota/refresh${automatic ? '?automatic=true' : ''}`, { method: 'POST' }),
   publicPlans: () => request<PublicPlan[]>('/api/public-plans'),
   updatePublication: (id: string, payload: { visibility: string; public_slots: number; public_share_basis_points: number }) => request<Plan>(`/api/plans/${id}/publication`, { method: 'PATCH', body: JSON.stringify(payload) }),
   applyToPlan: (id: string, message: string) => request<JoinApplication>(`/api/public-plans/${id}/applications`, { method: 'POST', body: JSON.stringify({ message }) }),

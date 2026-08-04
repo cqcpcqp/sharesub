@@ -59,6 +59,24 @@ type avatarStore struct {
 	user      domain.User
 }
 
+type quotaProbeStore struct {
+	Store
+	credential domain.PlanQuotaCredential
+	updatedAt  time.Time
+}
+
+func (s *quotaProbeStore) PlanQuotaCredential(context.Context, string, string) (domain.PlanQuotaCredential, error) {
+	return s.credential, nil
+}
+
+func (s *quotaProbeStore) PlanQuotaCredentialForMember(context.Context, string, string) (domain.PlanQuotaCredential, error) {
+	return s.credential, nil
+}
+
+func (s *quotaProbeStore) AccountQuotaUpdatedAt(context.Context, string) (time.Time, error) {
+	return s.updatedAt, nil
+}
+
 func (s *avatarStore) UpdateUserAvatar(_ context.Context, _ string, avatar domain.UserAvatar, updatedAt time.Time) (domain.User, error) {
 	s.avatar = avatar
 	s.updatedAt = updatedAt
@@ -222,6 +240,51 @@ func TestPlanMemberSeesHydratedAccountConfiguration(t *testing.T) {
 	}
 	if detail.Account.ProxyURL != proxyURL || detail.Account.Name != "团队主账号" || detail.Account.Notes != "仅用于 Codex" || detail.Account.Email != "openai@example.com" || detail.Account.ChatGPTAccountID != "chatgpt" || detail.Account.MaxConcurrency != 6 || detail.Account.RPMLimit != 90 {
 		t.Fatalf("member-visible account configuration = %+v", detail.Account)
+	}
+}
+
+func TestPrepareAutomaticPlanQuotaProbeSkipsFreshSnapshot(t *testing.T) {
+	now := time.Date(2026, 8, 4, 10, 0, 0, 0, time.UTC)
+	store := &quotaProbeStore{
+		credential: domain.PlanQuotaCredential{AccountID: "account"},
+		updatedAt:  now.Add(-automaticQuotaProbeTTL + time.Second),
+	}
+	service := &Service{store: store, now: func() time.Time { return now }}
+
+	probe, shouldProbe, err := service.PrepareAutomaticPlanQuotaProbe(context.Background(), "owner", "plan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if shouldProbe || probe.AccountID != "account" {
+		t.Fatalf("probe = %+v, shouldProbe = %v, want fresh snapshot skip", probe, shouldProbe)
+	}
+}
+
+func TestPrepareAutomaticPlanQuotaProbePreparesStaleSnapshot(t *testing.T) {
+	now := time.Date(2026, 8, 4, 10, 0, 0, 0, time.UTC)
+	manager := testSecurityManager(t)
+	credential := domain.PlanQuotaCredential{
+		PlanID:             "plan",
+		AccountID:          "account",
+		OwnerMemberID:      "member",
+		AccountOwnerUserID: "owner",
+		ChatGPTAccountID:   "chatgpt",
+		TokenExpiresAt:     now.Add(time.Hour),
+	}
+	var err error
+	credential.AccessTokenCiphertext, err = manager.Encrypt("access-token", []byte("owner:chatgpt:access"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &quotaProbeStore{credential: credential, updatedAt: now.Add(-automaticQuotaProbeTTL)}
+	service := &Service{store: store, security: manager, now: func() time.Time { return now }}
+
+	probe, shouldProbe, err := service.PrepareAutomaticPlanQuotaProbe(context.Background(), "owner", "plan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !shouldProbe || probe.AccessToken != "access-token" || probe.AccountID != "account" {
+		t.Fatalf("probe = %+v, shouldProbe = %v, want prepared stale snapshot probe", probe, shouldProbe)
 	}
 }
 

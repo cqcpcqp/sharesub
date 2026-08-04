@@ -49,6 +49,8 @@ type Store interface {
 	RemovePlanMember(context.Context, string, string, string, domain.AuditEvent) error
 	ListPlanAuditEvents(context.Context, string, string) ([]domain.AuditEvent, error)
 	PlanQuotaCredential(context.Context, string, string) (domain.PlanQuotaCredential, error)
+	PlanQuotaCredentialForMember(context.Context, string, string) (domain.PlanQuotaCredential, error)
+	AccountQuotaUpdatedAt(context.Context, string) (time.Time, error)
 	CreateAPIKey(context.Context, domain.APIKey, []domain.APIKeyRoute) error
 	UpdateAPIKey(context.Context, string, domain.APIKey, []domain.APIKeyRoute) (domain.APIKey, error)
 	ListAPIKeys(context.Context, string) ([]domain.APIKey, error)
