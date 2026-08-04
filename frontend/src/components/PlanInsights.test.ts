@@ -1,0 +1,70 @@
+// @vitest-environment happy-dom
+
+import { mount } from '@vue/test-utils'
+import { NSelect } from 'naive-ui'
+import { describe, expect, it } from 'vitest'
+import PlanInsights from './PlanInsights.vue'
+
+describe('PlanInsights performance period', () => {
+  it('offers the four fixed periods and emits a selection change', async () => {
+    const wrapper = mount(PlanInsights, {
+      props: {
+        insights: {
+          account_windows: [],
+          member_quotas: [],
+          performance: {
+            request_count: 0,
+            success_count: 0,
+            average_ttft_ms: 0,
+            p95_ttft_ms: 0,
+            average_duration_ms: 0,
+            p95_duration_ms: 0,
+          },
+          window_usage: [],
+          member_ranking: [],
+          member_rankings: [
+            { period: 'today', window_start: '2026-08-04T00:00:00Z', window_end: '2026-08-04T10:00:00Z', members: [] },
+          ],
+        },
+        members: [],
+        allocationMode: 'shared',
+        performancePeriod: '24h',
+      },
+    })
+
+    const selects = wrapper.findAllComponents(NSelect)
+    const performanceSelect = selects.find(select => select.attributes('aria-label') === '性能统计时间段')!
+    expect(performanceSelect.props('options')).toEqual([
+      { value: '30m', label: '最近 30 分钟' },
+      { value: '6h', label: '最近 6 小时' },
+      { value: '12h', label: '最近 12 小时' },
+      { value: '24h', label: '最近 24 小时' },
+    ])
+    performanceSelect.vm.$emit('update:value', '6h')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.emitted('update:performancePeriod')).toEqual([['6h']])
+    const rankingSelect = selects.find(select => (select.props('options') as Array<{ value: string }>).some(option => option.value === 'today'))!
+    expect(rankingSelect.props('value')).toBe('today')
+  })
+
+  it('explains member quota attribution and displays one decimal place', () => {
+    const wrapper = mount(PlanInsights, {
+      props: {
+        insights: {
+          account_windows: [],
+          member_quotas: [{ member_id: 'member', windows: [{ window_type: '7d', used_micros: 2_060_000, account_used_micros: 33_000_000, reset_at: '2026-08-08T00:00:00Z' }] }],
+          performance: { request_count: 0, success_count: 0, average_ttft_ms: 0, p95_ttft_ms: 0, average_duration_ms: 0, p95_duration_ms: 0 },
+          window_usage: [],
+          member_ranking: [],
+          member_rankings: [{ period: 'today', window_start: '2026-08-04T00:00:00Z', window_end: '2026-08-04T10:00:00Z', members: [] }],
+        },
+        members: [{ id: 'member', plan_id: 'plan', user_id: 'user', username: '成员', avatar_url: '', email: 'member@example.com', role: 'member', status: 'active', share_basis_points: 0, created_at: '2026-08-04T00:00:00Z' }],
+        allocationMode: 'shared',
+      },
+    })
+
+    expect(wrapper.get('button[aria-label="查看成员当前用量口径"]').attributes('aria-label')).toBe('查看成员当前用量口径')
+    expect(wrapper.find('.member-windows').text()).toContain('2.1%')
+    expect(wrapper.find('.member-windows').text()).not.toContain('2.06%')
+  })
+})

@@ -3,14 +3,24 @@
     <header class="insights-heading">
       <div>
         <h3>额度与性能</h3>
-        <p>账号窗口、成员用量与最近 24 小时网关表现</p>
+        <p>账号窗口、成员用量与{{ performancePeriodLabel }}网关表现</p>
       </div>
+      <NSelect
+        class="performance-period-select"
+        size="small"
+        :value="performancePeriod"
+        :options="performancePeriodOptions"
+        :loading="performanceLoading"
+        :consistent-menu-width="false"
+        aria-label="性能统计时间段"
+        @update:value="emit('update:performancePeriod', $event)"
+      />
     </header>
 
     <div class="performance-grid">
       <article class="performance-card performance-coral">
         <span class="performance-icon"><Activity :size="17" /></span>
-        <div><small>请求数</small><strong>{{ formatNumber(insights.performance.request_count) }}</strong><span>最近 24 小时</span></div>
+        <div><small>请求数</small><strong>{{ formatNumber(insights.performance.request_count) }}</strong><span>{{ performancePeriodLabel }}</span></div>
       </article>
       <article class="performance-card performance-green">
         <span class="performance-icon"><Gauge :size="17" /></span>
@@ -99,7 +109,17 @@
         <header class="panel-heading">
           <div>
             <span class="section-label">CURRENT WINDOWS</span>
-            <h4>{{ allocationMode === 'shared' ? '成员当前用量' : '成员当前额度' }}</h4>
+            <div class="panel-title-row">
+              <h4>{{ allocationMode === 'shared' ? '成员当前用量' : '成员当前额度' }}</h4>
+              <NTooltip placement="top" trigger="hover">
+                <template #trigger>
+                  <button type="button" class="metric-help" aria-label="查看成员当前用量口径">
+                    <CircleHelp :size="14" />
+                  </button>
+                </template>
+                <span class="metric-help-copy">按当前 5h/7d 窗口内账号已用百分比相对上次观测的正向增量累计，并归因到触发该次响应的成员；不是按 Token 数计算。手动额度查询只更新账号快照，不计入成员用量。</span>
+              </NTooltip>
+            </div>
           </div>
         </header>
         <div class="member-list">
@@ -153,9 +173,9 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { NButton, NProgress, NSelect } from 'naive-ui'
-import { Activity, Clock3, Gauge, RefreshCw, Timer, Zap } from 'lucide-vue-next'
-import type { Member, MemberRankingPeriodID, PlanAllocationMode, PlanInsights, QuotaWindow, WindowUsage } from '../types'
+import { NButton, NProgress, NSelect, NTooltip } from 'naive-ui'
+import { Activity, CircleHelp, Clock3, Gauge, RefreshCw, Timer, Zap } from 'lucide-vue-next'
+import type { Member, MemberRankingPeriodID, PerformancePeriod, PlanAllocationMode, PlanInsights, QuotaWindow, WindowUsage } from '../types'
 import { formatShareBasisPoints } from '../planAllocation'
 import { formatMilliseconds, formatTokens } from '../dashboardFormat'
 import UserAvatar from './UserAvatar.vue'
@@ -166,13 +186,25 @@ const props = withDefaults(defineProps<{
   allocationMode: PlanAllocationMode
   canRefresh?: boolean
   refreshing?: boolean
+  performancePeriod?: PerformancePeriod
+  performanceLoading?: boolean
 }>(), {
   canRefresh: false,
   refreshing: false,
+  performancePeriod: '24h',
+  performanceLoading: false,
 })
 
-const emit = defineEmits<{ refresh: [] }>()
-const rankingPeriodID = ref<MemberRankingPeriodID>('last_7_days')
+const emit = defineEmits<{ refresh: []; 'update:performancePeriod': [value: PerformancePeriod] }>()
+const performancePeriodLabels: Record<PerformancePeriod, string> = {
+  '30m': '最近 30 分钟',
+  '6h': '最近 6 小时',
+  '12h': '最近 12 小时',
+  '24h': '最近 24 小时',
+}
+const performancePeriodOptions = Object.entries(performancePeriodLabels).map(([value, label]) => ({ value, label }))
+const performancePeriodLabel = computed(() => performancePeriodLabels[props.performancePeriod])
+const rankingPeriodID = ref<MemberRankingPeriodID>('today')
 const rankingPeriodLabels: Record<MemberRankingPeriodID, string> = {
   today: '本日',
   last_7_days: '最近 7 天',
@@ -199,6 +231,7 @@ const successRate = computed(() => props.insights.performance.request_count === 
 
 const numberFormatter = new Intl.NumberFormat('zh-CN')
 const percentFormatter = new Intl.NumberFormat('zh-CN', { minimumFractionDigits: 1, maximumFractionDigits: 2 })
+const memberPercentFormatter = new Intl.NumberFormat('zh-CN', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
 const usdFormatter = new Intl.NumberFormat('en-US', {
   style: 'currency',
   currency: 'USD',
@@ -232,7 +265,7 @@ function formatUSD(value: number) {
 function memberUsed(memberID: string, kind: QuotaWindow['window_type']) {
   const quota = props.insights.member_quotas.find(item => item.member_id === memberID)
   const window = quota?.windows.find(item => item.window_type === kind)
-  return window ? percent(window.used_micros) : '--'
+  return window ? `${memberPercentFormatter.format(window.used_micros / 1_000_000)}%` : '--'
 }
 
 function formatDate(value: string) {
@@ -262,6 +295,9 @@ function usagePeriod(usage: WindowUsage | undefined) {
 
 .insights-heading h3 { font-size: 15px; }
 .insights-heading p { margin: 6px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.insights-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.insights-heading > div { min-width: 0; }
+.performance-period-select { width: 132px; flex: 0 0 auto; }
 
 .performance-grid {
   display: grid;
@@ -299,6 +335,10 @@ function usagePeriod(usage: WindowUsage | undefined) {
 .panel-heading > div { min-width: 0; }
 .panel-heading h4 { margin-top: 4px; font-size: 13px; }
 .panel-heading > svg { color: var(--muted-light); }
+.panel-title-row { min-width: 0; display: flex; align-items: center; gap: 5px; }
+.metric-help { width: 22px; height: 22px; display: inline-grid; place-items: center; flex: 0 0 auto; margin-top: 4px; padding: 0; border: 0; border-radius: 999px; background: transparent; color: var(--muted-light); cursor: help; }
+.metric-help:hover, .metric-help:focus-visible { background: var(--surface-hover); color: var(--ink); outline: none; }
+.metric-help-copy { display: block; max-width: 340px; line-height: 1.55; }
 .ranking-period-select { width: 150px; }
 .section-label { display: block; color: var(--muted-light); font-size: 8px; font-weight: 800; letter-spacing: 0; }
 .quota-heading { align-items: center; margin-bottom: 11px; }
@@ -337,10 +377,19 @@ function usagePeriod(usage: WindowUsage | undefined) {
 .window-summary dd,
 .token-grid dd { overflow-wrap: anywhere; margin: 4px 0 0; color: var(--ink-strong); font-size: 13px; font-weight: 720; font-variant-numeric: tabular-nums; }
 .cost-summary dd { color: var(--window-accent); }
-.token-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
-.token-grid > div { min-width: 0; }
+.token-grid { display: grid; grid-template-columns: repeat(3, minmax(0, .8fr)) minmax(110px, 1.35fr); align-items: stretch; gap: 8px; }
+.token-grid > div { min-width: 0; padding: 8px 0; }
 .token-grid dd { font-size: 11px; }
-.token-total { padding-left: 8px; border-left: 1px solid var(--line-soft); }
+.token-grid .token-total {
+  display: grid;
+  align-content: center;
+  padding: 9px 11px;
+  border: 1px solid var(--window-accent);
+  border-radius: 7px;
+  background: var(--window-soft);
+}
+.token-grid .token-total dt { color: var(--window-accent); font-size: 8px; font-weight: 820; }
+.token-grid .token-total dd { margin-top: 5px; color: var(--window-accent); font-size: 17px; font-weight: 820; line-height: 1.1; }
 
 .usage-columns { min-width: 0; display: grid; grid-template-columns: minmax(260px, .7fr) minmax(0, 1.3fr); gap: 12px; }
 .data-panel { min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); box-shadow: var(--shadow-xs); }
@@ -387,6 +436,8 @@ tbody tr:hover { background: var(--surface-hover); }
 
 @media (max-width: 520px) {
   .insights { gap: 15px; }
+  .insights-heading { align-items: stretch; flex-direction: column; }
+  .performance-period-select { width: 100%; }
   .performance-grid { gap: 8px; }
   .performance-card { min-height: 108px; grid-template-columns: 30px minmax(0, 1fr); gap: 9px; padding: 12px 10px; }
   .performance-icon { width: 30px; height: 30px; }
@@ -397,8 +448,9 @@ tbody tr:hover { background: var(--surface-hover); }
   .quota-level strong { font-size: 25px; }
   .window-summary { grid-template-columns: .65fr 1.35fr; }
   .window-summary > div + div { padding-left: 10px; }
-  .token-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px 8px; }
-  .token-total { padding-left: 0; border-left: 0; }
+  .token-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  .token-grid .token-total { grid-column: 1 / -1; grid-template-columns: 1fr auto; align-items: end; }
+  .token-grid .token-total dd { margin-top: 0; text-align: right; }
   .member-row { align-items: flex-start; flex-direction: column; padding: 11px 0; }
   .member-windows { width: 100%; }
   .member-windows > span { text-align: left; }

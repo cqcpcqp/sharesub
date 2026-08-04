@@ -1,7 +1,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { APIRequestError, api } from '../api'
 import { allocationShareBasisPoints, formatShareBasisPoints } from '../planAllocation'
-import type { Account, AuditEvent, Member, Plan, PlanAllocationMode, PlanDetail, User } from '../types'
+import type { Account, AuditEvent, Member, PerformancePeriod, Plan, PlanAllocationMode, PlanDetail, User } from '../types'
 
 const automaticQuotaRefreshes = new Map<string, number>()
 const automaticQuotaRefreshTTL = 5 * 60 * 1000
@@ -17,6 +17,8 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
   const detail = ref<PlanDetail | null>(null)
   const planLoading = ref(false)
   const quotaRefreshing = ref(false)
+  const performanceLoading = ref(false)
+  const performancePeriod = ref<PerformancePeriod>('24h')
   const actionLoading = ref('')
   const activeTab = ref('overview')
   const auditEvents = ref<AuditEvent[]>([])
@@ -112,6 +114,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
   })
 
   let planRequestSequence = 0
+  let performanceRequestSequence = 0
   let auditRequestSequence = 0
   let consumedInitialPlanID = ''
   let consumedInvitePlanID = ''
@@ -166,6 +169,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
       detail.value = null
       auditEvents.value = []
       auditRequestSequence += 1
+      performanceRequestSequence += 1
     }
     try {
       const value = await api.plan(id)
@@ -173,11 +177,29 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
       detail.value = value
       syncDetail(value)
       if (activeTab.value === 'activity') void loadAudit(id)
+      if (performancePeriod.value !== '24h') void loadPerformance(performancePeriod.value)
       if (value.plan.status !== 'archived') void refreshQuotaAutomatically(id, requestSequence)
     } catch (error) {
       if (requestSequence === planRequestSequence) notifyError(error)
     } finally {
       if (requestSequence === planRequestSequence) planLoading.value = false
+    }
+  }
+
+  async function loadPerformance(period: PerformancePeriod) {
+    performancePeriod.value = period
+    if (!detail.value) return
+    const planID = detail.value.plan.id
+    const requestSequence = ++performanceRequestSequence
+    performanceLoading.value = true
+    try {
+      const value = await api.planPerformance(planID, period)
+      if (requestSequence !== performanceRequestSequence || detail.value?.plan.id !== planID) return
+      detail.value.insights.performance = value
+    } catch (error) {
+      if (requestSequence === performanceRequestSequence) notifyError(error)
+    } finally {
+      if (requestSequence === performanceRequestSequence) performanceLoading.value = false
     }
   }
 
@@ -190,6 +212,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
       await api.refreshPlanQuota(planID, true)
       const value = await api.plan(planID)
       if (requestSequence !== planRequestSequence) return
+      if (performancePeriod.value !== '24h' && detail.value?.plan.id === planID) value.insights.performance = detail.value.insights.performance
       detail.value = value
       syncDetail(value)
     } catch (error) {
@@ -536,8 +559,8 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
   }
 
   return {
-    detail, planLoading, quotaRefreshing, actionLoading, activeTab, auditEvents, auditLoading,
-    availableAccounts, loadPlan, loadAudit,
+    detail, planLoading, quotaRefreshing, performanceLoading, performancePeriod, actionLoading, activeTab, auditEvents, auditLoading,
+    availableAccounts, loadPlan, loadAudit, loadPerformance,
     showCreate, showInviteComposer, inviteSecret, showDeleteConfirmOne, showDeleteConfirmTwo,
     deleteNameDraft, renameDraft, transferMemberID, rebindAccountID, createForm, inviteForm,
     publication, shareDrafts, accountOptions, planOptions, isOwner, isShared, isArchived, owner,

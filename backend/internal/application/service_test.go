@@ -38,7 +38,18 @@ type accountConfigStore struct {
 
 type planAccountStore struct {
 	Store
-	detail domain.PlanDetail
+	detail               domain.PlanDetail
+	performance          domain.PerformanceSummary
+	performancePlanID    string
+	performanceUserID    string
+	performanceStartedAt time.Time
+}
+
+func (s *planAccountStore) PlanPerformance(_ context.Context, planID, userID string, startedAt time.Time) (domain.PerformanceSummary, error) {
+	s.performancePlanID = planID
+	s.performanceUserID = userID
+	s.performanceStartedAt = startedAt
+	return s.performance, nil
 }
 
 type inviteStore struct {
@@ -240,6 +251,33 @@ func TestPlanMemberSeesHydratedAccountConfiguration(t *testing.T) {
 	}
 	if detail.Account.ProxyURL != proxyURL || detail.Account.Name != "团队主账号" || detail.Account.Notes != "仅用于 Codex" || detail.Account.Email != "openai@example.com" || detail.Account.ChatGPTAccountID != "chatgpt" || detail.Account.MaxConcurrency != 6 || detail.Account.RPMLimit != 90 {
 		t.Fatalf("member-visible account configuration = %+v", detail.Account)
+	}
+}
+
+func TestPlanPerformanceUsesRequestedFixedPeriod(t *testing.T) {
+	now := time.Date(2026, 8, 4, 10, 0, 0, 0, time.UTC)
+	periods := map[string]time.Duration{
+		"30m": 30 * time.Minute,
+		"6h":  6 * time.Hour,
+		"12h": 12 * time.Hour,
+		"24h": 24 * time.Hour,
+	}
+	for period, duration := range periods {
+		t.Run(period, func(t *testing.T) {
+			store := &planAccountStore{performance: domain.PerformanceSummary{RequestCount: 12}}
+			service := &Service{store: store, now: func() time.Time { return now }}
+			performance, err := service.PlanPerformance(context.Background(), "member", "plan", period)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if performance.RequestCount != 12 || store.performancePlanID != "plan" || store.performanceUserID != "member" || !store.performanceStartedAt.Equal(now.Add(-duration)) {
+				t.Fatalf("performance = %+v, plan = %q, user = %q, start = %s", performance, store.performancePlanID, store.performanceUserID, store.performanceStartedAt)
+			}
+		})
+	}
+	service := &Service{store: &planAccountStore{}, now: func() time.Time { return now }}
+	if _, err := service.PlanPerformance(context.Background(), "member", "plan", "1h"); err != domain.ErrInvalidInput {
+		t.Fatalf("invalid period error = %v, want invalid input", err)
 	}
 }
 

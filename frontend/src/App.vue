@@ -80,7 +80,7 @@
         <div class="workspace-body">
           <Transition name="toast"><NAlert v-if="notice.text" class="notice" :type="notice.type" closable @close="notice.text = ''">{{ notice.text }}</NAlert></Transition>
           <OnboardingGuide v-if="activeView === 'dashboard' && showOnboarding" :accounts="accounts" :plans="plans" :keys="keys" :user="user" @navigate="navigateToView" @invite="openPlanInvite" @setup-key="openKeySetup" />
-          <DashboardView v-else-if="activeView === 'dashboard'" :dashboard="dashboard" :loading="busy" :theme="resolvedTheme" />
+          <DashboardView v-else-if="activeView === 'dashboard'" :dashboard="dashboard" :loading="busy" :refreshing="dashboardRefreshing" :theme="resolvedTheme" @refresh="refreshDashboard" />
           <LobbyView v-else-if="activeView === 'lobby'" :plans="publicPlans" :user="user" @changed="refreshAll" @message="showMessage" />
           <PlansView v-else-if="activeView === 'plans'" :accounts="accounts" :plans="plans" :user="user" :initial-plan-id="selectedPlanID" :invite-plan-id="invitePlanID" @invite-opened="invitePlanID = ''" @changed="refreshAll" @message="showMessage" />
           <AccountsView v-else-if="activeView === 'accounts'" :accounts="accounts" :plans="plans" @changed="refreshAll" @message="showMessage" />
@@ -142,6 +142,7 @@ const plans = ref<Plan[]>([])
 const keys = ref<APIKey[]>([])
 const publicPlans = ref<PublicPlan[]>([])
 const dashboard = ref<Dashboard | null>(null)
+const dashboardRefreshing = ref(false)
 const initialRoute = parseAppRoute(window.location.pathname)
 const activeView = ref<ViewID>(initialRoute?.kind === 'view' ? initialRoute.view : 'dashboard')
 const authChecking = ref(true)
@@ -234,6 +235,20 @@ async function refreshAll() {
     showMessage('error', error instanceof Error ? error.message : String(error))
   } finally {
     busy.value = false
+  }
+}
+
+async function refreshDashboard() {
+  if (!user.value || dashboardRefreshing.value || busy.value) return
+  const requestUserID = user.value.id
+  dashboardRefreshing.value = true
+  try {
+    const value = await api.dashboard(Intl.DateTimeFormat().resolvedOptions().timeZone)
+    if (user.value?.id === requestUserID) dashboard.value = value
+  } catch (error) {
+    showMessage('error', error instanceof Error ? error.message : String(error))
+  } finally {
+    dashboardRefreshing.value = false
   }
 }
 

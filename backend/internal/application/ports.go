@@ -32,6 +32,7 @@ type Store interface {
 	CreatePlan(context.Context, domain.Plan, domain.Member, domain.AuditEvent) error
 	ListPlans(context.Context, string) ([]domain.Plan, error)
 	PlanDetail(context.Context, string, string, time.Time, time.Time) (domain.PlanDetail, error)
+	PlanPerformance(context.Context, string, string, time.Time) (domain.PerformanceSummary, error)
 	RenamePlan(context.Context, string, string, string, domain.AuditEvent) (domain.Plan, error)
 	UpdatePlanStatus(context.Context, string, string, string, domain.AuditEvent) (domain.Plan, error)
 	DeletePlan(context.Context, string, string, domain.AuditEvent) error

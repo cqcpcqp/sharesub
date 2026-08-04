@@ -1,5 +1,11 @@
 <template>
   <section class="view-content dashboard-content" aria-label="个人使用仪表盘" :aria-busy="loading">
+    <div v-if="dashboard" class="dashboard-actions">
+      <NButton secondary size="small" :loading="refreshing" :disabled="refreshing" aria-label="刷新仪表盘数据" @click="emit('refresh')">
+        <template #icon><RefreshCw :size="15" /></template>
+        刷新数据
+      </NButton>
+    </div>
     <div v-if="dashboard" class="dashboard-kpi-grid">
       <article class="dashboard-kpi dashboard-kpi-today">
         <div class="dashboard-kpi-icon"><Zap :size="21" /></div>
@@ -76,8 +82,8 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { NEmpty, NStatistic, NSkeleton } from 'naive-ui'
-import { Clock3, Database, Gauge, Zap } from 'lucide-vue-next'
+import { NButton, NEmpty, NStatistic, NSkeleton } from 'naive-ui'
+import { Clock3, Database, Gauge, RefreshCw, Zap } from 'lucide-vue-next'
 import TokenUsageChart from '../components/TokenUsageChart.vue'
 import { formatDuration, formatPercent, formatTokens } from '../dashboardFormat'
 import type { Dashboard } from '../types'
@@ -86,8 +92,11 @@ import type { ResolvedTheme } from '../themePreference'
 const props = defineProps<{
   dashboard: Dashboard | null
   loading: boolean
+  refreshing: boolean
   theme: ResolvedTheme
 }>()
+
+const emit = defineEmits<{ refresh: [] }>()
 
 const trendTotal = computed(() => props.dashboard?.trend.reduce((total, point) => total + point.input_tokens + point.output_tokens, 0) ?? 0)
 </script>

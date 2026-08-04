@@ -116,7 +116,7 @@ func (s *Store) PlanDetail(ctx context.Context, planID, userID string, todayStar
 		}
 		out.Applications = applications
 	}
-	insights, err := s.planInsights(ctx, planID, out.Plan.AccountID, out.Account.CreatedAt, out.Members, todayStart, now)
+	insights, err := s.planInsights(ctx, planID, userID, out.Plan.AccountID, out.Account.CreatedAt, out.Members, todayStart, now)
 	if err != nil {
 		return out, err
 	}
@@ -124,7 +124,7 @@ func (s *Store) PlanDetail(ctx context.Context, planID, userID string, todayStar
 	return out, nil
 }
 
-func (s *Store) planInsights(ctx context.Context, planID, accountID string, accountCreatedAt time.Time, members []domain.Member, todayStart, now time.Time) (domain.PlanInsights, error) {
+func (s *Store) planInsights(ctx context.Context, planID, userID, accountID string, accountCreatedAt time.Time, members []domain.Member, todayStart, now time.Time) (domain.PlanInsights, error) {
 	out := domain.PlanInsights{
 		AccountWindows: make([]domain.QuotaWindow, 0),
 		MemberQuotas:   make([]domain.MemberQuota, 0, len(members)),
@@ -223,9 +223,33 @@ func (s *Store) planInsights(ctx context.Context, planID, accountID string, acco
 		}
 	}
 
-	err = s.pool.QueryRow(ctx, `SELECT count(*),count(*) FILTER (WHERE status_code BETWEEN 200 AND 299),COALESCE(avg(ttft_ms),0)::float8,COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY ttft_ms),0)::float8,COALESCE(avg(duration_ms),0)::float8,COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms),0)::float8 FROM gateway_request_metrics WHERE plan_id=$1 AND created_at>=now()-interval '24 hours'`, planID).Scan(&out.Performance.RequestCount, &out.Performance.SuccessCount, &out.Performance.AverageTTFTMs, &out.Performance.P95TTFTMs, &out.Performance.AverageDurationMs, &out.Performance.P95DurationMs)
+	out.Performance, err = s.PlanPerformance(ctx, planID, userID, now.Add(-24*time.Hour))
 	if err != nil {
 		return out, err
+	}
+	return out, nil
+}
+
+func (s *Store) PlanPerformance(ctx context.Context, planID, userID string, windowStart time.Time) (domain.PerformanceSummary, error) {
+	var out domain.PerformanceSummary
+	err := s.pool.QueryRow(ctx, `
+		WITH authorized AS (
+			SELECT p.id
+			FROM shared_plans p
+			JOIN plan_members viewer ON viewer.plan_id=p.id AND viewer.user_id=$2 AND viewer.status='active'
+			WHERE p.id=$1
+		)
+		SELECT count(g.id),count(g.id) FILTER (WHERE g.status_code BETWEEN 200 AND 299),
+			COALESCE(avg(g.ttft_ms),0)::float8,
+			COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY g.ttft_ms),0)::float8,
+			COALESCE(avg(g.duration_ms),0)::float8,
+			COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY g.duration_ms),0)::float8
+		FROM authorized a
+		LEFT JOIN gateway_request_metrics g ON g.plan_id=a.id AND g.created_at>=$3
+		GROUP BY a.id`, planID, userID, windowStart,
+	).Scan(&out.RequestCount, &out.SuccessCount, &out.AverageTTFTMs, &out.P95TTFTMs, &out.AverageDurationMs, &out.P95DurationMs)
+	if err != nil {
+		return domain.PerformanceSummary{}, mapError(err)
 	}
 	return out, nil
 }

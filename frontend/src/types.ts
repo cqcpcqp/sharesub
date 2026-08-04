@@ -141,6 +141,8 @@ export interface QuotaWindow {
 
 export interface MemberQuota { member_id: string; windows: QuotaWindow[] }
 
+export type PerformancePeriod = '30m' | '6h' | '12h' | '24h'
+
 export interface PerformanceSummary {
   request_count: number
   success_count: number

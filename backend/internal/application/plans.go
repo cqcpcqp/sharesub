@@ -77,6 +77,20 @@ func (s *Service) PlanDetail(ctx context.Context, userID, planID, timezone strin
 	return detail, nil
 }
 
+func (s *Service) PlanPerformance(ctx context.Context, userID, planID, period string) (domain.PerformanceSummary, error) {
+	durations := map[string]time.Duration{
+		"30m": 30 * time.Minute,
+		"6h":  6 * time.Hour,
+		"12h": 12 * time.Hour,
+		"24h": 24 * time.Hour,
+	}
+	duration, ok := durations[period]
+	if !ok {
+		return domain.PerformanceSummary{}, domain.ErrInvalidInput
+	}
+	return s.store.PlanPerformance(ctx, planID, userID, s.now().Add(-duration))
+}
+
 func (s *Service) ListPublicPlans(ctx context.Context, userID string) ([]domain.PublicPlan, error) {
 	return s.store.ListPublicPlans(ctx, userID)
 }

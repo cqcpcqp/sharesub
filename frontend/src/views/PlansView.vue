@@ -87,7 +87,10 @@
                 :allocation-mode="detail.plan.allocation_mode"
                 :can-refresh="isOwner && !isArchived"
                 :refreshing="quotaRefreshing"
+                :performance-period="performancePeriod"
+                :performance-loading="performanceLoading"
                 @refresh="refreshQuota"
+                @update:performance-period="loadPerformance"
               />
             </div>
           </NTabPane>
@@ -574,8 +577,8 @@ const emit = defineEmits<{
 }>()
 
 const {
-  detail, planLoading, quotaRefreshing, actionLoading, activeTab, auditEvents, auditLoading,
-  availableAccounts, loadPlan, loadAudit,
+  detail, planLoading, quotaRefreshing, performanceLoading, performancePeriod, actionLoading, activeTab, auditEvents, auditLoading,
+  availableAccounts, loadPlan, loadAudit, loadPerformance,
   showCreate, showInviteComposer, inviteSecret, showDeleteConfirmOne, showDeleteConfirmTwo,
   deleteNameDraft, renameDraft, transferMemberID, rebindAccountID, createForm, inviteForm,
   publication, shareDrafts, accountOptions, planOptions, isOwner, isShared, isArchived, owner,
