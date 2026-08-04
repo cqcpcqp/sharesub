@@ -22,6 +22,9 @@ const owner: User = {
   avatar_url: '',
   status: 'active',
   created_at: createdAt,
+  is_admin: false,
+  role: 'user',
+  must_change_password: false,
 }
 const member: User = {
   id: 'member-user',
@@ -30,6 +33,9 @@ const member: User = {
   avatar_url: '',
   status: 'active',
   created_at: createdAt,
+  is_admin: false,
+  role: 'user',
+  must_change_password: false,
 }
 const account: Account = {
   id: 'account',

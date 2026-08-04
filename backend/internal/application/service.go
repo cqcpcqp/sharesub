@@ -55,3 +55,8 @@ type AccountConfigInput struct {
 func NewService(store Store, securityManager *security.Manager, oauth OpenAIOAuth, sessionTTL time.Duration, redirectURI, publicURL string) *Service {
 	return &Service{store: store, security: securityManager, oauth: oauth, sessionTTL: sessionTTL, redirectURI: redirectURI, publicURL: strings.TrimRight(publicURL, "/"), now: time.Now, traffic: newAccountTrafficController()}
 }
+
+func (s *Service) decorateUser(user domain.User) domain.User {
+	user.IsAdmin = user.Role == domain.RoleAdmin
+	return user
+}

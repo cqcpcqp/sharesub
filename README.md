@@ -247,6 +247,10 @@ SHARESUB_CREDENTIAL_KEY=独立生成的第二段随机值
 
 不要在服务已经产生数据后随意更换 `SHARESUB_TOKEN_PEPPER` 或 `SHARESUB_CREDENTIAL_KEY`。更换后，已有登录 Token、用户 API Key 或已加密的 OpenAI 凭据将无法继续使用。
 
+首次启动且数据库中不存在管理员时，后端会自动创建 `admin@underelay.com`，并且只在创建成功的那次 API 日志中输出临时密码。使用 `docker compose logs api | grep "bootstrap admin"` 查看；首次登录必须设置新密码后才能访问其他功能。后续启动不会重新生成或再次输出密码。遗失密码时可在 API 容器中执行 `sharesub-admin reset-password`，命令会撤销该管理员的现有会话并输出新的临时密码。
+
+管理员沿用普通登录入口，角色持久保存在数据库中，不提供网页提权接口。后台可以查看平台概览、用户、OpenAI 账号、Plan 和 API Key，支持禁用/恢复用户、启用/禁用账号及吊销 Key。后台响应不会返回 OAuth 密文、代理密文或 API Key 原文。
+
 如果服务器不能直连 OpenAI，可将 `SHARESUB_OUTBOUND_PROXY` 设置为实际可用的 `http://`、`https://` 或 `socks5://` 代理地址。Docker 部署时，`127.0.0.1` 指向 API 容器自身，不能用它表示宿主机代理；应使用容器可访问的代理地址或把代理作为 Compose 服务运行。
 
 ### 2. 启动服务

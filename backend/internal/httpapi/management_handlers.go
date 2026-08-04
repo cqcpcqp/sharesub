@@ -42,6 +42,18 @@ func (s *Server) updateMe(w http.ResponseWriter, r *http.Request) {
 	v, err := s.app.UpdateUsername(r.Context(), currentUser(r).ID, input.Username)
 	writeResult(w, v, err)
 }
+
+func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		CurrentPassword string `json:"current_password"`
+		NewPassword     string `json:"new_password"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	v, err := s.app.ChangePassword(r.Context(), currentUser(r), input.CurrentPassword, input.NewPassword, r.Context().Value(tokenContextKey{}).(string))
+	writeResult(w, v, err)
+}
 func (s *Server) updateAvatar(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxAvatarBody)
 	if err := r.ParseMultipartForm(maxAvatarBody); err != nil {

@@ -68,6 +68,14 @@ func main() {
 	}
 	oauthClient := openai.NewOAuthClient(cfg.OutboundProxy)
 	app := application.NewService(store, securityManager, oauthClient, cfg.SessionTTL, cfg.OAuthRedirect, cfg.PublicURL)
+	bootstrapAdmin, err := app.EnsureBootstrapAdmin(ctx)
+	if err != nil {
+		logger.Error("bootstrap admin", "error", err)
+		os.Exit(1)
+	}
+	if bootstrapAdmin != nil {
+		logger.Warn("bootstrap admin created; change this temporary password after login", "email", bootstrapAdmin.Email, "temporary_password", bootstrapAdmin.TemporaryPassword)
+	}
 	gateway := openai.NewGateway(httpClient, cfg.GatewayMaxConcurrency)
 	defer gateway.Close()
 	api := httpapi.New(app, gateway, logger)

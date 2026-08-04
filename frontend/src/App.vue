@@ -16,7 +16,7 @@
         @discard-invite="discardInvite"
       />
     </template>
-    <div v-else class="app-shell" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
+    <div v-else-if="user && !user.must_change_password" class="app-shell" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
       <aside class="sidebar">
         <NTooltip placement="right">
           <template #trigger>
@@ -35,7 +35,7 @@
         <div class="brand"><BrandMark :size="38" /><div><strong>ShareSub</strong><span>Access together</span></div></div>
         <span class="nav-label">工作台</span>
         <nav aria-label="主导航">
-          <NTooltip v-for="item in nav" :key="item.id" placement="right" :disabled="!sidebarCollapsed">
+          <NTooltip v-for="item in navItems" :key="item.id" placement="right" :disabled="!sidebarCollapsed">
             <template #trigger>
               <NButton quaternary :class="{ active: activeView === item.id }" :aria-current="activeView === item.id ? 'page' : undefined" @click="navigateToView(item.id)">
                 <span class="nav-icon"><component :is="item.icon" :size="18" /></span><span class="nav-text">{{ item.label }}</span><span class="nav-text-mobile">{{ item.shortLabel }}</span>
@@ -85,6 +85,7 @@
           <PlansView v-else-if="activeView === 'plans'" :accounts="accounts" :plans="plans" :user="user" :theme="resolvedTheme" :initial-plan-id="selectedPlanID" :invite-plan-id="invitePlanID" @invite-opened="invitePlanID = ''" @changed="refreshAll" @message="showMessage" />
           <AccountsView v-else-if="activeView === 'accounts'" :accounts="accounts" :plans="plans" @changed="refreshAll" @message="showMessage" />
           <KeysView v-else-if="activeView === 'keys'" :keys="keys" :plans="plans" @changed="refreshAll" @message="showMessage" />
+          <AdminView v-else-if="activeView === 'admin' && user.is_admin" :current-user="user" @message="showMessage" />
           <ProfileView v-else v-model:theme-mode="themeMode" :user="user" @updated="onUserUpdated" @message="showMessage" />
         </div>
       </main>
@@ -100,16 +101,18 @@
       @discard="discardInvite"
     />
     <APIKeySetupWizard v-if="user" v-model:show="keySetupVisible" :plans="plans" :initial-plan-id="keySetupPlanID" @created="refreshAll" @message="showMessage" />
+    <PasswordChangeDialog v-if="user?.must_change_password" @changed="onPasswordChanged" />
   </NConfigProvider>
 </template>
 
 <script setup lang="ts">
 import { darkTheme, NAlert, NButton, NConfigProvider, NSpin, NTooltip } from 'naive-ui'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { ChevronRight, Compass, KeyRound, Layers3, LayoutDashboard, LogOut, PanelLeftClose, PanelLeftOpen, Settings, UsersRound } from 'lucide-vue-next'
+import { ChevronRight, Compass, KeyRound, Layers3, LayoutDashboard, LogOut, PanelLeftClose, PanelLeftOpen, Settings, ShieldCheck, UsersRound } from 'lucide-vue-next'
 import { api, clearSessionToken, sessionToken } from './api'
 import type { Account, APIKey, Dashboard, InvitePreview, Notification as UserNotification, Plan, PublicPlan, User } from './types'
 import AccountsView from './views/AccountsView.vue'
+import AdminView from './views/AdminView.vue'
 import APIKeySetupWizard from './components/APIKeySetupWizard.vue'
 import AuthView from './views/AuthView.vue'
 import BrandMark from './components/BrandMark.vue'
@@ -119,6 +122,7 @@ import KeysView from './views/KeysView.vue'
 import LobbyView from './views/LobbyView.vue'
 import NotificationCenter from './components/NotificationCenter.vue'
 import OnboardingGuide from './components/OnboardingGuide.vue'
+import PasswordChangeDialog from './components/PasswordChangeDialog.vue'
 import PlansView from './views/PlansView.vue'
 import ProfileView from './views/ProfileView.vue'
 import ThemeSwitcher from './components/ThemeSwitcher.vue'
@@ -136,6 +140,7 @@ const nav = [
   { id: 'keys' as const, label: 'API Keys', shortLabel: '密钥', icon: KeyRound },
   { id: 'profile' as const, label: '个人设置', shortLabel: '设置', icon: Settings },
 ]
+const adminNav = { id: 'admin' as const, label: '后台管理', shortLabel: '管理', icon: ShieldCheck }
 const user = ref<User | null>(null)
 const accounts = ref<Account[]>([])
 const plans = ref<Plan[]>([])
@@ -171,6 +176,7 @@ const systemPrefersDark = ref(systemThemeQuery.matches)
 const resolvedTheme = computed(() => resolveTheme(themeMode.value, systemPrefersDark.value))
 const naiveTheme = computed(() => resolvedTheme.value === 'dark' ? darkTheme : null)
 const activeThemeOverrides = computed(() => resolvedTheme.value === 'dark' ? darkThemeOverrides : lightThemeOverrides)
+const navItems = computed(() => user.value?.is_admin ? [...nav.slice(0, -1), adminNav, nav[nav.length - 1]] : nav)
 const usablePlanIDs = computed(() => new Set(plans.value.map(plan => plan.id)))
 const hasUsableKey = computed(() => keys.value.some(key => key.status === 'active' && key.routes.some(route => route.enabled && usablePlanIDs.value.has(route.plan_id))))
 const showOnboarding = computed(() => bootstrapped.value && (plans.value.length === 0 || !hasUsableKey.value))
@@ -187,12 +193,24 @@ function updateSystemTheme(event: MediaQueryListEvent) { systemPrefersDark.value
 async function onAuthenticated(value: User) {
   user.value = value
   bootstrapped.value = false
+  if (value.must_change_password) {
+    navigateToView('dashboard', true)
+    return
+  }
   startNotificationPolling()
   if (inviteIntent.value) await acceptPendingInvite()
   else {
     navigateToView('dashboard', true)
     await refreshAll()
   }
+  await refreshNotifications()
+}
+
+async function onPasswordChanged(value: User) {
+  user.value = value
+  showMessage('success', '密码已更新')
+  startNotificationPolling()
+  await refreshAll()
   await refreshNotifications()
 }
 
@@ -205,6 +223,7 @@ function updateRoute(route: AppRoute, replace = false) {
 }
 
 function navigateToView(view: ViewID, replace = false) {
+  if (view === 'admin' && !user.value?.is_admin) return
   activeView.value = view
   updateRoute({ kind: 'view', view }, replace)
 }
@@ -214,7 +233,7 @@ function navigateToLogin(replace = false) { updateRoute({ kind: 'login' }, repla
 function syncPathRoute() {
   const route = parseAppRoute(window.location.pathname)
   if (user.value) {
-    if (route?.kind === 'view') activeView.value = route.view
+    if (route?.kind === 'view' && (route.view !== 'admin' || user.value.is_admin)) activeView.value = route.view
     else navigateToView('dashboard', true)
   } else if (route?.kind !== 'login') navigateToLogin(true)
 }
@@ -433,6 +452,7 @@ onMounted(async () => {
   }
   syncPathRoute()
   authChecking.value = false
+  if (user.value.must_change_password) return
   startNotificationPolling()
   if (inviteIntent.value) await acceptPendingInvite()
   else await refreshAll()

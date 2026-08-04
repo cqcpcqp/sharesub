@@ -29,11 +29,11 @@ func (s *Service) Register(ctx context.Context, username, email, password string
 	if err != nil {
 		return AuthResult{}, err
 	}
-	user := domain.User{ID: id, Username: username, Email: email, PasswordHash: hash, Status: domain.StatusActive, CreatedAt: s.now()}
+	user := domain.User{ID: id, Username: username, Email: email, PasswordHash: hash, Status: domain.StatusActive, Role: domain.RoleUser, CreatedAt: s.now()}
 	if err := s.store.CreateUser(ctx, user); err != nil {
 		return AuthResult{}, err
 	}
-	return s.newSession(ctx, user)
+	return s.newSession(ctx, s.decorateUser(user))
 }
 
 func (s *Service) UpdateUsername(ctx context.Context, userID, username string) (domain.User, error) {
@@ -41,7 +41,11 @@ func (s *Service) UpdateUsername(ctx context.Context, userID, username string) (
 	if !validUsername(username) {
 		return domain.User{}, domain.ErrInvalidInput
 	}
-	return s.store.UpdateUsername(ctx, userID, username)
+	user, err := s.store.UpdateUsername(ctx, userID, username)
+	if err != nil {
+		return domain.User{}, err
+	}
+	return s.decorateUser(user), nil
 }
 
 func (s *Service) UpdateUserAvatar(ctx context.Context, userID string, data []byte) (domain.User, error) {
@@ -52,11 +56,19 @@ func (s *Service) UpdateUserAvatar(ctx context.Context, userID string, data []by
 	if mediaType != "image/jpeg" && mediaType != "image/png" && mediaType != "image/webp" {
 		return domain.User{}, domain.ErrInvalidInput
 	}
-	return s.store.UpdateUserAvatar(ctx, userID, domain.UserAvatar{Data: data, MediaType: mediaType}, s.now())
+	user, err := s.store.UpdateUserAvatar(ctx, userID, domain.UserAvatar{Data: data, MediaType: mediaType}, s.now())
+	if err != nil {
+		return domain.User{}, err
+	}
+	return s.decorateUser(user), nil
 }
 
 func (s *Service) DeleteUserAvatar(ctx context.Context, userID string) (domain.User, error) {
-	return s.store.DeleteUserAvatar(ctx, userID)
+	user, err := s.store.DeleteUserAvatar(ctx, userID)
+	if err != nil {
+		return domain.User{}, err
+	}
+	return s.decorateUser(user), nil
 }
 
 func (s *Service) UserAvatar(ctx context.Context, userID string) (domain.UserAvatar, error) {
@@ -66,19 +78,38 @@ func (s *Service) UserAvatar(ctx context.Context, userID string) (domain.UserAva
 	return s.store.UserAvatar(ctx, userID)
 }
 
+func (s *Service) ChangePassword(ctx context.Context, user domain.User, currentPassword, newPassword, currentSessionToken string) (domain.User, error) {
+	if !security.CheckPassword(user.PasswordHash, currentPassword) || security.CheckPassword(user.PasswordHash, newPassword) {
+		return domain.User{}, domain.ErrInvalidInput
+	}
+	hash, err := security.HashPassword(newPassword)
+	if err != nil {
+		return domain.User{}, domain.ErrInvalidInput
+	}
+	updated, err := s.store.UpdatePassword(ctx, user.ID, hash, false, s.security.HashToken(currentSessionToken))
+	if err != nil {
+		return domain.User{}, err
+	}
+	return s.decorateUser(updated), nil
+}
+
 func (s *Service) Login(ctx context.Context, email, password string) (AuthResult, error) {
 	user, err := s.store.UserByEmail(ctx, normalizeEmail(email))
 	if err != nil || user.Status != domain.StatusActive || !security.CheckPassword(user.PasswordHash, password) {
 		return AuthResult{}, domain.ErrUnauthorized
 	}
-	return s.newSession(ctx, user)
+	return s.newSession(ctx, s.decorateUser(user))
 }
 
 func (s *Service) Authenticate(ctx context.Context, token string) (domain.User, error) {
 	if !strings.HasPrefix(token, "ss_session_") {
 		return domain.User{}, domain.ErrUnauthorized
 	}
-	return s.store.UserBySessionHash(ctx, s.security.HashToken(token), s.now())
+	user, err := s.store.UserBySessionHash(ctx, s.security.HashToken(token), s.now())
+	if err != nil {
+		return domain.User{}, err
+	}
+	return s.decorateUser(user), nil
 }
 
 func (s *Service) Logout(ctx context.Context, token string) error {

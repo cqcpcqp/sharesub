@@ -12,6 +12,8 @@ const (
 	StatusArchived        = "archived"
 	RoleOwner             = "owner"
 	RoleMember            = "member"
+	RoleUser              = "user"
+	RoleAdmin             = "admin"
 	Window5H              = "5h"
 	Window7D              = "7d"
 	VisibilityPrivate     = "private"
@@ -25,13 +27,69 @@ const (
 )
 
 type User struct {
-	ID           string    `json:"id"`
-	Username     string    `json:"username"`
-	Email        string    `json:"email"`
-	AvatarURL    string    `json:"avatar_url"`
-	PasswordHash string    `json:"-"`
-	Status       string    `json:"status"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID                 string    `json:"id"`
+	Username           string    `json:"username"`
+	Email              string    `json:"email"`
+	AvatarURL          string    `json:"avatar_url"`
+	PasswordHash       string    `json:"-"`
+	Status             string    `json:"status"`
+	CreatedAt          time.Time `json:"created_at"`
+	IsAdmin            bool      `json:"is_admin"`
+	Role               string    `json:"role"`
+	MustChangePassword bool      `json:"must_change_password"`
+}
+
+type AdminOverview struct {
+	UserCount       int64   `json:"user_count"`
+	ActiveUserCount int64   `json:"active_user_count"`
+	AccountCount    int64   `json:"account_count"`
+	ActiveAccounts  int64   `json:"active_accounts"`
+	PlanCount       int64   `json:"plan_count"`
+	ActivePlans     int64   `json:"active_plans"`
+	APIKeyCount     int64   `json:"api_key_count"`
+	ActiveAPIKeys   int64   `json:"active_api_keys"`
+	Requests24H     int64   `json:"requests_24h"`
+	Tokens24H       int64   `json:"tokens_24h"`
+	CostMicros24H   int64   `json:"cost_micros_24h"`
+	SuccessRate24H  float64 `json:"success_rate_24h"`
+}
+
+type AdminUser struct {
+	User
+	AccountCount int64 `json:"account_count"`
+	PlanCount    int64 `json:"plan_count"`
+	APIKeyCount  int64 `json:"api_key_count"`
+}
+
+type AdminAccount struct {
+	Account
+	OwnerUsername string `json:"owner_username"`
+	OwnerEmail    string `json:"owner_email"`
+	PlanID        string `json:"plan_id"`
+	PlanName      string `json:"plan_name"`
+}
+
+type AdminPlan struct {
+	Plan
+	OwnerUsername  string `json:"owner_username"`
+	AccountEmail   string `json:"account_email"`
+	MemberCount    int64  `json:"member_count"`
+	Requests24H    int64  `json:"requests_24h"`
+	TotalTokens24H int64  `json:"total_tokens_24h"`
+}
+
+type AdminAPIKey struct {
+	ID         string     `json:"id"`
+	UserID     string     `json:"user_id"`
+	Username   string     `json:"username"`
+	Email      string     `json:"email"`
+	Name       string     `json:"name"`
+	KeyPrefix  string     `json:"key_prefix"`
+	Strategy   string     `json:"strategy"`
+	Status     string     `json:"status"`
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+	RouteCount int64      `json:"route_count"`
 }
 
 type UserAvatar struct {

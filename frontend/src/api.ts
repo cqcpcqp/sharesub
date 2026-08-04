@@ -1,5 +1,10 @@
 import type {
   Account,
+  AdminAPIKey,
+  AdminAccount,
+  AdminOverview,
+  AdminPlan,
+  AdminUser,
   AccountConfigInput,
   APIError,
   APIKey,
@@ -79,6 +84,7 @@ export const api = {
   login: (email: string, password: string) => request<AuthResult>('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
   me: () => request<User>('/api/me'),
   updateMe: (username: string) => request<User>('/api/me', { method: 'PATCH', body: JSON.stringify({ username }) }),
+  changePassword: (currentPassword: string, newPassword: string) => request<User>('/api/me/password', { method: 'PATCH', body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }) }),
   updateAvatar: (file: File) => {
     const body = new FormData()
     body.append('avatar', file)
@@ -121,6 +127,14 @@ export const api = {
   notifications: () => request<NotificationList>('/api/notifications'),
   markNotificationRead: (id: string) => request<Notification>(`/api/notifications/${id}`, { method: 'PATCH', body: JSON.stringify({ read: true }) }),
   markAllNotificationsRead: () => request<UpdatedCount>('/api/notifications/read-all', { method: 'POST' }),
+  adminOverview: () => request<AdminOverview>('/api/admin/overview'),
+  adminUsers: () => request<AdminUser[]>('/api/admin/users'),
+  adminUpdateUserStatus: (id: string, status: 'active' | 'disabled') => request<User>(`/api/admin/users/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+  adminAccounts: () => request<AdminAccount[]>('/api/admin/accounts'),
+  adminUpdateAccountStatus: (id: string, status: 'active' | 'disabled') => request<AdminAccount>(`/api/admin/accounts/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+  adminPlans: () => request<AdminPlan[]>('/api/admin/plans'),
+  adminKeys: () => request<AdminAPIKey[]>('/api/admin/keys'),
+  adminRevokeKey: (id: string) => request<{ revoked: boolean }>(`/api/admin/keys/${id}`, { method: 'DELETE' }),
 }
 
 export function parseOAuthCallback(raw: string): { code: string; state: string } {

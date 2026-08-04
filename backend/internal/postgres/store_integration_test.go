@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -287,6 +288,32 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if len(usageDetail.Insights.RecentUsage) != 2 || usageDetail.Insights.RecentUsage[0].MemberID != "owner-member" || len(usageDetail.Insights.RecentUsage[0].Trend) != 24 {
 		t.Fatalf("plan recent usage = %+v", usageDetail.Insights.RecentUsage)
 	}
+	adminOverview, err := store.AdminOverview(ctx, now.Add(-24*time.Hour))
+	if err != nil || adminOverview.UserCount != 3 || adminOverview.Requests24H != 2 || adminOverview.Tokens24H != 11500 {
+		t.Fatalf("admin overview = %+v, error = %v", adminOverview, err)
+	}
+	adminUsers, err := store.AdminListUsers(ctx)
+	if err != nil || len(adminUsers) != 3 {
+		t.Fatalf("admin users = %+v, error = %v", adminUsers, err)
+	}
+	adminAccounts, err := store.AdminListAccounts(ctx)
+	if err != nil || len(adminAccounts) != 2 {
+		t.Fatalf("admin accounts = %+v, error = %v", adminAccounts, err)
+	}
+	adminPlans, err := store.AdminListPlans(ctx, now.Add(-24*time.Hour))
+	var adminPlanTokens int64
+	for _, item := range adminPlans {
+		if item.ID == "plan" {
+			adminPlanTokens = item.TotalTokens24H
+		}
+	}
+	if err != nil || len(adminPlans) != 2 || adminPlanTokens != 11500 {
+		t.Fatalf("admin plans = %+v, error = %v", adminPlans, err)
+	}
+	adminKeys, err := store.AdminListAPIKeys(ctx)
+	if err != nil || len(adminKeys) != 1 || adminKeys[0].KeyPrefix != "sk-sharesub-old" {
+		t.Fatalf("admin keys = %+v, error = %v", adminKeys, err)
+	}
 
 	if err := store.CreateUser(ctx, domain.User{ID: "invitee", Username: "invitee", Email: "invitee@example.com", PasswordHash: "hash", Status: domain.StatusActive, CreatedAt: now}); err != nil {
 		t.Fatal(err)
@@ -489,5 +516,37 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	}
 	if len(ranking) != 2 || ranking[0].TokenUsage.TotalTokens != 10_000 || ranking[1].TokenUsage.TotalTokens != 1500 {
 		t.Fatalf("rolled-up member ranking = %+v", ranking)
+	}
+	bootstrapUser := domain.User{ID: "bootstrap-admin", Username: "admin", Email: "admin@underelay.com", PasswordHash: "bootstrap-hash", Status: domain.StatusActive, Role: domain.RoleAdmin, MustChangePassword: true, CreatedAt: cleanupNow}
+	created, err := store.EnsureBootstrapAdmin(ctx, bootstrapUser)
+	if err != nil || !created {
+		t.Fatalf("create bootstrap admin = %t, error = %v", created, err)
+	}
+	created, err = store.EnsureBootstrapAdmin(ctx, domain.User{ID: "second-bootstrap", Username: "admin2", Email: "second-admin@example.com", PasswordHash: "other-hash", Status: domain.StatusActive, Role: domain.RoleAdmin, MustChangePassword: true, CreatedAt: cleanupNow})
+	if err != nil || created {
+		t.Fatalf("repeat bootstrap admin = %t, error = %v", created, err)
+	}
+	currentSessionHash := []byte("current-session-hash")
+	if err := store.CreateSession(ctx, "bootstrap-current-session", bootstrapUser.ID, currentSessionHash, cleanupNow.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateSession(ctx, "bootstrap-other-session", bootstrapUser.ID, []byte("other-session-hash"), cleanupNow.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	changedAdmin, err := store.UpdatePassword(ctx, bootstrapUser.ID, "changed-hash", false, currentSessionHash)
+	if err != nil || changedAdmin.MustChangePassword || changedAdmin.PasswordHash != "changed-hash" {
+		t.Fatalf("change bootstrap password = %+v, error = %v", changedAdmin, err)
+	}
+	var remainingSessions int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM user_sessions WHERE user_id=$1`, bootstrapUser.ID).Scan(&remainingSessions); err != nil || remainingSessions != 1 {
+		t.Fatalf("remaining bootstrap sessions = %d, error = %v", remainingSessions, err)
+	}
+	var remainingSessionHash []byte
+	if err := pool.QueryRow(ctx, `SELECT token_hash FROM user_sessions WHERE user_id=$1`, bootstrapUser.ID).Scan(&remainingSessionHash); err != nil || !bytes.Equal(remainingSessionHash, currentSessionHash) {
+		t.Fatalf("remaining bootstrap session hash = %q, error = %v", remainingSessionHash, err)
+	}
+	resetAdmin, err := store.ResetAdminPassword(ctx, bootstrapUser.Email, "reset-hash")
+	if err != nil || resetAdmin.Role != domain.RoleAdmin || !resetAdmin.MustChangePassword || resetAdmin.PasswordHash != "reset-hash" {
+		t.Fatalf("reset bootstrap admin = %+v, error = %v", resetAdmin, err)
 	}
 }

@@ -140,7 +140,7 @@ func (s *Store) ResolveGatewayRoutes(ctx context.Context, hash []byte, now time.
 		JOIN api_key_plans r ON r.api_key_id=k.id AND r.enabled=true
 		JOIN shared_plans p ON p.id=r.plan_id AND p.status='active'
 		JOIN plan_members m ON m.plan_id=p.id AND m.user_id=k.user_id AND m.status='active'
-		JOIN users u ON u.id=m.user_id
+		JOIN users u ON u.id=m.user_id AND u.status='active'
 		JOIN openai_accounts a ON a.id=p.account_id AND a.status='active'
 		WHERE k.id=$1
 		ORDER BY r.priority,p.created_at`, out.APIKey.ID, now)

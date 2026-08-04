@@ -76,36 +76,55 @@ func (s *Store) Migrate(ctx context.Context) error {
 }
 
 func (s *Store) CreateUser(ctx context.Context, user domain.User) error {
-	_, err := s.pool.Exec(ctx, `INSERT INTO users(id,username,email,password_hash,status,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$6)`, user.ID, user.Username, user.Email, user.PasswordHash, user.Status, user.CreatedAt)
+	if user.Role == "" {
+		user.Role = domain.RoleUser
+	}
+	_, err := s.pool.Exec(ctx, `INSERT INTO users(id,username,email,password_hash,status,role,must_change_password,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$8)`, user.ID, user.Username, user.Email, user.PasswordHash, user.Status, user.Role, user.MustChangePassword, user.CreatedAt)
 	return mapError(err)
 }
 
 func (s *Store) UserByEmail(ctx context.Context, email string) (domain.User, error) {
-	return scanUser(s.pool.QueryRow(ctx, `SELECT id,username,email,password_hash,status,created_at,avatar_updated_at FROM users WHERE lower(email)=lower($1)`, email))
+	return scanUser(s.pool.QueryRow(ctx, `SELECT id,username,email,password_hash,status,role,must_change_password,created_at,avatar_updated_at FROM users WHERE lower(email)=lower($1)`, email))
 }
 
 func (s *Store) UserBySessionHash(ctx context.Context, hash []byte, now time.Time) (domain.User, error) {
-	return scanUser(s.pool.QueryRow(ctx, `SELECT u.id,u.username,u.email,u.password_hash,u.status,u.created_at,u.avatar_updated_at FROM user_sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>$2 AND u.status='active'`, hash, now))
+	return scanUser(s.pool.QueryRow(ctx, `SELECT u.id,u.username,u.email,u.password_hash,u.status,u.role,u.must_change_password,u.created_at,u.avatar_updated_at FROM user_sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>$2 AND u.status='active'`, hash, now))
 }
 
 func scanUser(row pgx.Row) (domain.User, error) {
 	var user domain.User
 	var avatarUpdatedAt *time.Time
-	err := row.Scan(&user.ID, &user.Username, &user.Email, &user.PasswordHash, &user.Status, &user.CreatedAt, &avatarUpdatedAt)
+	err := row.Scan(&user.ID, &user.Username, &user.Email, &user.PasswordHash, &user.Status, &user.Role, &user.MustChangePassword, &user.CreatedAt, &avatarUpdatedAt)
 	user.AvatarURL = userAvatarURL(user.ID, avatarUpdatedAt)
 	return user, mapError(err)
 }
 
 func (s *Store) UpdateUsername(ctx context.Context, userID, username string) (domain.User, error) {
-	return scanUser(s.pool.QueryRow(ctx, `UPDATE users SET username=$2,updated_at=now() WHERE id=$1 RETURNING id,username,email,password_hash,status,created_at,avatar_updated_at`, userID, username))
+	return scanUser(s.pool.QueryRow(ctx, `UPDATE users SET username=$2,updated_at=now() WHERE id=$1 RETURNING id,username,email,password_hash,status,role,must_change_password,created_at,avatar_updated_at`, userID, username))
 }
 
 func (s *Store) UpdateUserAvatar(ctx context.Context, userID string, avatar domain.UserAvatar, updatedAt time.Time) (domain.User, error) {
-	return scanUser(s.pool.QueryRow(ctx, `UPDATE users SET avatar_data=$2,avatar_media_type=$3,avatar_updated_at=$4,updated_at=$4 WHERE id=$1 RETURNING id,username,email,password_hash,status,created_at,avatar_updated_at`, userID, avatar.Data, avatar.MediaType, updatedAt))
+	return scanUser(s.pool.QueryRow(ctx, `UPDATE users SET avatar_data=$2,avatar_media_type=$3,avatar_updated_at=$4,updated_at=$4 WHERE id=$1 RETURNING id,username,email,password_hash,status,role,must_change_password,created_at,avatar_updated_at`, userID, avatar.Data, avatar.MediaType, updatedAt))
 }
 
 func (s *Store) DeleteUserAvatar(ctx context.Context, userID string) (domain.User, error) {
-	return scanUser(s.pool.QueryRow(ctx, `UPDATE users SET avatar_data=NULL,avatar_media_type=NULL,avatar_updated_at=NULL,updated_at=now() WHERE id=$1 RETURNING id,username,email,password_hash,status,created_at,avatar_updated_at`, userID))
+	return scanUser(s.pool.QueryRow(ctx, `UPDATE users SET avatar_data=NULL,avatar_media_type=NULL,avatar_updated_at=NULL,updated_at=now() WHERE id=$1 RETURNING id,username,email,password_hash,status,role,must_change_password,created_at,avatar_updated_at`, userID))
+}
+
+func (s *Store) UpdatePassword(ctx context.Context, userID, passwordHash string, mustChange bool, currentSessionHash []byte) (domain.User, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return domain.User{}, err
+	}
+	defer tx.Rollback(ctx)
+	user, err := scanUser(tx.QueryRow(ctx, `UPDATE users SET password_hash=$2,must_change_password=$3,updated_at=now() WHERE id=$1 RETURNING id,username,email,password_hash,status,role,must_change_password,created_at,avatar_updated_at`, userID, passwordHash, mustChange))
+	if err != nil {
+		return domain.User{}, err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM user_sessions WHERE user_id=$1 AND token_hash<>$2`, userID, currentSessionHash); err != nil {
+		return domain.User{}, err
+	}
+	return user, tx.Commit(ctx)
 }
 
 func (s *Store) UserAvatar(ctx context.Context, userID string) (domain.UserAvatar, error) {

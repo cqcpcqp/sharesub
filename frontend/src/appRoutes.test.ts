@@ -9,6 +9,7 @@ describe('app routes', () => {
       plans: '/plans',
       accounts: '/accounts',
       keys: '/keys',
+      admin: '/admin',
       profile: '/profile',
     })
     for (const view of Object.keys(viewPaths) as (keyof typeof viewPaths)[]) {

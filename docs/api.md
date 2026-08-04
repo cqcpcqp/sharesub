@@ -33,11 +33,12 @@
 | `POST` | `/api/auth/logout` | 登录 Token | 无 | 注销当前会话 |
 | `GET` | `/api/me` | 登录 Token | 无 | 获取当前用户 |
 | `PATCH` | `/api/me` | 登录 Token | `username` | 修改唯一用户名 |
+| `PATCH` | `/api/me/password` | 登录 Token | `current_password`, `new_password` | 修改密码、解除首次登录限制，并撤销当前 Token 之外的其他登录会话 |
 | `PUT` | `/api/me/avatar` | 登录 Token | `multipart/form-data` 的 `avatar` 文件 | 上传或替换头像，支持 PNG、JPEG、WebP，最大 2 MiB |
 | `DELETE` | `/api/me/avatar` | 登录 Token | 无 | 移除头像 |
 | `GET` | `/api/users/{userID}/avatar` | 无 | 无 | 读取用户头像二进制 |
 
-注册和登录成功后返回 `user` 与完整的 `ss_session_...` Token。用户结构固定包含 `avatar_url`；未配置头像时为空字符串，配置后为带版本参数的站内图片地址。
+注册和登录成功后返回 `user` 与完整的 `ss_session_...` Token。用户结构固定包含 `avatar_url`、`role`、`is_admin` 和 `must_change_password`；未配置头像时 `avatar_url` 为空字符串，配置后为带版本参数的站内图片地址。首次引导管理员在完成密码修改前只能访问当前用户、修改密码和退出登录接口。
 
 ## 个人仪表盘
 
@@ -121,6 +122,14 @@ Plan 详情的 `insights.window_usage` 按当前 OpenAI 账号实际返回的 5h
 | `GET` | `/api/notifications` | 登录 Token | 无 | 返回 `items` 和 `unread_count` |
 | `PATCH` | `/api/notifications/{notificationID}` | 登录 Token | `read` | 设置单条通知已读或未读 |
 | `POST` | `/api/notifications/read-all` | 登录 Token | 无 | 全部标为已读，返回 `updated_count` |
+| `GET` | `/api/admin/overview` | 管理员 Token | 无 | 获取平台资源与最近 24 小时用量概览 |
+| `GET` | `/api/admin/users` | 管理员 Token | 无 | 列出用户及资源数量 |
+| `PATCH` | `/api/admin/users/{userID}/status` | 管理员 Token | `status` | 禁用或恢复用户；管理员不能禁用自己 |
+| `GET` | `/api/admin/accounts` | 管理员 Token | 无 | 列出全部 OpenAI 账号及绑定关系 |
+| `PATCH` | `/api/admin/accounts/{accountID}/status` | 管理员 Token | `status` | 启用或禁用 OpenAI 账号 |
+| `GET` | `/api/admin/plans` | 管理员 Token | 无 | 列出全部 Plan 及最近 24 小时用量 |
+| `GET` | `/api/admin/keys` | 管理员 Token | 无 | 列出全部 API Key 元数据 |
+| `DELETE` | `/api/admin/keys/{keyID}` | 管理员 Token | 无 | 吊销 API Key |
 
 ## 用户 API Key
 

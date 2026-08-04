@@ -14,6 +14,9 @@ type Store interface {
 	UpdateUsername(context.Context, string, string) (domain.User, error)
 	UpdateUserAvatar(context.Context, string, domain.UserAvatar, time.Time) (domain.User, error)
 	DeleteUserAvatar(context.Context, string) (domain.User, error)
+	UpdatePassword(context.Context, string, string, bool, []byte) (domain.User, error)
+	EnsureBootstrapAdmin(context.Context, domain.User) (bool, error)
+	ResetAdminPassword(context.Context, string, string) (domain.User, error)
 	UserAvatar(context.Context, string) (domain.UserAvatar, error)
 	CreateSession(context.Context, string, string, []byte, time.Time) error
 	DeleteSession(context.Context, []byte) error
@@ -59,6 +62,15 @@ type Store interface {
 	ListNotifications(context.Context, string) (domain.NotificationList, error)
 	UpdateNotification(context.Context, string, string, bool, time.Time) (domain.Notification, error)
 	ReadAllNotifications(context.Context, string, time.Time) (int64, error)
+
+	AdminOverview(context.Context, time.Time) (domain.AdminOverview, error)
+	AdminListUsers(context.Context) ([]domain.AdminUser, error)
+	AdminUpdateUserStatus(context.Context, string, string) (domain.User, error)
+	AdminListAccounts(context.Context) ([]domain.AdminAccount, error)
+	AdminUpdateAccountStatus(context.Context, string, string) (domain.AdminAccount, error)
+	AdminListPlans(context.Context, time.Time) ([]domain.AdminPlan, error)
+	AdminListAPIKeys(context.Context) ([]domain.AdminAPIKey, error)
+	AdminRevokeAPIKey(context.Context, string) error
 
 	ResolveGatewayRoutes(context.Context, []byte, time.Time) (domain.GatewayRouteSet, error)
 	TouchAPIKey(context.Context, string, time.Time) error

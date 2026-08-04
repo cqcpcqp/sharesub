@@ -10,6 +10,59 @@ export interface User {
   avatar_url: string
   status: string
   created_at: string
+  is_admin: boolean
+  role: 'user' | 'admin'
+  must_change_password: boolean
+}
+
+export interface AdminOverview {
+  user_count: number
+  active_user_count: number
+  account_count: number
+  active_accounts: number
+  plan_count: number
+  active_plans: number
+  api_key_count: number
+  active_api_keys: number
+  requests_24h: number
+  tokens_24h: number
+  cost_micros_24h: number
+  success_rate_24h: number
+}
+
+export interface AdminUser extends User {
+  account_count: number
+  plan_count: number
+  api_key_count: number
+}
+
+export interface AdminAccount extends Account {
+  owner_username: string
+  owner_email: string
+  plan_id: string
+  plan_name: string
+}
+
+export interface AdminPlan extends Plan {
+  owner_username: string
+  account_email: string
+  member_count: number
+  requests_24h: number
+  total_tokens_24h: number
+}
+
+export interface AdminAPIKey {
+  id: string
+  user_id: string
+  username: string
+  email: string
+  name: string
+  key_prefix: string
+  strategy: RouteStrategy
+  status: string
+  last_used_at?: string
+  created_at: string
+  route_count: number
 }
 
 export interface AuthResult { user: User; token: string }

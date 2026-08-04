@@ -22,8 +22,18 @@ func (s *Server) requireUser(next http.Handler) http.Handler {
 		}
 		ctx := context.WithValue(r.Context(), userContextKey{}, user)
 		ctx = context.WithValue(ctx, tokenContextKey{}, token)
+		if user.MustChangePassword && !passwordChangeAllowed(r) {
+			writeError(w, domain.ErrPasswordChangeRequired)
+			return
+		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+func passwordChangeAllowed(r *http.Request) bool {
+	return (r.Method == http.MethodGet && r.URL.Path == "/api/me") ||
+		(r.Method == http.MethodPatch && r.URL.Path == "/api/me/password") ||
+		(r.Method == http.MethodPost && r.URL.Path == "/api/auth/logout")
 }
 func currentUser(r *http.Request) domain.User {
 	return r.Context().Value(userContextKey{}).(domain.User)
@@ -68,6 +78,8 @@ func writeError(w http.ResponseWriter, err error) {
 		writeErrorStatus(w, 401, "unauthorized", err.Error())
 	case errors.Is(err, domain.ErrForbidden):
 		writeErrorStatus(w, 403, "forbidden", err.Error())
+	case errors.Is(err, domain.ErrPasswordChangeRequired):
+		writeErrorStatus(w, 403, "password_change_required", err.Error())
 	case errors.Is(err, domain.ErrNotFound):
 		writeErrorStatus(w, 404, "not_found", err.Error())
 	case errors.Is(err, domain.ErrAccountAlreadyBound):
