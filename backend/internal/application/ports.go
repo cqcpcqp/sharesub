@@ -9,6 +9,7 @@ import (
 
 type Store interface {
 	CreateUser(context.Context, domain.User) error
+	CreateUserWithAgreement(context.Context, domain.User, domain.AgreementAcceptance) error
 	UserByEmail(context.Context, string) (domain.User, error)
 	UserBySessionHash(context.Context, []byte, time.Time) (domain.User, error)
 	UpdateUsername(context.Context, string, string) (domain.User, error)

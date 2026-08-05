@@ -10,11 +10,16 @@ import (
 )
 
 func (s *Server) register(w http.ResponseWriter, r *http.Request) {
-	var input struct{ Username, Email, Password string }
+	var input struct {
+		Username  string                            `json:"username"`
+		Email     string                            `json:"email"`
+		Password  string                            `json:"password"`
+		Agreement application.RegistrationAgreement `json:"agreement"`
+	}
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	result, err := s.app.Register(r.Context(), input.Username, input.Email, input.Password)
+	result, err := s.app.Register(r.Context(), input.Username, input.Email, input.Password, input.Agreement)
 	writeResult(w, result, err)
 }
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {

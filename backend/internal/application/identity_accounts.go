@@ -15,11 +15,24 @@ import (
 	"github.com/sharesub/sharesub/backend/internal/security"
 )
 
-func (s *Service) Register(ctx context.Context, username, email, password string) (AuthResult, error) {
+const (
+	CurrentTermsVersion         = "2026-08-05"
+	CurrentPrivacyPolicyVersion = "2026-08-05"
+	CurrentAcceptableUseVersion = "2026-08-05"
+)
+
+type RegistrationAgreement struct {
+	Accepted             bool   `json:"accepted"`
+	TermsVersion         string `json:"terms_version"`
+	PrivacyPolicyVersion string `json:"privacy_policy_version"`
+	AcceptableUseVersion string `json:"acceptable_use_version"`
+}
+
+func (s *Service) Register(ctx context.Context, username, email, password string, agreement RegistrationAgreement) (AuthResult, error) {
 	email = normalizeEmail(email)
 	username = strings.TrimSpace(username)
-	if !validEmail(email) || !validUsername(username) {
-		return AuthResult{}, fmt.Errorf("%w: invalid email", domain.ErrInvalidInput)
+	if !validEmail(email) || !validUsername(username) || !validRegistrationAgreement(agreement) {
+		return AuthResult{}, fmt.Errorf("%w: invalid registration", domain.ErrInvalidInput)
 	}
 	hash, err := security.HashPassword(password)
 	if err != nil {
@@ -29,11 +42,23 @@ func (s *Service) Register(ctx context.Context, username, email, password string
 	if err != nil {
 		return AuthResult{}, err
 	}
-	user := domain.User{ID: id, Username: username, Email: email, PasswordHash: hash, Status: domain.StatusActive, Role: domain.RoleUser, CreatedAt: s.now()}
-	if err := s.store.CreateUser(ctx, user); err != nil {
+	now := s.now()
+	user := domain.User{ID: id, Username: username, Email: email, PasswordHash: hash, Status: domain.StatusActive, Role: domain.RoleUser, CreatedAt: now}
+	acceptance := domain.AgreementAcceptance{
+		UserID: user.ID, TermsVersion: agreement.TermsVersion, PrivacyPolicyVersion: agreement.PrivacyPolicyVersion,
+		AcceptableUseVersion: agreement.AcceptableUseVersion, AcceptedAt: now,
+	}
+	if err := s.store.CreateUserWithAgreement(ctx, user, acceptance); err != nil {
 		return AuthResult{}, err
 	}
 	return s.newSession(ctx, s.decorateUser(user))
+}
+
+func validRegistrationAgreement(agreement RegistrationAgreement) bool {
+	return agreement.Accepted &&
+		agreement.TermsVersion == CurrentTermsVersion &&
+		agreement.PrivacyPolicyVersion == CurrentPrivacyPolicyVersion &&
+		agreement.AcceptableUseVersion == CurrentAcceptableUseVersion
 }
 
 func (s *Service) UpdateUsername(ctx context.Context, userID, username string) (domain.User, error) {

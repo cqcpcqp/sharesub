@@ -28,7 +28,7 @@
 
 | 方法 | 路径 | 鉴权 | 请求体 | 用途 |
 |---|---|---|---|---|
-| `POST` | `/api/auth/register` | 无 | `username`, `email`, `password` | 注册并创建会话 |
+| `POST` | `/api/auth/register` | 无 | `username`, `email`, `password`, `agreement` | 接受当前协议后注册并创建会话 |
 | `POST` | `/api/auth/login` | 无 | `email`, `password` | 登录并创建会话 |
 | `POST` | `/api/auth/logout` | 登录 Token | 无 | 注销当前会话 |
 | `GET` | `/api/me` | 登录 Token | 无 | 获取当前用户 |
@@ -37,6 +37,8 @@
 | `PUT` | `/api/me/avatar` | 登录 Token | `multipart/form-data` 的 `avatar` 文件 | 上传或替换头像，支持 PNG、JPEG、WebP，最大 2 MiB |
 | `DELETE` | `/api/me/avatar` | 登录 Token | 无 | 移除头像 |
 | `GET` | `/api/users/{userID}/avatar` | 无 | 无 | 读取用户头像二进制 |
+
+注册请求中的 `agreement` 结构固定为 `accepted`、`terms_version`、`privacy_policy_version` 和 `acceptable_use_version`。`accepted` 必须为 `true`，三个版本必须与服务端当前版本完全一致；用户与协议接受记录在同一个事务中写入，接受时间由服务端生成。
 
 注册和登录成功后返回 `user` 与完整的 `ss_session_...` Token。用户结构固定包含 `avatar_url`、`role`、`is_admin` 和 `must_change_password`；未配置头像时 `avatar_url` 为空字符串，配置后为带版本参数的站内图片地址。首次引导管理员在完成密码修改前只能访问当前用户、修改密码和退出登录接口。
 

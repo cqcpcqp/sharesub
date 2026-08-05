@@ -83,6 +83,24 @@ func (s *Store) CreateUser(ctx context.Context, user domain.User) error {
 	return mapError(err)
 }
 
+func (s *Store) CreateUserWithAgreement(ctx context.Context, user domain.User, acceptance domain.AgreementAcceptance) error {
+	if user.Role == "" {
+		user.Role = domain.RoleUser
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `INSERT INTO users(id,username,email,password_hash,status,role,must_change_password,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$8)`, user.ID, user.Username, user.Email, user.PasswordHash, user.Status, user.Role, user.MustChangePassword, user.CreatedAt); err != nil {
+		return mapError(err)
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO user_agreement_acceptances(user_id,terms_version,privacy_policy_version,acceptable_use_version,accepted_at) VALUES($1,$2,$3,$4,$5)`, user.ID, acceptance.TermsVersion, acceptance.PrivacyPolicyVersion, acceptance.AcceptableUseVersion, acceptance.AcceptedAt); err != nil {
+		return mapError(err)
+	}
+	return tx.Commit(ctx)
+}
+
 func (s *Store) UserByEmail(ctx context.Context, email string) (domain.User, error) {
 	return scanUser(s.pool.QueryRow(ctx, `SELECT id,username,email,password_hash,status,role,must_change_password,created_at,avatar_updated_at FROM users WHERE lower(email)=lower($1)`, email))
 }

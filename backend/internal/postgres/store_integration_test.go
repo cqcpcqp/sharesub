@@ -88,6 +88,18 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if username == "" {
 		t.Fatal("migration did not assign a username")
 	}
+	registered := domain.User{ID: "registered", Username: "registered", Email: "registered@example.com", PasswordHash: "hash", Status: domain.StatusActive, Role: domain.RoleUser, CreatedAt: now}
+	acceptance := domain.AgreementAcceptance{UserID: registered.ID, TermsVersion: "2026-08-05", PrivacyPolicyVersion: "2026-08-05", AcceptableUseVersion: "2026-08-05", AcceptedAt: now}
+	if err := store.CreateUserWithAgreement(ctx, registered, acceptance); err != nil {
+		t.Fatal(err)
+	}
+	var acceptedAt time.Time
+	if err := pool.QueryRow(ctx, `SELECT accepted_at FROM user_agreement_acceptances WHERE user_id=$1 AND terms_version=$2 AND privacy_policy_version=$3 AND acceptable_use_version=$4`, registered.ID, acceptance.TermsVersion, acceptance.PrivacyPolicyVersion, acceptance.AcceptableUseVersion).Scan(&acceptedAt); err != nil {
+		t.Fatal(err)
+	}
+	if !acceptedAt.Equal(now) {
+		t.Fatalf("agreement accepted_at = %s, want %s", acceptedAt, now)
+	}
 	avatarTime := now.Add(time.Second)
 	ownerAvatar := domain.UserAvatar{Data: []byte("\x89PNG\r\n\x1a\nowner-avatar"), MediaType: "image/png"}
 	updatedOwner, err := store.UpdateUserAvatar(ctx, "owner", ownerAvatar, avatarTime)

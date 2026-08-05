@@ -146,6 +146,10 @@ code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 11px; }
 .segmented .n-button { width: 100%; border-radius: 6px; }
 .form-stack { display: grid; gap: 17px; margin-top: 22px; }
 .form-stack > .n-button { margin-top: 4px; }
+.agreement-check { align-items: flex-start; color: var(--muted); font-size: 10px; line-height: 1.7; }
+.agreement-check .n-checkbox-box { margin-top: 2px; }
+.agreement-check a, .auth-legal a { color: var(--primary); text-decoration: none; }
+.agreement-check a:hover, .auth-legal a:hover { text-decoration: underline; }
 .form-error { margin: 15px 0 0; padding: 11px 13px; border: 1px solid var(--danger-border); border-radius: 7px; background: var(--red-soft); color: var(--danger-ink); font-size: 12px; line-height: 1.5; }
 .auth-invite-context { min-height: 58px; display: flex; align-items: center; gap: 11px; margin: -7px 0 18px; padding: 11px 12px; border: 1px solid var(--info-border); border-radius: 8px; background: var(--info-surface); }
 .auth-invite-context > span:first-child { width: 34px; height: 34px; display: grid; flex: 0 0 auto; place-items: center; border-radius: 7px; background: var(--surface); color: var(--teal); }
@@ -155,6 +159,10 @@ code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 11px; }
 .auth-invite-context small { color: var(--muted); font-size: 9px; }
 .auth-invite-context > .n-alert { width: 100%; }
 .auth-invite-actions { display: flex; flex: 0 0 auto; gap: 10px; }
+.auth-legal { display: grid; gap: 9px; margin-top: 24px; padding-top: 17px; border-top: 1px solid var(--line-soft); }
+.auth-legal nav { display: flex; flex-wrap: wrap; gap: 15px; }
+.auth-legal a { font-size: 9px; }
+.auth-legal p { margin: 0; color: var(--muted-light); font-size: 8px; line-height: 1.6; }
 
 .app-shell { min-height: 100vh; min-height: 100dvh; display: grid; grid-template-columns: 264px minmax(0, 1fr); transition: grid-template-columns .2s ease; }
 .sidebar { position: sticky; top: 0; z-index: 20; height: 100vh; display: flex; flex-direction: column; padding: 24px 16px 16px; border-right: 1px solid var(--line); background: var(--sidebar); }

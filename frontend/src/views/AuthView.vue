@@ -14,39 +14,52 @@
         <label v-if="mode === 'register'">用户名<AppInput :value="form.username" clearable :minlength="2" :maxlength="32" placeholder="你的公开昵称" :input-props="{ autocomplete: 'username', required: true }" @update:value="updateFormField('username', $event)" /></label>
         <label>邮箱<AppInput :value="form.email" clearable placeholder="name@example.com" :input-props="{ type: 'email', autocomplete: 'email', required: true }" @update:value="updateFormField('email', $event)" /></label>
         <label>密码<AppInput :value="form.password" type="password" clearable show-password-on="click" :minlength="10" placeholder="至少 10 个字符" :input-props="{ autocomplete: mode === 'login' ? 'current-password' : 'new-password', required: true }" @update:value="updateFormField('password', $event)" /></label>
-        <NButton type="primary" attr-type="submit" block :loading="busy"><template #icon><LogIn :size="18" /></template>{{ mode === 'login' ? '登录' : '创建账号' }}</NButton>
+        <NCheckbox v-if="mode === 'register'" v-model:checked="agreementAccepted" class="agreement-check">
+          我已阅读并同意
+          <a href="/terms" target="_blank" rel="noopener" @click.stop>《用户协议》</a>、<a href="/privacy" target="_blank" rel="noopener" @click.stop>《隐私政策》</a>和<a href="/acceptable-use" target="_blank" rel="noopener" @click.stop>《可接受使用规范》</a>
+        </NCheckbox>
+        <NButton type="primary" attr-type="submit" block :loading="busy" :disabled="mode === 'register' && !agreementAccepted"><template #icon><LogIn :size="18" /></template>{{ mode === 'login' ? '登录' : '创建账号' }}</NButton>
       </form>
       <p v-if="error" class="form-error">{{ error }}</p>
+      <footer class="auth-legal"><nav><a href="/terms">用户协议</a><a href="/privacy">隐私政策</a><a href="/acceptable-use">使用规范</a></nav><p>ShareSub 是独立产品，与 OpenAI 无隶属、授权或代理关系。</p></footer>
     </div></section>
   </main>
 </template>
 
 <script setup lang="ts">
-import { NAlert, NButton, NButtonGroup, NSpin } from 'naive-ui'
+import { NAlert, NButton, NButtonGroup, NCheckbox, NSpin } from 'naive-ui'
 import { reactive, ref } from 'vue'
 import { Layers3, LogIn } from 'lucide-vue-next'
 import { APIRequestError, api, setSessionToken } from '../api'
 import type { InvitePreview, User } from '../types'
 import BrandMark from '../components/BrandMark.vue'
 import AppInput from '../components/AppInput.vue'
+import { agreementVersions } from '../agreements'
 
-defineProps<{ invitePending: boolean; invitation: InvitePreview | null; inviteLoading: boolean; inviteError: string }>()
+const props = withDefaults(defineProps<{ invitePending: boolean; invitation: InvitePreview | null; inviteLoading: boolean; inviteError: string; initialMode?: 'login' | 'register' }>(), { initialMode: 'login' })
 const emit = defineEmits<{ authenticated: [user: User]; retryInvite: []; discardInvite: [] }>()
-const mode = ref<'login' | 'register'>('login')
+const mode = ref<'login' | 'register'>(props.initialMode)
 const busy = ref(false)
 const error = ref('')
+const agreementAccepted = ref(false)
 const form = reactive({ username: '', email: '', password: '' })
 
 function updateFormField(field: 'username' | 'email' | 'password', value: string) { form[field] = value }
 
 async function submit() {
   if (busy.value) return
+  if (mode.value === 'register' && !agreementAccepted.value) return
   busy.value = true
   error.value = ''
   try {
     const result = mode.value === 'login'
       ? await api.login(form.email.trim(), form.password)
-      : await api.register(form.username.trim(), form.email.trim(), form.password)
+      : await api.register(form.username.trim(), form.email.trim(), form.password, {
+        accepted: true,
+        terms_version: agreementVersions.terms,
+        privacy_policy_version: agreementVersions.privacy,
+        acceptable_use_version: agreementVersions.acceptableUse,
+      })
     setSessionToken(result.token)
     emit('authenticated', result.user)
   } catch (reason) {

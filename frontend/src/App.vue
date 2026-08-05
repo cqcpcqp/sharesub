@@ -4,6 +4,18 @@
       <BrandMark :size="42" />
       <NSpin size="small" />
     </main>
+    <PublicHomeView
+      v-else-if="publicPage === 'home' && !inviteIntent"
+      @login="navigateToAuth('login')"
+      @register="navigateToAuth('register')"
+      @navigate="navigateToPublic"
+    />
+    <LegalDocumentView
+      v-else-if="legalPage && !inviteIntent"
+      :page="legalPage"
+      @login="navigateToAuth('login')"
+      @navigate="navigateToPublic"
+    />
     <template v-else-if="!user">
       <ThemeSwitcher v-model="themeMode" class="auth-theme-switcher" />
       <AuthView
@@ -11,6 +23,7 @@
         :invitation="invitePreview"
         :invite-loading="invitePreviewLoading"
         :invite-error="inviteError"
+        :initial-mode="authInitialMode"
         @authenticated="onAuthenticated"
         @retry-invite="loadInvitePreview"
         @discard-invite="discardInvite"
@@ -167,12 +180,14 @@ import OnboardingGuide from './components/OnboardingGuide.vue'
 import PasswordChangeDialog from './components/PasswordChangeDialog.vue'
 import PlansView from './views/PlansView.vue'
 import ProfileView from './views/ProfileView.vue'
+import PublicHomeView from './views/PublicHomeView.vue'
+import LegalDocumentView from './views/LegalDocumentView.vue'
 import ThemeSwitcher from './components/ThemeSwitcher.vue'
 import UserAvatar from './components/UserAvatar.vue'
 import { darkThemeOverrides, lightThemeOverrides } from './theme'
 import { locationWithoutHash, parseNavigationIntent, type InviteIntent } from './navigationIntent'
 import { isThemeMode, resolveTheme, type ThemeMode } from './themePreference'
-import { appRoutePath, parseAppRoute, type AppRoute, type ViewID } from './appRoutes'
+import { appRoutePath, parseAppRoute, type AppRoute, type PublicPageID, type ViewID } from './appRoutes'
 
 const nav = [
   { id: 'dashboard' as const, label: '仪表盘', shortLabel: '仪表盘', icon: LayoutDashboard },
@@ -192,7 +207,10 @@ const dashboard = ref<Dashboard | null>(null)
 const dashboardRefreshing = ref(false)
 const initialRoute = parseAppRoute(window.location.pathname)
 const activeView = ref<ViewID>(initialRoute?.kind === 'view' ? initialRoute.view : 'dashboard')
-const authChecking = ref(true)
+const publicPage = ref<PublicPageID | null>(initialRoute?.kind === 'public' ? initialRoute.page : null)
+const legalPage = computed(() => publicPage.value && publicPage.value !== 'home' ? publicPage.value : null)
+const authInitialMode = ref<'login' | 'register'>(new URLSearchParams(window.location.search).get('mode') === 'register' ? 'register' : 'login')
+const authChecking = ref(initialRoute?.kind !== 'public' || Boolean(parseNavigationIntent(window.location.hash)))
 const busy = ref(false)
 const bootstrapped = ref(false)
 const keySetupVisible = ref(false)
@@ -232,6 +250,16 @@ let notificationRequestSequence = 0
 watch(themeMode, mode => localStorage.setItem(themeStorageKey, mode), { immediate: true })
 watch(resolvedTheme, theme => { document.documentElement.dataset.theme = theme }, { immediate: true })
 watch(sidebarCollapsed, collapsed => localStorage.setItem(sidebarStorageKey, String(collapsed)))
+watch([publicPage, activeView, user], () => {
+  const publicTitles: Record<PublicPageID, string> = {
+    home: 'ShareSub · 一起使用，也各自清楚',
+    terms: '用户协议 · ShareSub',
+    privacy: '隐私政策 · ShareSub',
+    'acceptable-use': '可接受使用规范 · ShareSub',
+  }
+  const viewTitle = navItems.value.find(item => item.id === activeView.value)?.label
+  document.title = publicPage.value ? publicTitles[publicPage.value] : user.value && viewTitle ? `${viewTitle} · ShareSub` : '登录 · ShareSub'
+}, { immediate: true })
 
 function updateSystemTheme(event: MediaQueryListEvent) { systemPrefersDark.value = event.matches }
 
@@ -261,8 +289,12 @@ async function onPasswordChanged(value: User) {
 
 function updateRoute(route: AppRoute, replace = false) {
   const path = appRoutePath(route)
+  publicPage.value = route.kind === 'public' ? route.page : null
   if (window.location.pathname === path) return
-  const location = `${path}${window.location.search}${window.location.hash}`
+  const search = new URLSearchParams(window.location.search)
+  search.delete('mode')
+  const query = search.toString()
+  const location = `${path}${query ? `?${query}` : ''}${window.location.hash}`
   if (replace) window.history.replaceState(null, '', location)
   else window.history.pushState(null, '', location)
 }
@@ -271,6 +303,15 @@ function navigateToView(view: ViewID, replace = false) {
   if (view === 'admin' && !user.value?.is_admin) return
   activeView.value = view
   updateRoute({ kind: 'view', view }, replace)
+}
+
+function navigateToPublic(page: PublicPageID) { updateRoute({ kind: 'public', page }) }
+
+function navigateToAuth(mode: 'login' | 'register') {
+  authInitialMode.value = mode
+  publicPage.value = null
+  const location = `/login${mode === 'register' ? '?mode=register' : ''}${window.location.hash}`
+  window.history.pushState(null, '', location)
 }
 
 function navigateFromMobileMenu(view: ViewID) {
@@ -287,6 +328,9 @@ function navigateToLogin(replace = false) { updateRoute({ kind: 'login' }, repla
 
 function syncPathRoute() {
   const route = parseAppRoute(window.location.pathname)
+  if (route?.kind === 'login') authInitialMode.value = new URLSearchParams(window.location.search).get('mode') === 'register' ? 'register' : 'login'
+  publicPage.value = route?.kind === 'public' ? route.page : null
+  if (route?.kind === 'public' && !inviteIntent.value) return
   if (user.value) {
     if (route?.kind === 'view' && (route.view !== 'admin' || user.value.is_admin)) activeView.value = route.view
     else navigateToView('dashboard', true)

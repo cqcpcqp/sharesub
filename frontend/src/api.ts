@@ -79,8 +79,15 @@ export interface KeyConfigInput {
   routes: APIKeyRoute[]
 }
 
+export interface RegistrationAgreementInput {
+  accepted: true
+  terms_version: string
+  privacy_policy_version: string
+  acceptable_use_version: string
+}
+
 export const api = {
-  register: (username: string, email: string, password: string) => request<AuthResult>('/api/auth/register', { method: 'POST', body: JSON.stringify({ username, email, password }) }),
+  register: (username: string, email: string, password: string, agreement: RegistrationAgreementInput) => request<AuthResult>('/api/auth/register', { method: 'POST', body: JSON.stringify({ username, email, password, agreement }) }),
   login: (email: string, password: string) => request<AuthResult>('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
   me: () => request<User>('/api/me'),
   updateMe: (username: string) => request<User>('/api/me', { method: 'PATCH', body: JSON.stringify({ username }) }),

@@ -39,6 +39,14 @@ type User struct {
 	MustChangePassword bool      `json:"must_change_password"`
 }
 
+type AgreementAcceptance struct {
+	UserID               string    `json:"user_id"`
+	TermsVersion         string    `json:"terms_version"`
+	PrivacyPolicyVersion string    `json:"privacy_policy_version"`
+	AcceptableUseVersion string    `json:"acceptable_use_version"`
+	AcceptedAt           time.Time `json:"accepted_at"`
+}
+
 type AdminOverview struct {
 	UserCount       int64   `json:"user_count"`
 	ActiveUserCount int64   `json:"active_user_count"`

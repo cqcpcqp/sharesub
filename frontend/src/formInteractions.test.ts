@@ -4,6 +4,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { effectScope, reactive } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from './api'
+import { agreementVersions } from './agreements'
 import type { APIKey, Account, Plan, PlanDetail, PlanPerformance, PublicPlan, User } from './types'
 import APIKeySetupWizard from './components/APIKeySetupWizard.vue'
 import AccountsView from './views/AccountsView.vue'
@@ -293,6 +294,30 @@ describe('form interactions', () => {
     await password.setValue('')
     expect(email.element).toHaveProperty('value', '')
     expect(password.element).toHaveProperty('value', '')
+  })
+
+  it('requires every current agreement before registration', async () => {
+    const register = vi.spyOn(api, 'register').mockResolvedValue({ user: member, token: 'ss_session_test' })
+    const wrapper = mount(AuthView, {
+      attachTo: document.body,
+      props: { invitePending: false, invitation: null, inviteLoading: false, inviteError: '', initialMode: 'register' },
+    })
+    await wrapper.get('input[placeholder="你的公开昵称"]').setValue('成员')
+    await wrapper.get('input[placeholder="name@example.com"]').setValue('member@example.com')
+    await wrapper.get('input[placeholder="至少 10 个字符"]').setValue('strong-password')
+    const submit = wrapper.findAll('button').find(button => button.text().includes('创建账号'))!
+    expect(submit.attributes('disabled')).toBeDefined()
+
+    await wrapper.get('.agreement-check').trigger('click')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(register).toHaveBeenCalledWith('成员', 'member@example.com', 'strong-password', {
+      accepted: true,
+      terms_version: agreementVersions.terms,
+      privacy_policy_version: agreementVersions.privacy,
+      acceptable_use_version: agreementVersions.acceptableUse,
+    })
   })
 
   it('edits and clears lobby search and application message', async () => {

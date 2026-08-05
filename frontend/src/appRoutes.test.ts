@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { appRoutePath, parseAppRoute, viewPaths } from './appRoutes'
+import { appRoutePath, parseAppRoute, publicPagePaths, viewPaths } from './appRoutes'
 
 describe('app routes', () => {
   it('maps every first-level view to a stable path', () => {
@@ -22,8 +22,19 @@ describe('app routes', () => {
     expect(parseAppRoute('/plans/')).toEqual({ kind: 'view', view: 'plans' })
   })
 
+  it('maps public pages without requiring an authenticated view', () => {
+    expect(publicPagePaths).toEqual({
+      home: '/',
+      terms: '/terms',
+      privacy: '/privacy',
+      'acceptable-use': '/acceptable-use',
+    })
+    for (const page of Object.keys(publicPagePaths) as (keyof typeof publicPagePaths)[]) {
+      expect(parseAppRoute(appRoutePath({ kind: 'public', page }))).toEqual({ kind: 'public', page })
+    }
+  })
+
   it('does not invent a route for unknown paths', () => {
-    expect(parseAppRoute('/')).toBeNull()
     expect(parseAppRoute('/unknown')).toBeNull()
   })
 })
