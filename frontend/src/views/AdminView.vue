@@ -1,7 +1,7 @@
 <template>
   <section class="view-content admin-view" aria-label="后台管理">
     <header class="admin-header">
-      <div><span class="section-kicker">ADMIN CONSOLE</span><h1>后台管理</h1><p>平台资源、运行状况与访问控制</p></div>
+      <div><h1>后台管理</h1><p>平台资源、运行状况与访问控制</p></div>
       <NButton secondary size="small" :loading="loading" @click="loadAll"><template #icon><RefreshCw :size="15" /></template>刷新</NButton>
     </header>
 
@@ -129,19 +129,19 @@ onMounted(loadAll)
 .admin-overview-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; }
 .admin-overview-grid article { min-width: 0; display: flex; gap: 10px; padding: 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--primary); box-shadow: var(--shadow-xs); }
 .admin-overview-grid article div { min-width: 0; display: grid; gap: 3px; }
-.admin-overview-grid small,.admin-overview-grid span { color: var(--muted); font-size: 9px; }
+.admin-overview-grid small,.admin-overview-grid span { color: var(--muted); font-size: 11px; }
 .admin-overview-grid strong { overflow: hidden; color: var(--ink-strong); font-size: 18px; text-overflow: ellipsis; }
 .admin-resource-panel { min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); box-shadow: var(--shadow-xs); }
 .admin-resource-toolbar { display: grid; grid-template-columns: minmax(420px, 1fr) 240px; gap: 14px; align-items: center; padding: 12px 14px; border-bottom: 1px solid var(--line-soft); }
 .admin-table-scroll { min-width: 0; overflow: auto; }
 .admin-table { width: 100%; min-width: 920px; border-collapse: collapse; }
-.admin-table th { height: 38px; padding: 0 13px; background: var(--surface-soft); color: var(--muted); font-size: 9px; font-weight: 800; text-align: left; white-space: nowrap; }
-.admin-table td { height: 58px; padding: 9px 13px; border-top: 1px solid var(--line-soft); color: var(--ink); font-size: 10px; white-space: nowrap; }
+.admin-table th { height: 38px; padding: 0 13px; background: var(--surface-soft); color: var(--muted); font-size: 11px; font-weight: 800; text-align: left; white-space: nowrap; }
+.admin-table td { height: 58px; padding: 9px 13px; border-top: 1px solid var(--line-soft); color: var(--ink); font-size: 11px; white-space: nowrap; }
 .admin-table tbody tr:hover { background: var(--surface-hover); }
 .admin-primary { min-width: 140px; display: grid; gap: 4px; }
-.admin-primary strong { color: var(--ink-strong); font-size: 10px; }
-.admin-primary small { max-width: 240px; overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; }
-.admin-primary em { margin-left: 6px; padding: 2px 5px; border-radius: 4px; background: var(--primary-soft); color: var(--primary); font-size: 8px; font-style: normal; }
+.admin-primary strong { color: var(--ink-strong); font-size: 11px; }
+.admin-primary small { max-width: 240px; overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; }
+.admin-primary em { margin-left: 6px; padding: 2px 5px; border-radius: 4px; background: var(--primary-soft); color: var(--primary); font-size: 11px; font-style: normal; }
 .admin-loading { min-height: 240px; display: grid; place-items: center; }
 :deep(.n-empty) { padding: 48px 20px; }
 @media (max-width: 1200px) { .admin-overview-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }

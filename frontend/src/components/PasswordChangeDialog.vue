@@ -39,5 +39,5 @@ async function submit() {
 <style scoped>
 .password-change-form { display: grid; gap: 14px; margin-top: 16px; }
 .password-change-form label { display: grid; gap: 7px; color: var(--ink); font-size: 11px; font-weight: 700; }
-.password-change-form label small { color: var(--muted); font-size: 9px; font-weight: 500; }
+.password-change-form label small { color: var(--muted); font-size: 11px; font-weight: 500; }
 </style>

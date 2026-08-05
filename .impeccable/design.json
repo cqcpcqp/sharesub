@@ -1,0 +1,360 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-05T08:39:12Z",
+  "title": "Design System: ShareSub",
+  "extensions": {
+    "colorMeta": {
+      "collaboration-coral": {
+        "role": "primary",
+        "displayName": "协作珊瑚",
+        "canonical": "#df5943",
+        "tonalRamp": [
+          "oklch(15% 0.172 31.6)",
+          "oklch(25% 0.172 31.6)",
+          "oklch(35% 0.172 31.6)",
+          "oklch(45% 0.172 31.6)",
+          "oklch(55% 0.172 31.6)",
+          "oklch(65% 0.172 31.6)",
+          "oklch(80% 0.172 31.6)",
+          "oklch(95% 0.172 31.6)"
+        ]
+      },
+      "trust-teal": {
+        "role": "secondary",
+        "displayName": "可信青绿",
+        "canonical": "#167d70",
+        "tonalRamp": [
+          "oklch(15% 0.090 181.8)",
+          "oklch(25% 0.090 181.8)",
+          "oklch(35% 0.090 181.8)",
+          "oklch(45% 0.090 181.8)",
+          "oklch(55% 0.090 181.8)",
+          "oklch(65% 0.090 181.8)",
+          "oklch(80% 0.090 181.8)",
+          "oklch(95% 0.090 181.8)"
+        ]
+      },
+      "routing-blue": {
+        "role": "secondary",
+        "displayName": "路由蓝",
+        "canonical": "#4b6cdb",
+        "tonalRamp": [
+          "oklch(15% 0.174 268.0)",
+          "oklch(25% 0.174 268.0)",
+          "oklch(35% 0.174 268.0)",
+          "oklch(45% 0.174 268.0)",
+          "oklch(55% 0.174 268.0)",
+          "oklch(65% 0.174 268.0)",
+          "oklch(80% 0.174 268.0)",
+          "oklch(95% 0.174 268.0)"
+        ]
+      },
+      "warning-amber": {
+        "role": "tertiary",
+        "displayName": "警示琥珀",
+        "canonical": "#b47814",
+        "tonalRamp": [
+          "oklch(15% 0.127 72.7)",
+          "oklch(25% 0.127 72.7)",
+          "oklch(35% 0.127 72.7)",
+          "oklch(45% 0.127 72.7)",
+          "oklch(55% 0.127 72.7)",
+          "oklch(65% 0.127 72.7)",
+          "oklch(80% 0.127 72.7)",
+          "oklch(95% 0.127 72.7)"
+        ]
+      },
+      "danger-red": {
+        "role": "tertiary",
+        "displayName": "危险红",
+        "canonical": "#bf4551",
+        "tonalRamp": [
+          "oklch(15% 0.156 18.0)",
+          "oklch(25% 0.156 18.0)",
+          "oklch(35% 0.156 18.0)",
+          "oklch(45% 0.156 18.0)",
+          "oklch(55% 0.156 18.0)",
+          "oklch(65% 0.156 18.0)",
+          "oklch(80% 0.156 18.0)",
+          "oklch(95% 0.156 18.0)"
+        ]
+      },
+      "warm-canvas": {
+        "role": "neutral",
+        "displayName": "暖纸灰",
+        "canonical": "#f4f5f2",
+        "tonalRamp": [
+          "oklch(15% 0.004 121.6)",
+          "oklch(25% 0.004 121.6)",
+          "oklch(35% 0.004 121.6)",
+          "oklch(45% 0.004 121.6)",
+          "oklch(55% 0.004 121.6)",
+          "oklch(65% 0.004 121.6)",
+          "oklch(80% 0.004 121.6)",
+          "oklch(95% 0.004 121.6)"
+        ]
+      },
+      "charcoal-ink": {
+        "role": "neutral",
+        "displayName": "炭墨",
+        "canonical": "#222327",
+        "tonalRamp": [
+          "oklch(15% 0.008 274.7)",
+          "oklch(25% 0.008 274.7)",
+          "oklch(35% 0.008 274.7)",
+          "oklch(45% 0.008 274.7)",
+          "oklch(55% 0.008 274.7)",
+          "oklch(65% 0.008 274.7)",
+          "oklch(80% 0.008 274.7)",
+          "oklch(95% 0.008 274.7)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Public Display",
+        "purpose": "公开首页主标题；工作台不使用此尺度。"
+      },
+      "headline": {
+        "displayName": "Public Headline",
+        "purpose": "公开页面的主要分区标题。"
+      },
+      "title": {
+        "displayName": "Workspace Title",
+        "purpose": "工作台页面标题和首要数据标题。"
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "说明文字、公开页正文和连续阅读内容。"
+      },
+      "label": {
+        "displayName": "Interface Label",
+        "purpose": "字段、指标、按钮和表格辅助信息。"
+      },
+      "micro": {
+        "displayName": "Micro Label",
+        "purpose": "眉题、品牌副标和短元数据。"
+      },
+      "mono": {
+        "displayName": "Technical Mono",
+        "purpose": "API Key、配置、标识符和代码片段。"
+      }
+    },
+    "shadows": [
+      {
+        "name": "hairline",
+        "value": "0 1px 2px rgba(28, 29, 31, .04)",
+        "purpose": "状态图标、导航活动图标和最轻卡片。"
+      },
+      {
+        "name": "ambient-card",
+        "value": "0 5px 16px rgba(28, 29, 31, .05)",
+        "purpose": "搜索框、账号卡片和可交互卡片。"
+      },
+      {
+        "name": "overlay",
+        "value": "0 22px 60px rgba(28, 29, 31, .14)",
+        "purpose": "通知和应用弹窗。"
+      },
+      {
+        "name": "modal-light",
+        "value": "0 30px 90px rgba(18, 19, 21, .3)",
+        "purpose": "Naive UI 浅色主题模态浮层。"
+      },
+      {
+        "name": "public-showcase",
+        "value": "0 28px 70px rgba(42, 31, 27, .14)",
+        "purpose": "公开首页产品示意对象。"
+      },
+      {
+        "name": "dark-hairline",
+        "value": "0 1px 2px rgba(0, 0, 0, .18)",
+        "purpose": "深色主题最轻层次。"
+      },
+      {
+        "name": "dark-ambient",
+        "value": "0 8px 22px rgba(0, 0, 0, .22)",
+        "purpose": "深色主题可交互卡片。"
+      },
+      {
+        "name": "dark-overlay",
+        "value": "0 24px 70px rgba(0, 0, 0, .44)",
+        "purpose": "深色主题通知和应用弹窗。"
+      },
+      {
+        "name": "modal-dark",
+        "value": "0 30px 90px rgba(0, 0, 0, .52)",
+        "purpose": "Naive UI 深色主题模态浮层。"
+      }
+    ],
+    "motion": [
+      {
+        "name": "view-transition",
+        "value": "150ms ease",
+        "purpose": "视图切换的轻微淡入和位移。"
+      },
+      {
+        "name": "toast-transition",
+        "value": "180ms ease",
+        "purpose": "通知出现与消失。"
+      },
+      {
+        "name": "standard-state",
+        "value": "200ms ease",
+        "purpose": "导航收起、FAQ 图标和常规状态变化。"
+      },
+      {
+        "name": "reduced-motion",
+        "value": "0.01ms linear",
+        "purpose": "prefers-reduced-motion 下只保留即时透明度变化并移除位移。"
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "dashboard-compact",
+        "value": "1220px"
+      },
+      {
+        "name": "app-bottom-nav",
+        "value": "940px"
+      },
+      {
+        "name": "public-stack",
+        "value": "900px"
+      },
+      {
+        "name": "auth-single-pane",
+        "value": "820px"
+      },
+      {
+        "name": "detail-stack",
+        "value": "720px"
+      },
+      {
+        "name": "public-mobile",
+        "value": "640px"
+      },
+      {
+        "name": "phone",
+        "value": "560px"
+      },
+      {
+        "name": "small-phone",
+        "value": "390px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "工作台和公开页面的主要提交操作。",
+      "html": "<button class=\"ds-btn-primary\">创建 Plan</button>",
+      "css": ".ds-btn-primary { height: 42px; padding: 0 14px; border: 0; border-radius: 7px; background: var(--primary, #df5943); color: #fff; font: 700 13px/1 \"Avenir Next\", \"Segoe UI\", \"PingFang SC\", sans-serif; cursor: pointer; transition: background .2s ease, transform .2s ease; } .ds-btn-primary:hover { background: var(--primary-hover, #c94734); } .ds-btn-primary:active { transform: translateY(1px); } .ds-btn-primary:focus-visible { outline: 3px solid color-mix(in srgb, var(--primary, #df5943) 46%, transparent); outline-offset: 3px; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "取消、返回和低优先级操作。",
+      "html": "<button class=\"ds-btn-secondary\">取消</button>",
+      "css": ".ds-btn-secondary { height: 42px; padding: 0 14px; border: 1px solid var(--line-strong, #d3d5d0); border-radius: 7px; background: var(--surface, #fff); color: var(--ink, #222327); font: 700 13px/1 \"Avenir Next\", \"Segoe UI\", \"PingFang SC\", sans-serif; cursor: pointer; transition: border-color .2s ease, background .2s ease; } .ds-btn-secondary:hover { border-color: var(--primary, #df5943); background: var(--surface-hover, #f0f1ee); } .ds-btn-secondary:focus-visible { outline: 3px solid color-mix(in srgb, var(--primary, #df5943) 46%, transparent); outline-offset: 3px; }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "表单、搜索和短文本输入的标准字段。",
+      "html": "<label class=\"ds-field\"><span class=\"ds-field-label\">Plan 名称</span><input class=\"ds-input\" placeholder=\"输入名称\"></label>",
+      "css": ".ds-field { display: grid; gap: 8px; color: var(--ink, #222327); font: 680 13px/1.5 \"Avenir Next\", \"Segoe UI\", \"PingFang SC\", sans-serif; } .ds-field-label { display: block; } .ds-input { width: 100%; height: 40px; padding: 0 12px; border: 1px solid var(--line-strong, #d3d5d0); border-radius: 7px; background: var(--surface-soft, #f8f8f6); color: var(--ink, #222327); font: 450 13px/1.5 \"Avenir Next\", \"Segoe UI\", \"PingFang SC\", sans-serif; outline: none; } .ds-input:hover { border-color: var(--primary, #df5943); } .ds-input:focus { border-color: var(--primary, #df5943); box-shadow: 0 0 0 3px rgba(223, 89, 67, .12); } .ds-input::placeholder { color: var(--muted-light, #92959b); }"
+    },
+    {
+      "name": "Active Navigation Item",
+      "kind": "nav",
+      "refersTo": "nav-active",
+      "description": "桌面侧边栏中的当前页面状态。",
+      "html": "<a class=\"ds-nav-active\" href=\"#\"><span class=\"ds-nav-icon\"><svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" aria-hidden=\"true\"><path d=\"M4 5h16v5H4zM4 14h7v5H4zM15 14h5v5h-5z\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linejoin=\"round\"/></svg></span><span>我的 Plans</span></a>",
+      "css": ".ds-nav-active { width: 220px; height: 46px; display: grid; grid-template-columns: 30px minmax(0, 1fr); align-items: center; gap: 11px; padding: 0 10px; border-radius: 8px; background: var(--primary-soft, #fbeae6); color: var(--primary, #df5943); font: 650 13px/1 \"Avenir Next\", \"Segoe UI\", \"PingFang SC\", sans-serif; text-decoration: none; } .ds-nav-icon { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 7px; background: var(--surface, #fff); box-shadow: var(--shadow-xs, 0 1px 2px rgba(28,29,31,.04)); } .ds-nav-active:hover { color: var(--primary-hover, #c94734); } .ds-nav-active:focus-visible { outline: 3px solid color-mix(in srgb, var(--primary, #df5943) 46%, transparent); outline-offset: 3px; }"
+    },
+    {
+      "name": "Success Status Chip",
+      "kind": "chip",
+      "refersTo": "status-chip",
+      "description": "健康、已批准、公开等成功语义状态。",
+      "html": "<span class=\"ds-status-chip\"><i class=\"ds-status-dot\"></i>正常</span>",
+      "css": ".ds-status-chip { min-height: 25px; display: inline-flex; align-items: center; gap: 6px; padding: 0 9px; border-radius: 999px; background: var(--teal-soft, #e4f2ef); color: var(--teal, #167d70); font: 760 10px/1 \"Avenir Next\", \"Segoe UI\", \"PingFang SC\", sans-serif; } .ds-status-dot { width: 6px; height: 6px; border-radius: 999px; background: currentColor; opacity: .7; }"
+    },
+    {
+      "name": "Plan Card",
+      "kind": "card",
+      "refersTo": "app-card",
+      "description": "大厅中用于展示房主、席位和额度方式的可交互卡片。",
+      "html": "<article class=\"ds-plan-card\"><header class=\"ds-plan-header\"><span class=\"ds-plan-icon\"><svg viewBox=\"0 0 24 24\" width=\"20\" height=\"20\" aria-hidden=\"true\"><path d=\"M4 7l8-4 8 4-8 4-8-4zm0 5l8 4 8-4M4 17l8 4 8-4\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></span><span class=\"ds-plan-chip\">公开</span></header><div class=\"ds-plan-copy\"><h3>Codex Team Plan</h3><p>房主 · 共享额度</p></div><dl class=\"ds-plan-stats\"><div><dt>空位</dt><dd>2</dd></div><div><dt>成员</dt><dd>3</dd></div><div><dt>模式</dt><dd>共享</dd></div></dl><button class=\"ds-plan-action\">申请加入</button></article>",
+      "css": ".ds-plan-card { width: 320px; min-height: 370px; display: flex; flex-direction: column; padding: 20px; border: 1px solid var(--line, #e2e3df); border-radius: 8px; background: var(--surface, #fff); color: var(--ink, #222327); box-shadow: var(--shadow-xs, 0 1px 2px rgba(28,29,31,.04)); font-family: \"Avenir Next\", \"Segoe UI\", \"PingFang SC\", sans-serif; transition: border-color .2s ease, box-shadow .2s ease, transform .2s ease; } .ds-plan-card:hover { border-color: var(--line-strong, #d3d5d0); box-shadow: var(--shadow-sm, 0 5px 16px rgba(28,29,31,.05)); transform: translateY(-2px); } .ds-plan-header { display: flex; align-items: center; justify-content: space-between; } .ds-plan-icon { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 8px; background: var(--primary-soft, #fbeae6); color: var(--primary, #df5943); } .ds-plan-chip { padding: 6px 9px; border-radius: 999px; background: var(--teal-soft, #e4f2ef); color: var(--teal, #167d70); font-size: 10px; font-weight: 760; } .ds-plan-copy { margin-top: 20px; } .ds-plan-copy h3 { margin: 0; color: var(--ink-strong, #151619); font-size: 18px; line-height: 1.35; } .ds-plan-copy p { margin: 9px 0 0; color: var(--muted, #6d7078); font-size: 11px; } .ds-plan-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 28px 0 0; } .ds-plan-stats div { display: grid; gap: 4px; } .ds-plan-stats dt { color: var(--muted-light, #92959b); font-size: 11px; } .ds-plan-stats dd { margin: 0; color: var(--ink-strong, #151619); font-size: 17px; font-weight: 700; } .ds-plan-action { width: 100%; height: 42px; margin-top: auto; border: 0; border-radius: 7px; background: var(--primary, #df5943); color: #fff; font-weight: 700; cursor: pointer; } .ds-plan-action:hover { background: var(--primary-hover, #c94734); } .ds-plan-action:focus-visible { outline: 3px solid color-mix(in srgb, var(--primary, #df5943) 46%, transparent); outline-offset: 3px; }"
+    },
+    {
+      "name": "Metric Tile",
+      "kind": "card",
+      "refersTo": "app-card",
+      "description": "仪表盘中使用语义图标与等宽数字的紧凑指标卡。",
+      "html": "<article class=\"ds-metric\"><header class=\"ds-metric-label\"><span class=\"ds-metric-icon\">T</span><span>今日 Token</span></header><strong>18.4M</strong><small>Input 12.8M · Output 5.6M</small></article>",
+      "css": ".ds-metric { width: 240px; min-height: 142px; display: grid; align-content: start; gap: 7px; padding: 15px; border: 1px solid var(--line, #e2e3df); border-radius: 8px; background: var(--surface, #fff); color: var(--ink, #222327); box-shadow: var(--shadow-xs, 0 1px 2px rgba(28,29,31,.04)); font-family: \"Avenir Next\", \"Segoe UI\", \"PingFang SC\", sans-serif; } .ds-metric-label { display: flex; align-items: center; gap: 8px; color: var(--muted, #6d7078); font-size: 11px; font-weight: 760; text-transform: uppercase; } .ds-metric-icon { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 7px; background: var(--blue-soft, #e9eefc); color: var(--blue, #4b6cdb); } .ds-metric > strong { margin-top: 4px; color: var(--ink-strong, #151619); font-size: 24px; font-variant-numeric: tabular-nums; } .ds-metric > small { color: var(--muted-light, #92959b); font-size: 11px; }"
+    },
+    {
+      "name": "Application Modal",
+      "kind": "custom",
+      "refersTo": "modal",
+      "description": "带标题、说明、内容和右对齐操作区的标准应用弹窗。",
+      "html": "<section class=\"ds-modal\" role=\"dialog\" aria-labelledby=\"ds-modal-title\"><header class=\"ds-modal-header\"><div><h2 id=\"ds-modal-title\">申请加入 Plan</h2><p>Codex Team Plan · 共享额度</p></div><button class=\"ds-modal-close\" aria-label=\"关闭\">×</button></header><div class=\"ds-modal-body\">批准后与其他成员共同使用账号额度。</div><footer class=\"ds-modal-footer\"><button class=\"ds-modal-cancel\">取消</button><button class=\"ds-modal-submit\">提交申请</button></footer></section>",
+      "css": ".ds-modal { width: 520px; display: grid; gap: 18px; padding: 22px; border: 1px solid var(--modal-border, rgba(255,255,255,.5)); border-radius: 8px; background: var(--surface, #fff); color: var(--ink, #222327); box-shadow: var(--shadow-md, 0 22px 60px rgba(28,29,31,.14)); font-family: \"Avenir Next\", \"Segoe UI\", \"PingFang SC\", sans-serif; } .ds-modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; } .ds-modal-header h2 { margin: 0; color: var(--ink-strong, #151619); font-size: 18px; } .ds-modal-header p { margin: 6px 0 0; color: var(--muted, #6d7078); font-size: 11px; line-height: 1.5; } .ds-modal-close { width: 44px; height: 44px; border: 0; border-radius: 7px; background: transparent; color: var(--muted, #6d7078); font-size: 22px; cursor: pointer; } .ds-modal-close:hover { background: var(--surface-hover, #f0f1ee); color: var(--ink, #222327); } .ds-modal-body { padding: 12px; border: 1px solid var(--info-border, #c9ddd7); border-radius: 7px; background: var(--info-surface, #edf6f3); color: var(--info-ink, #3f5e56); font-size: 11px; line-height: 1.5; } .ds-modal-footer { display: flex; justify-content: flex-end; gap: 8px; } .ds-modal-cancel, .ds-modal-submit { height: 42px; padding: 0 14px; border-radius: 7px; font-weight: 700; cursor: pointer; } .ds-modal-cancel { border: 1px solid var(--line-strong, #d3d5d0); background: var(--surface, #fff); color: var(--ink, #222327); } .ds-modal-submit { border: 0; background: var(--primary, #df5943); color: #fff; } .ds-modal-cancel:focus-visible, .ds-modal-submit:focus-visible, .ds-modal-close:focus-visible { outline: 3px solid color-mix(in srgb, var(--primary, #df5943) 46%, transparent); outline-offset: 3px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "清晰协作台 / The Clear Collaboration Desk",
+    "overview": "ShareSub 的视觉系统像一张被认真整理过的共享工作台：每个账号、Plan、成员、额度和状态都有明确位置，信息之间依靠网格、细边框、稳定间距和语义色建立关系。整体气质冷静、精确、克制，但协作珊瑚带来一点温度，避免产品滑向冷硬的基础设施后台。\n\n登录后的产品界面以高效操作为主，保持紧凑密度、短层级和可扫描的数据结构。公开首页是有意的例外：它承担介绍与说服任务，可以使用更大的标题、更宽松的节奏、12–16px 圆角和更强的展示性，但仍共享同一套颜色、字体与克制原则。当前 Logo 是临时资产，不构成未来视觉方向的约束。",
+    "keyCharacteristics": [
+      "冷静、精确、克制，但带一点温度",
+      "浅色与深色主题使用同一套语义角色",
+      "组件精确而克制，操作反馈明确但不过度装饰",
+      "工作台紧凑高效，公开首页宽松且更具展示感",
+      "颜色用于表达操作、信任、路由和风险，而非制造噪声"
+    ],
+    "rules": [
+      {
+        "name": "The Signal Scarcity Rule",
+        "body": "协作珊瑚优先用于主操作、当前位置与少量品牌面积；同一视图中不把所有图标、标签和数据都染成主色。",
+        "section": "colors"
+      },
+      {
+        "name": "The Semantic Accent Rule",
+        "body": "可信青绿表示成功与健康，路由蓝表示工具与路由，警示琥珀表示提醒，危险红表示失败或破坏性动作；不要为了装饰交换这些含义。",
+        "section": "colors"
+      },
+      {
+        "name": "The Compact Clarity Rule",
+        "body": "工作台通过 10–13px 的清晰标签、强弱字重和对齐建立层级，不靠不断放大标题；公开页面才使用 display 与 headline 尺度。",
+        "section": "typography"
+      },
+      {
+        "name": "The Border-First Rule",
+        "body": "默认使用表面色和细边框表达层级；只有交互、浮层或展示对象需要阴影，强阴影不能成为普通卡片的常态。",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "**Do** 复用现有 CSS 自定义属性和 Naive UI 主题覆盖，让浅色与深色主题保持同一语义。",
+      "**Do** 在工作台中使用 7–8px 圆角、细边框和紧凑间距，在公开首页保留更宽松的展示尺度。",
+      "**Do** 让协作珊瑚、可信青绿、路由蓝、警示琥珀和危险红维持稳定含义。",
+      "**Do** 用字体层级、对齐和 tabular-nums 提高数据可扫描性。",
+      "**Do** 保留现有 focus-visible 与 prefers-reduced-motion 行为，即使项目没有正式无障碍合规目标。"
+    ],
+    "donts": [
+      "**Don't** 把当前 Logo 当作长期视觉权威；它是待重设计的临时资产。",
+      "**Don't** 把公开首页的 12–16px 圆角、大标题和展示阴影扩散到登录后的紧凑工作台。",
+      "**Don't** 在普通卡片上默认使用强阴影、持续浮动或装饰性动效。",
+      "**Don't** 为了“更丰富”而交换语义色、把所有数据都染成主色，或引入通用蓝色 SaaS 视觉。",
+      "**Don't** 把现有轻微径向光晕扩展成大面积渐变、玻璃拟态或与产品无关的科技装饰。"
+    ]
+  }
+}

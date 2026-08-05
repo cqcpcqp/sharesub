@@ -48,9 +48,9 @@
 |---|---|---|---|---|
 | `GET` | `/api/dashboard` | 登录 Token | `timezone` | 获取当前用户的 Token 与性能汇总及最近 24 小时趋势 |
 
-`timezone` 必须是有效的 IANA 时区名称，例如 `Asia/Shanghai`。响应包含 `today_tokens`、`total_tokens`、`performance` 和固定 24 个小时桶的 `trend`。所有数据只聚合当前用户作为 Plan 成员实际发起的请求；“今日”边界按请求指定的时区计算。
+`timezone` 必须是有效的 IANA 时区名称，例如 `Asia/Shanghai`。响应包含 `today_tokens`、`total_tokens`、`today_web_search_calls`、`total_web_search_calls`、`performance` 和固定 24 个小时桶的 `trend`。所有数据只聚合当前用户作为 Plan 成员实际发起的请求；“今日”边界按请求指定的时区计算。
 
-`today_tokens` 和 `total_tokens` 包含 `input_tokens`、`output_tokens`、`cached_tokens` 与 `total_tokens`，其中总 Token 为 Input 与 Output 之和，Cached 是 Input 的子集。`performance` 包含今日请求数、成功率、最近一分钟 RPM/TPM、今日平均 TTFT、今日平均总耗时和今日实际使用的 Plan 数。
+`today_tokens` 和 `total_tokens` 固定包含 `input_tokens`、`output_tokens`、`cached_tokens`、`cache_creation_tokens`、`image_input_tokens`、`image_output_tokens`、`image_count` 与 `total_tokens`，其中总 Token 为 Input 与 Output 之和，Cached、Cache Creation 和 Image Input 是 Input 的细分，Image Output 是 Output 的细分。`trend` 的每个小时桶固定包含 `bucket_start`、上述除 `total_tokens` 外的 Token 与图片字段，以及 `web_search_calls`。`performance` 包含今日请求数、成功率、最近一分钟 RPM/TPM、今日平均 TTFT、今日平均总耗时和今日实际使用的 Plan 数。
 
 ## OpenAI 账号
 
@@ -113,7 +113,7 @@ OAuth 开始接口返回 `authorization_url` 和 `flow_id`。完成授权后，�
 
 固定分配模式发布公开 Plan、创建邀请和修改成员份额时，有效成员、未过期邀请和未占用公开席位的预留份额总和不能超过 `10000`。共享模式不分配个人份额。
 
-Plan 详情的 `insights.window_usage` 按当前 OpenAI 账号实际返回的 5h/7d 窗口汇总请求数、Input/Output/Cached Token 和 `estimated_cost_micros`；`insights.performance`、`model_usage`、`token_trend` 与 `recent_usage` 默认为最近 24 小时，前端通过同一个 performance 接口统一切换本日、最近 30 分钟、6 小时、12 小时或 24 小时。本日从请求时区的 00:00 开始计算。后三项分别返回按模型汇总的请求/Token/账号费用、Input/Output/Cached Token 趋势，以及按 Token 排名前 12 位成员的使用趋势；固定时段的趋势粒度依次为 1 分钟、15 分钟、30 分钟和 1 小时，本日根据已过去时长选择相同层级。`member_ranking` 为兼容保留的最近 7 天成员用量排行。`member_rankings` 返回本日、最近 7 天、当前账号 7d 配额周期（存在有效 7d 快照时）以及本次账号生命周期四种固定口径，每项包含准确的 `window_start`、`window_end` 与成员排行。请求中的 `timezone` 用于确定“本日”边界。`estimated_cost_micros` 为兼容保留的字段名，值表示账号计费（micro-USD）：按每次请求的实际模型、服务层级和同 sub2api 的 LiteLLM 模型价格表计算。
+Plan 详情的 `insights.window_usage` 按当前 OpenAI 账号实际返回的 5h/7d 窗口汇总请求数、完整的 `token_usage`、`web_search_calls` 和 `estimated_cost_micros`；`token_usage` 固定包含 Input/Output/Cached/Cache Creation/Image Input/Image Output Token、图片数与总 Token。`insights.performance`、`model_usage`、`token_trend` 与 `recent_usage` 默认为最近 24 小时，前端通过同一个 performance 接口统一切换本日、最近 30 分钟、6 小时、12 小时或 24 小时。本日从请求时区的 00:00 开始计算。后三项分别返回按模型汇总的请求/完整 Token 用量/Web Search 调用/账号费用，包含完整 Token、图片和 Web Search 字段的趋势，以及按 Token 排名前 12 位成员的使用趋势；固定时段的趋势粒度依次为 1 分钟、15 分钟、30 分钟和 1 小时，本日根据已过去时长选择相同层级。`member_ranking` 为兼容保留的最近 7 天成员用量排行。`member_rankings` 返回本日、最近 7 天、当前账号 7d 配额周期（存在有效 7d 快照时）以及本次账号生命周期四种固定口径，每项包含准确的 `window_start`、`window_end` 与成员排行。请求中的 `timezone` 用于确定“本日”边界。`estimated_cost_micros` 为兼容保留的字段名，值表示账号计费（micro-USD）：按每次请求的实际模型、服务层级和同 sub2api 的 LiteLLM 模型价格表计算，Responses Web Search 的按次费用会与同次请求的 Token 费用相加。
 
 成员退出或被移除后，原 API Key 到该 Plan 的路由会被禁用。再次加入会复用原成员记录，但不会自动恢复旧路由。归档会停止网关选路、取消公开状态、撤销待处理邀请并拒绝待处理申请；只有已归档 Plan 可以永久删除。
 

@@ -3,7 +3,7 @@
     <section class="auth-art" aria-hidden="true"><div class="auth-art-brand"><BrandMark :size="42" inverse /><strong>ShareSub</strong></div><div class="auth-art-copy"><span>SHARE · ROUTE · CREATE</span><p>一起使用，<br />也各自清楚。</p></div><div class="auth-art-blocks"><i /><i /><i /><i /></div></section>
     <section class="auth-panel"><div class="auth-form-wrap">
       <div class="auth-brand"><BrandMark :size="42" /><div><strong>ShareSub</strong><span>Access together</span></div></div>
-      <div class="auth-heading"><span>{{ invitePending ? 'PLAN INVITATION' : mode === 'login' ? 'WELCOME BACK' : 'GET STARTED' }}</span><h1>{{ invitePending ? '登录后加入共享' : mode === 'login' ? '很高兴再见到你' : '创建你的账户' }}</h1><p>{{ invitePending ? '验证身份后，系统会自动接受这份邀请。' : mode === 'login' ? '登录后继续管理共享访问。' : '只需要一分钟，就可以开始。' }}</p></div>
+      <div class="auth-heading"><h1>{{ invitePending ? '登录后加入共享' : mode === 'login' ? '很高兴再见到你' : '创建你的账户' }}</h1><p>{{ invitePending ? '验证身份后，系统会自动接受这份邀请。' : mode === 'login' ? '登录后继续管理共享访问。' : '只需要一分钟，就可以开始。' }}</p></div>
       <div v-if="invitePending" class="auth-invite-context">
         <NSpin v-if="inviteLoading" size="small" />
         <template v-else-if="invitation"><span><Layers3 :size="18" /></span><div><strong>{{ invitation.plan_name }}</strong><small>{{ invitation.owner_username }} 邀请你加入 · 链接仅可使用一次</small></div></template>
@@ -20,7 +20,7 @@
         </NCheckbox>
         <NButton type="primary" attr-type="submit" block :loading="busy" :disabled="mode === 'register' && !agreementAccepted"><template #icon><LogIn :size="18" /></template>{{ mode === 'login' ? '登录' : '创建账号' }}</NButton>
       </form>
-      <p v-if="error" class="form-error">{{ error }}</p>
+      <p v-if="error" class="form-error" role="alert" aria-live="polite">{{ error }}</p>
       <footer class="auth-legal"><nav><a href="/terms">用户协议</a><a href="/privacy">隐私政策</a><a href="/acceptable-use">使用规范</a></nav><p>ShareSub 是独立产品，与 OpenAI 无隶属、授权或代理关系。</p></footer>
     </div></section>
   </main>

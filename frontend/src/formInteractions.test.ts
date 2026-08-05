@@ -249,11 +249,12 @@ describe('form interactions', () => {
       model_usage: [{
         model: 'gpt-5.6-sol',
         request_count: 6,
-        token_usage: { input_tokens: 600, output_tokens: 60, cached_tokens: 30, total_tokens: 660 },
+        token_usage: { input_tokens: 600, output_tokens: 60, cached_tokens: 30, cache_creation_tokens: 0, image_input_tokens: 0, image_output_tokens: 0, image_count: 0, total_tokens: 660 },
+        web_search_calls: 0,
         estimated_cost_micros: 120,
       }],
-      token_trend: [{ bucket_start: createdAt, input_tokens: 600, output_tokens: 60, cached_tokens: 30 }],
-      recent_usage: [{ member_id: 'member', username: owner.username, trend: [{ bucket_start: createdAt, input_tokens: 600, output_tokens: 60, cached_tokens: 30 }] }],
+      token_trend: [{ bucket_start: createdAt, input_tokens: 600, output_tokens: 60, cached_tokens: 30, cache_creation_tokens: 0, image_input_tokens: 0, image_output_tokens: 0, image_count: 0, web_search_calls: 0 }],
+      recent_usage: [{ member_id: 'member', username: owner.username, trend: [{ bucket_start: createdAt, input_tokens: 600, output_tokens: 60, cached_tokens: 30, cache_creation_tokens: 0, image_input_tokens: 0, image_output_tokens: 0, image_count: 0, web_search_calls: 0 }] }],
     }
     let finishRefresh!: () => void
     const refreshPending = new Promise<void>(resolve => { finishRefresh = resolve })

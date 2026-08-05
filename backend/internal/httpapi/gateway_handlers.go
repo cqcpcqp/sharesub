@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"context"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -85,7 +87,6 @@ func copyModelsResponse(w http.ResponseWriter, upstream *http.Response) {
 }
 
 func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
-	startedAt := time.Now()
 	apiKey := bearerToken(r)
 	access, err := s.app.ResolveGatewayAccess(r.Context(), apiKey)
 	if err != nil {
@@ -112,9 +113,16 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 	}
 
 	excludedAccountIDs := make([]string, 0, maxUpstreamAccountSwitches)
-	var upstream *http.Response
-	effectiveMetadata := billingMetadata
+	clientWantsStream := billingMetadata.Stream && !compact
+	gatewayRequestID := strings.TrimSpace(r.Header.Get("X-Request-Id"))
+	if gatewayRequestID == "" {
+		gatewayRequestID = strings.TrimSpace(r.Header.Get("Openai-Request-Id"))
+	}
+	if gatewayRequestID == "" {
+		gatewayRequestID, _ = security.NewID()
+	}
 	for switches := 0; ; {
+		attemptStartedAt := time.Now()
 		policyBody, policyMetadata, policyErr := openai.ApplyFastPolicy(forwardBody, billingMetadata, access.Credential.Account.FastPolicy, access.Credential.Member.UserID)
 		if policyErr != nil {
 			if blocked, ok := policyErr.(*openai.FastPolicyBlockedError); ok {
@@ -124,63 +132,164 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 			writeGatewayErrorStatus(w, http.StatusInternalServerError, "policy_error", policyErr.Error())
 			return
 		}
-		effectiveMetadata = policyMetadata
-		upstream, err = s.gateway.Forward(r.Context(), r, policyBody, policyMetadata, access.AccessToken, access.Credential.Account.ChatGPTAccountID, access.Credential.APIKeyID, access.ProxyURL)
+		attemptCtx, cancelAttempt := upstreamAttemptContext(r.Context())
+		upstream, err := s.gateway.Forward(attemptCtx, r, policyBody, policyMetadata, access.AccessToken, access.Credential.Account.ChatGPTAccountID, access.Credential.APIKeyID, access.ProxyURL)
 		if err != nil {
-			requestID, _ := security.NewID()
-			_ = s.app.RecordGatewayMetric(r.Context(), access, requestID, policyMetadata.Model, policyMetadata.ServiceTier, http.StatusBadGateway, 0, time.Since(startedAt), domain.TokenUsage{})
+			cancelAttempt()
+			s.recordGatewayMetric(r.Context(), access, gatewayMetric(gatewayRequestID, billingMetadata.Model, policyMetadata, http.StatusBadGateway, openai.ProxyMetrics{Duration: time.Since(attemptStartedAt)}))
+			if r.Context().Err() != nil {
+				return
+			}
+			if switches < maxUpstreamAccountSwitches {
+				excludedAccountIDs = append(excludedAccountIDs, access.Credential.Account.ID)
+				releaseGatewayAccess(&access)
+				next, resolveErr := s.app.ResolveGatewayAccess(r.Context(), apiKey, excludedAccountIDs...)
+				if resolveErr == nil {
+					access = next
+					switches++
+					continue
+				}
+			}
 			writeGatewayErrorStatus(w, http.StatusBadGateway, "upstream_unavailable", err.Error())
 			return
 		}
-		if !shouldSwitchUpstreamAccount(upstream.StatusCode) {
-			break
-		}
-		if err := s.app.RecordGatewayAccountQuota(r.Context(), access, upstream.Header); err != nil {
-			s.logger.Debug("upstream rejection did not include Codex quota signal", "account_id", access.Credential.Account.ID, "status", upstream.StatusCode)
-		}
-		if switches >= maxUpstreamAccountSwitches {
-			break
+
+		requestID := upstreamRequestID(upstream, gatewayRequestID)
+		if upstream.StatusCode >= 200 && upstream.StatusCode < 300 {
+			s.recordGatewayUsage(r.Context(), access, upstream.Header, requestID)
 		}
 
-		excludedAccountIDs = append(excludedAccountIDs, access.Credential.Account.ID)
-		releaseGatewayAccess(&access)
-		next, resolveErr := s.app.ResolveGatewayAccess(r.Context(), apiKey, excludedAccountIDs...)
-		if resolveErr != nil {
-			break
+		if shouldSwitchUpstreamAccount(upstream.StatusCode) {
+			metrics, rejectedBody, drainErr := openai.DrainResponse(upstream, attemptStartedAt)
+			_ = upstream.Body.Close()
+			cancelAttempt()
+			if drainErr != nil {
+				s.logger.Warn("drain rejected upstream response", "request_id", requestID, "error", drainErr)
+			}
+			s.recordGatewayMetric(r.Context(), access, gatewayMetric(requestID, billingMetadata.Model, policyMetadata, upstream.StatusCode, metrics))
+			if err := s.recordGatewayAccountQuota(r.Context(), access, upstream.Header); err != nil {
+				s.logger.Debug("upstream rejection did not include Codex quota signal", "account_id", access.Credential.Account.ID, "status", upstream.StatusCode)
+			}
+			if r.Context().Err() != nil {
+				return
+			}
+			if switches >= maxUpstreamAccountSwitches {
+				if err := openai.WriteDrainedResponse(w, upstream, rejectedBody); err != nil {
+					s.logger.Warn("write rejected upstream response", "request_id", requestID, "error", err)
+				}
+				return
+			}
+			excludedAccountIDs = append(excludedAccountIDs, access.Credential.Account.ID)
+			releaseGatewayAccess(&access)
+			next, resolveErr := s.app.ResolveGatewayAccess(r.Context(), apiKey, excludedAccountIDs...)
+			if resolveErr != nil {
+				if err := openai.WriteDrainedResponse(w, upstream, rejectedBody); err != nil {
+					s.logger.Warn("write rejected upstream response", "request_id", requestID, "error", err)
+				}
+				return
+			}
+			access = next
+			switches++
+			continue
 		}
-		drainAndCloseResponse(upstream)
-		access = next
-		switches++
+
+		metrics, copyErr := openai.CopyResponseForRequest(w, upstream, attemptStartedAt, policyMetadata.Stream && !compact)
+		_ = upstream.Body.Close()
+		cancelAttempt()
+		metricStatus := upstream.StatusCode
+		var failoverErr *openai.StreamFailoverError
+		if errors.As(copyErr, &failoverErr) {
+			metricStatus = failoverErr.StatusCode
+		}
+		metric := gatewayMetric(requestID, billingMetadata.Model, policyMetadata, metricStatus, metrics)
+		s.recordGatewayMetric(r.Context(), access, metric)
+
+		if errors.As(copyErr, &failoverErr) && switches < maxUpstreamAccountSwitches && r.Context().Err() == nil {
+			excludedAccountIDs = append(excludedAccountIDs, access.Credential.Account.ID)
+			releaseGatewayAccess(&access)
+			next, resolveErr := s.app.ResolveGatewayAccess(r.Context(), apiKey, excludedAccountIDs...)
+			if resolveErr == nil {
+				access = next
+				switches++
+				continue
+			}
+		}
+		if errors.As(copyErr, &failoverErr) {
+			if err := openai.WriteStreamFailoverError(w, upstream, failoverErr, clientWantsStream); err != nil {
+				s.logger.Warn("write terminal upstream failure", "request_id", requestID, "error", err)
+			}
+			return
+		}
+		if copyErr != nil {
+			s.logger.Warn("copy upstream response", "request_id", requestID, "error", copyErr)
+		}
+		return
 	}
-	defer upstream.Body.Close()
+}
+
+func shouldSwitchUpstreamAccount(status int) bool {
+	return status == http.StatusUnauthorized || status == http.StatusPaymentRequired || status == http.StatusForbidden || status == http.StatusTooManyRequests || status == 529 || (status >= http.StatusInternalServerError && status < 600)
+}
+
+const gatewayMetricWriteTimeout = 5 * time.Second
+const gatewayUpstreamTimeout = 10 * time.Minute
+
+func upstreamAttemptContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(parent, gatewayUpstreamTimeout)
+}
+
+func upstreamRequestID(upstream *http.Response, fallback string) string {
 	requestID := upstream.Header.Get("X-Request-Id")
 	if requestID == "" {
 		requestID = upstream.Header.Get("Openai-Request-Id")
 	}
 	if requestID == "" {
-		requestID, _ = security.NewID()
+		requestID = fallback
 	}
-	if upstream.StatusCode >= 200 && upstream.StatusCode < 300 {
-		if err := s.app.RecordGatewayUsage(r.Context(), access, upstream.Header, requestID); err != nil {
-			s.logger.Warn("record Codex quota signal", "request_id", requestID, "account_id", access.Credential.Account.ID, "error", err)
-		}
+	return requestID
+}
+
+func gatewayMetric(requestID, requestedModel string, metadata openai.RequestBilling, status int, metrics openai.ProxyMetrics) domain.GatewayMetric {
+	upstreamModel := metrics.UpstreamModel
+	if upstreamModel == "" {
+		upstreamModel = metadata.Model
 	}
-	metrics, copyErr := openai.CopyResponseForRequest(w, upstream, startedAt, effectiveMetadata.Stream && !compact)
-	tokenUsage := domain.TokenUsage{InputTokens: metrics.InputTokens, OutputTokens: metrics.OutputTokens, CachedTokens: metrics.CachedTokens, TotalTokens: metrics.InputTokens + metrics.OutputTokens}
-	metricStatus := upstream.StatusCode
-	if copyErr != nil {
-		metricStatus = http.StatusBadGateway
-	}
-	if err := s.app.RecordGatewayMetric(r.Context(), access, requestID, effectiveMetadata.Model, effectiveMetadata.ServiceTier, metricStatus, metrics.TTFT, metrics.Duration, tokenUsage); err != nil {
-		s.logger.Warn("record gateway metric", "error", err)
-	}
-	if copyErr != nil {
-		s.logger.Warn("copy upstream response", "error", copyErr)
+	return domain.GatewayMetric{
+		RequestID: requestID, Model: metadata.Model, RequestedModel: requestedModel, UpstreamModel: upstreamModel, BillingModel: upstreamModel,
+		ServiceTier: metadata.ServiceTier, StatusCode: status, TTFT: metrics.TTFT, Duration: metrics.Duration,
+		TokenUsage: domain.TokenUsage{
+			InputTokens: metrics.InputTokens, OutputTokens: metrics.OutputTokens, CachedTokens: metrics.CachedTokens,
+			CacheCreationTokens: metrics.CacheCreationTokens, ImageInputTokens: metrics.ImageInputTokens, ImageOutputTokens: metrics.ImageOutputTokens,
+			ImageCount: metrics.ImageCount, TotalTokens: metrics.InputTokens + metrics.OutputTokens,
+		},
+		ImageCount: metrics.ImageCount, WebSearchCalls: metrics.WebSearchCalls,
 	}
 }
 
-func shouldSwitchUpstreamAccount(status int) bool {
-	return status == http.StatusTooManyRequests || status == 529
+func metricContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(parent), gatewayMetricWriteTimeout)
+}
+
+func (s *Server) recordGatewayMetric(parent context.Context, access application.GatewayAccess, metric domain.GatewayMetric) {
+	ctx, cancel := metricContext(parent)
+	defer cancel()
+	if err := s.app.RecordGatewayMetric(ctx, access, metric); err != nil {
+		s.logger.Warn("record gateway metric", "request_id", metric.RequestID, "error", err)
+	}
+}
+
+func (s *Server) recordGatewayUsage(parent context.Context, access application.GatewayAccess, headers http.Header, requestID string) {
+	ctx, cancel := metricContext(parent)
+	defer cancel()
+	if err := s.app.RecordGatewayUsage(ctx, access, headers, requestID); err != nil {
+		s.logger.Warn("record Codex quota signal", "request_id", requestID, "account_id", access.Credential.Account.ID, "error", err)
+	}
+}
+
+func (s *Server) recordGatewayAccountQuota(parent context.Context, access application.GatewayAccess, headers http.Header) error {
+	ctx, cancel := metricContext(parent)
+	defer cancel()
+	return s.app.RecordGatewayAccountQuota(ctx, access, headers)
 }
 
 func releaseGatewayAccess(access *application.GatewayAccess) {

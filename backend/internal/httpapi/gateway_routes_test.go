@@ -1,13 +1,16 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sharesub/sharesub/backend/internal/application"
 )
@@ -52,13 +55,36 @@ func TestGatewayCompatibilityRoutesAreRegistered(t *testing.T) {
 	}
 }
 
-func TestShouldSwitchUpstreamAccountOnlyForExplicitRejection(t *testing.T) {
-	for _, status := range []int{http.StatusTooManyRequests, 529} {
+func TestGatewayContextsHandleClientCancellation(t *testing.T) {
+	parent, cancelParent := context.WithCancel(context.Background())
+	metricCtx, cancelMetric := metricContext(parent)
+	defer cancelMetric()
+	attemptCtx, cancelAttempt := upstreamAttemptContext(parent)
+	defer cancelAttempt()
+	cancelParent()
+
+	select {
+	case <-metricCtx.Done():
+		t.Fatalf("metric context canceled with client: %v", metricCtx.Err())
+	case <-time.After(10 * time.Millisecond):
+	}
+	select {
+	case <-attemptCtx.Done():
+		if !errors.Is(attemptCtx.Err(), context.Canceled) {
+			t.Fatalf("upstream context error = %v, want context canceled", attemptCtx.Err())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("upstream context did not inherit client cancellation")
+	}
+}
+
+func TestShouldSwitchUpstreamAccountForRetryableFailure(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusPaymentRequired, http.StatusForbidden, http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout, http.StatusHTTPVersionNotSupported, 529} {
 		if !shouldSwitchUpstreamAccount(status) {
 			t.Fatalf("status %d should switch account", status)
 		}
 	}
-	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusRequestTimeout, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable} {
+	for _, status := range []int{http.StatusOK, http.StatusBadRequest, http.StatusNotFound, http.StatusRequestTimeout} {
 		if shouldSwitchUpstreamAccount(status) {
 			t.Fatalf("status %d must not switch account", status)
 		}

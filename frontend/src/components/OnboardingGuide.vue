@@ -2,7 +2,7 @@
   <section class="view-content onboarding-guide">
     <header class="onboarding-intro">
       <span class="onboarding-mark"><Sparkles :size="22" /></span>
-      <div><span class="section-kicker">GET STARTED</span><h1>从这里开始</h1><p>完成当前最重要的一步，随后就可以正常共享或使用账号。</p></div>
+      <div><h1>从这里开始</h1><p>完成当前最重要的一步，随后就可以正常共享或使用账号。</p></div>
     </header>
 
     <div v-if="!path" class="onboarding-paths">

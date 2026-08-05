@@ -209,6 +209,10 @@ export interface TokenUsage {
   input_tokens: number
   output_tokens: number
   cached_tokens: number
+  cache_creation_tokens: number
+  image_input_tokens: number
+  image_output_tokens: number
+  image_count: number
   total_tokens: number
 }
 
@@ -216,6 +220,7 @@ export interface WindowUsage {
   window_type: QuotaWindow['window_type']
   request_count: number
   token_usage: TokenUsage
+  web_search_calls: number
   estimated_cost_micros: number
   window_start: string
   window_end: string
@@ -226,6 +231,7 @@ export interface MemberUsageRank {
   username: string
   request_count: number
   token_usage: TokenUsage
+  web_search_calls: number
   estimated_cost_micros: number
 }
 
@@ -253,12 +259,18 @@ export interface DashboardTrendPoint {
   input_tokens: number
   output_tokens: number
   cached_tokens: number
+  cache_creation_tokens: number
+  image_input_tokens: number
+  image_output_tokens: number
+  image_count: number
+  web_search_calls: number
 }
 
 export interface ModelUsage {
   model: string
   request_count: number
   token_usage: TokenUsage
+  web_search_calls: number
   estimated_cost_micros: number
 }
 
@@ -277,6 +289,8 @@ export interface PlanPerformance extends PerformanceSummary {
 export interface Dashboard {
   today_tokens: TokenUsage
   total_tokens: TokenUsage
+  today_web_search_calls: number
+  total_web_search_calls: number
   performance: DashboardPerformance
   trend: DashboardTrendPoint[]
 }

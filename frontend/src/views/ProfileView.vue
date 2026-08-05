@@ -19,7 +19,6 @@
         <section class="settings-block">
           <div class="section-heading">
             <div>
-              <span class="section-kicker">PERSONAL DETAILS</span>
               <h2>个人资料</h2>
               <p>用户名会显示在大厅、Plan 成员和性能记录中</p>
             </div>
@@ -80,7 +79,6 @@
         <section class="settings-block appearance-settings">
           <div class="section-heading">
             <div>
-              <span class="section-kicker">APPEARANCE</span>
               <h2>外观</h2>
               <p>选择工作台的显示模式</p>
             </div>

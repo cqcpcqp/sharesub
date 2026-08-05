@@ -270,7 +270,18 @@ func sameQuotaWindow(left, right time.Time) bool {
 }
 
 func (s *Store) RecordGatewayMetric(ctx context.Context, metric domain.GatewayMetric) error {
-	_, err := s.pool.Exec(ctx, `INSERT INTO gateway_request_metrics(request_id,api_key_id,plan_id,account_id,member_id,model,service_tier,status_code,ttft_ms,duration_ms,input_tokens,output_tokens,cached_tokens,estimated_cost_micros,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`, metric.RequestID, metric.APIKeyID, metric.PlanID, metric.AccountID, metric.MemberID, metric.Model, metric.ServiceTier, metric.StatusCode, metric.TTFT.Milliseconds(), metric.Duration.Milliseconds(), metric.TokenUsage.InputTokens, metric.TokenUsage.OutputTokens, metric.TokenUsage.CachedTokens, metric.AccountCostMicros, metric.CreatedAt)
+	_, err := s.pool.Exec(ctx, `INSERT INTO gateway_request_metrics(
+		request_id,api_key_id,plan_id,account_id,member_id,model,requested_model,upstream_model,billing_model,service_tier,
+		status_code,ttft_ms,duration_ms,input_tokens,output_tokens,cached_tokens,cache_creation_tokens,image_input_tokens,image_output_tokens,
+		image_count,web_search_calls,input_cost_micros,output_cost_micros,cache_creation_cost_micros,cache_read_cost_micros,
+		image_input_cost_micros,image_output_cost_micros,web_search_cost_micros,estimated_cost_micros,created_at
+	) VALUES(
+		$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30
+	) ON CONFLICT(request_id,api_key_id,account_id) DO NOTHING`,
+		metric.RequestID, metric.APIKeyID, metric.PlanID, metric.AccountID, metric.MemberID, metric.Model, metric.RequestedModel, metric.UpstreamModel, metric.BillingModel, metric.ServiceTier,
+		metric.StatusCode, metric.TTFT.Milliseconds(), metric.Duration.Milliseconds(), metric.TokenUsage.InputTokens, metric.TokenUsage.OutputTokens, metric.TokenUsage.CachedTokens, metric.TokenUsage.CacheCreationTokens, metric.TokenUsage.ImageInputTokens, metric.TokenUsage.ImageOutputTokens,
+		metric.ImageCount, metric.WebSearchCalls, metric.CostBreakdown.InputMicros, metric.CostBreakdown.OutputMicros, metric.CostBreakdown.CacheCreationMicros, metric.CostBreakdown.CacheReadMicros,
+		metric.CostBreakdown.ImageInputMicros, metric.CostBreakdown.ImageOutputMicros, metric.CostBreakdown.WebSearchMicros, metric.AccountCostMicros, metric.CreatedAt)
 	return err
 }
 
@@ -282,12 +293,22 @@ func (s *Store) Dashboard(ctx context.Context, userID string, todayStart, trendS
 			COALESCE(SUM(g.input_tokens) FILTER (WHERE g.created_at >= $2), 0),
 			COALESCE(SUM(g.output_tokens) FILTER (WHERE g.created_at >= $2), 0),
 			COALESCE(SUM(g.cached_tokens) FILTER (WHERE g.created_at >= $2), 0),
+			COALESCE(SUM(g.cache_creation_tokens) FILTER (WHERE g.created_at >= $2), 0),
+			COALESCE(SUM(g.image_input_tokens) FILTER (WHERE g.created_at >= $2), 0),
+			COALESCE(SUM(g.image_output_tokens) FILTER (WHERE g.created_at >= $2), 0),
+			COALESCE(SUM(g.image_count) FILTER (WHERE g.created_at >= $2), 0),
+			COALESCE(SUM(g.web_search_calls) FILTER (WHERE g.created_at >= $2), 0),
 			COALESCE(SUM(g.input_tokens), 0) + COALESCE((SELECT SUM(r.input_tokens) FROM gateway_metric_daily_rollups r WHERE r.user_id=$1), 0),
 			COALESCE(SUM(g.output_tokens), 0) + COALESCE((SELECT SUM(r.output_tokens) FROM gateway_metric_daily_rollups r WHERE r.user_id=$1), 0),
 			COALESCE(SUM(g.cached_tokens), 0) + COALESCE((SELECT SUM(r.cached_tokens) FROM gateway_metric_daily_rollups r WHERE r.user_id=$1), 0),
+			COALESCE(SUM(g.cache_creation_tokens), 0) + COALESCE((SELECT SUM(r.cache_creation_tokens) FROM gateway_metric_daily_rollups r WHERE r.user_id=$1), 0),
+			COALESCE(SUM(g.image_input_tokens), 0) + COALESCE((SELECT SUM(r.image_input_tokens) FROM gateway_metric_daily_rollups r WHERE r.user_id=$1), 0),
+			COALESCE(SUM(g.image_output_tokens), 0) + COALESCE((SELECT SUM(r.image_output_tokens) FROM gateway_metric_daily_rollups r WHERE r.user_id=$1), 0),
+			COALESCE(SUM(g.image_count), 0) + COALESCE((SELECT SUM(r.image_count) FROM gateway_metric_daily_rollups r WHERE r.user_id=$1), 0),
+			COALESCE(SUM(g.web_search_calls), 0) + COALESCE((SELECT SUM(r.web_search_calls) FROM gateway_metric_daily_rollups r WHERE r.user_id=$1), 0),
 			COUNT(*) FILTER (WHERE g.created_at >= $2),
 			COUNT(*) FILTER (WHERE g.created_at >= $2 AND g.status_code BETWEEN 200 AND 299),
-			COALESCE(AVG(g.ttft_ms) FILTER (WHERE g.created_at >= $2), 0),
+			COALESCE(AVG(g.ttft_ms) FILTER (WHERE g.created_at >= $2 AND g.ttft_ms > 0), 0),
 			COALESCE(AVG(g.duration_ms) FILTER (WHERE g.created_at >= $2), 0),
 			COUNT(DISTINCT g.plan_id) FILTER (WHERE g.created_at >= $2),
 			COUNT(*) FILTER (WHERE g.created_at >= $3::timestamptz - INTERVAL '1 minute'),
@@ -298,9 +319,19 @@ func (s *Store) Dashboard(ctx context.Context, userID string, todayStart, trendS
 		&out.TodayTokens.InputTokens,
 		&out.TodayTokens.OutputTokens,
 		&out.TodayTokens.CachedTokens,
+		&out.TodayTokens.CacheCreationTokens,
+		&out.TodayTokens.ImageInputTokens,
+		&out.TodayTokens.ImageOutputTokens,
+		&out.TodayTokens.ImageCount,
+		&out.TodayWebSearchCalls,
 		&out.TotalTokens.InputTokens,
 		&out.TotalTokens.OutputTokens,
 		&out.TotalTokens.CachedTokens,
+		&out.TotalTokens.CacheCreationTokens,
+		&out.TotalTokens.ImageInputTokens,
+		&out.TotalTokens.ImageOutputTokens,
+		&out.TotalTokens.ImageCount,
+		&out.TotalWebSearchCalls,
 		&out.Performance.RequestsToday,
 		&successToday,
 		&out.Performance.AverageTTFTMs,
@@ -326,13 +357,20 @@ func (s *Store) Dashboard(ctx context.Context, userID string, todayStart, trendS
 				date_trunc('hour', g.created_at - $2::timestamptz) + $2::timestamptz AS bucket_start,
 				SUM(g.input_tokens) AS input_tokens,
 				SUM(g.output_tokens) AS output_tokens,
-				SUM(g.cached_tokens) AS cached_tokens
+				SUM(g.cached_tokens) AS cached_tokens,
+				SUM(g.cache_creation_tokens) AS cache_creation_tokens,
+				SUM(g.image_input_tokens) AS image_input_tokens,
+				SUM(g.image_output_tokens) AS image_output_tokens,
+				SUM(g.image_count) AS image_count,
+				SUM(g.web_search_calls) AS web_search_calls
 			FROM gateway_request_metrics g
 			JOIN plan_members m ON m.id = g.member_id
 			WHERE m.user_id = $1 AND g.created_at >= $2::timestamptz AND g.created_at <= $3::timestamptz
 			GROUP BY 1
 		)
-		SELECT b.bucket_start, COALESCE(u.input_tokens, 0), COALESCE(u.output_tokens, 0), COALESCE(u.cached_tokens, 0)
+		SELECT b.bucket_start, COALESCE(u.input_tokens, 0), COALESCE(u.output_tokens, 0), COALESCE(u.cached_tokens, 0),
+			COALESCE(u.cache_creation_tokens,0),COALESCE(u.image_input_tokens,0),COALESCE(u.image_output_tokens,0),
+			COALESCE(u.image_count,0),COALESCE(u.web_search_calls,0)
 		FROM buckets b
 		LEFT JOIN usage u ON u.bucket_start = b.bucket_start
 		ORDER BY b.bucket_start`, userID, trendStart, now)
@@ -343,7 +381,8 @@ func (s *Store) Dashboard(ctx context.Context, userID string, todayStart, trendS
 	out.Trend = make([]domain.DashboardTrendPoint, 0, 24)
 	for rows.Next() {
 		var point domain.DashboardTrendPoint
-		if err := rows.Scan(&point.BucketStart, &point.InputTokens, &point.OutputTokens, &point.CachedTokens); err != nil {
+		if err := rows.Scan(&point.BucketStart, &point.InputTokens, &point.OutputTokens, &point.CachedTokens,
+			&point.CacheCreationTokens, &point.ImageInputTokens, &point.ImageOutputTokens, &point.ImageCount, &point.WebSearchCalls); err != nil {
 			return out, err
 		}
 		out.Trend = append(out.Trend, point)

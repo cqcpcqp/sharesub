@@ -260,15 +260,26 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 
 	if err := store.RecordGatewayMetric(ctx, domain.GatewayMetric{
 		RequestID: "applicant-request", APIKeyID: "legacy-key", PlanID: "plan", AccountID: "account", MemberID: "applicant-member",
-		Model: "gpt-5.6-sol", AccountCostMicros: 125,
+		Model: "gpt-5.6-sol", RequestedModel: "gpt-5.6-sol", UpstreamModel: "gpt-5.6-sol", BillingModel: "gpt-5.6-sol", AccountCostMicros: 125,
 		StatusCode: http.StatusOK, TTFT: 120 * time.Millisecond, Duration: 850 * time.Millisecond,
-		TokenUsage: domain.TokenUsage{InputTokens: 1200, OutputTokens: 300, CachedTokens: 400}, CreatedAt: now,
+		TokenUsage: domain.TokenUsage{InputTokens: 1200, OutputTokens: 300, CachedTokens: 400, CacheCreationTokens: 50, ImageInputTokens: 20, ImageOutputTokens: 30, ImageCount: 1}, WebSearchCalls: 2, CreatedAt: now,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.RecordGatewayMetric(ctx, domain.GatewayMetric{
+		RequestID: "applicant-request", APIKeyID: "legacy-key", PlanID: "plan", AccountID: "account", MemberID: "applicant-member",
+		Model: "gpt-5.6-sol", RequestedModel: "gpt-5.6-sol", UpstreamModel: "gpt-5.6-sol", BillingModel: "gpt-5.6-sol",
+		StatusCode: http.StatusOK, CreatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var idempotentMetricCount int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM gateway_request_metrics WHERE request_id='applicant-request' AND api_key_id='legacy-key' AND account_id='account'`).Scan(&idempotentMetricCount); err != nil || idempotentMetricCount != 1 {
+		t.Fatalf("idempotent metric count = %d, error = %v", idempotentMetricCount, err)
+	}
+	if err := store.RecordGatewayMetric(ctx, domain.GatewayMetric{
 		RequestID: "owner-request", APIKeyID: "legacy-key", PlanID: "plan", AccountID: "account", MemberID: "owner-member",
-		Model: "gpt-5.6-terra", AccountCostMicros: 850,
+		Model: "gpt-5.6-terra", RequestedModel: "gpt-5.6-terra", UpstreamModel: "gpt-5.6-terra", BillingModel: "gpt-5.6-terra", AccountCostMicros: 850,
 		StatusCode: http.StatusInternalServerError, TTFT: 300 * time.Millisecond, Duration: 1300 * time.Millisecond,
 		TokenUsage: domain.TokenUsage{InputTokens: 9000, OutputTokens: 1000, CachedTokens: 2000}, CreatedAt: now,
 	}); err != nil {
@@ -280,6 +291,9 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	}
 	if dashboard.TodayTokens.TotalTokens != 1500 || dashboard.TotalTokens.TotalTokens != 1500 || dashboard.TodayTokens.CachedTokens != 400 {
 		t.Fatalf("dashboard token totals = %+v / %+v", dashboard.TodayTokens, dashboard.TotalTokens)
+	}
+	if dashboard.TodayTokens.CacheCreationTokens != 50 || dashboard.TodayTokens.ImageInputTokens != 20 || dashboard.TodayTokens.ImageOutputTokens != 30 || dashboard.TodayTokens.ImageCount != 1 {
+		t.Fatalf("dashboard detailed token totals = %+v", dashboard.TodayTokens)
 	}
 	if dashboard.Performance.RequestsToday != 1 || dashboard.Performance.SuccessRate != 100 || dashboard.Performance.ActivePlans != 1 {
 		t.Fatalf("dashboard performance = %+v", dashboard.Performance)
@@ -521,6 +535,9 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	}
 	if dashboard.TodayTokens.TotalTokens != 0 || dashboard.TotalTokens.TotalTokens != 1500 {
 		t.Fatalf("rolled-up dashboard totals = today %+v, total %+v", dashboard.TodayTokens, dashboard.TotalTokens)
+	}
+	if dashboard.TotalTokens.CacheCreationTokens != 50 || dashboard.TotalTokens.ImageCount != 1 {
+		t.Fatalf("rolled-up detailed dashboard totals = %+v", dashboard.TotalTokens)
 	}
 	ranking, err := store.memberUsageRanking(ctx, "plan", now.Add(-time.Hour), cleanupNow)
 	if err != nil {

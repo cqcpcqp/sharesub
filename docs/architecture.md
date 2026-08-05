@@ -42,7 +42,7 @@ ShareSub 只处理 OpenAI Codex 账号共享。系统没有通用平台适配层
 - 接受邀请通过事务锁定邀请记录，保证同一链接只能成功领取一次。
 - 额度事件使用上游请求 ID 参与幂等约束，避免同一响应重复记账。
 - 完整邀请 Token 只嵌入创建时返回的 fragment 邀请链接；完整 API Key 使用独立关联数据加密保存，只有密钥所有者登录后可以反复查看。
-- 网关指标仅保存成员、状态码、TTFT、总耗时、Input/Output/Cached Token 和时间，不保存请求或响应正文。
+- 网关指标仅保存成员、请求/上游/计费模型、状态码、语义 TTFT、总耗时、Token/Cache Creation/图片/Web Search 用量和费用拆分，不保存请求或响应正文。
 
 ## 额度模型
 
@@ -63,7 +63,7 @@ OpenAI 会在 Codex 响应头中返回主窗口和次窗口的使用信息。Sha
 
 ## 仪表盘口径
 
-流式请求逐行透传 SSE，并只在固定终止事件中读取 `response.usage.input_tokens`、`response.usage.output_tokens` 和 `response.usage.input_tokens_details.cached_tokens`；若流在终止事件前异常关闭，网关补发 `response.failed`。非流式请求会缓存上游 SSE 直到终止事件并返回对应的 JSON response，compact 的 JSON 响应直接转发。个人仪表盘通过请求指标关联的成员归属隔离用户数据，不会把同一 Plan 的其他成员用量计入当前用户。
+流式请求在首个语义输出前暂存 SSE 前导事件；若此时收到可重试的 `response.failed`，可以安全切换账号。前导事件累计达到响应缓冲上限时会立即开始透传并放弃后续切换，避免无界占用内存。首个语义输出发出后不再切换。客户端中途断开时会取消当前上游请求并释放在线并发，不再继续读取响应或发起新账号尝试。usage 只从固定终止事件读取，包含 Input/Output/Cached/Cache Creation/图片 token，并统计完成的图片生成与 Web Search 调用；若流在终止事件前异常关闭，网关补发 `response.failed`。非流式请求会读取上游 SSE 直到终止事件并返回对应的 JSON response，compact 的 JSON 响应直接转发。每个账号尝试独立、幂等地记录指标，个人仪表盘通过指标关联的成员归属隔离用户数据。
 
 “今日”按前端提交的 IANA 时区计算，趋势始终返回包含当前小时在内的最近 24 个小时桶。RPM 与 TPM 使用最近一分钟滚动窗口；平均 TTFT、平均总耗时、成功率与实际使用的 Plan 数使用今日窗口。Token 指标迁移前的历史记录统一为 0，因此准确累计从迁移上线后的新请求开始。
 

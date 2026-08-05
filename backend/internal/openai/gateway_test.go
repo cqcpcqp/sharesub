@@ -399,29 +399,168 @@ func mustURL(t *testing.T, value string) *url.URL {
 	return parsed
 }
 
-func TestIsTokenEventRecognizesDeltaEvents(t *testing.T) {
+func TestIsClientOutputEventUsesSemanticOutputBoundary(t *testing.T) {
 	tests := []struct {
 		name string
 		line string
 		want bool
 	}{
 		{name: "output text delta", line: `data: {"type":"response.output_text.delta","delta":"hi"}`, want: true},
-		{name: "completed", line: `data: {"type":"response.completed"}`, want: false},
+		{name: "completed response", line: `data: {"type":"response.completed"}`, want: true},
+		{name: "reasoning delta", line: `data: {"type":"response.reasoning_summary_text.delta","delta":"thinking"}`, want: true},
+		{name: "function arguments delta", line: `data: {"type":"response.function_call_arguments.delta","delta":"{}"}`, want: true},
+		{name: "output item added", line: `data: {"type":"response.output_item.added"}`, want: true},
+		{name: "created preamble", line: `data: {"type":"response.created"}`, want: false},
+		{name: "in progress preamble", line: `data: {"type":"response.in_progress"}`, want: false},
+		{name: "rate limit metadata", line: `data: {"type":"rate_limits.updated"}`, want: false},
+		{name: "failed terminal", line: `data: {"type":"response.failed"}`, want: false},
 		{name: "malformed", line: `data: {`, want: false},
 		{name: "comment", line: `: keep-alive`, want: false},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := isTokenEvent([]byte(test.line)); got != test.want {
-				t.Fatalf("isTokenEvent() = %v, want %v", got, test.want)
+			if got := isClientOutputEvent([]byte(test.line)); got != test.want {
+				t.Fatalf("isClientOutputEvent() = %v, want %v", got, test.want)
 			}
 		})
 	}
 }
 
+type failingResponseWriter struct {
+	header http.Header
+	status int
+	writes int
+}
+
+func (w *failingResponseWriter) Header() http.Header {
+	if w.header == nil {
+		w.header = make(http.Header)
+	}
+	return w.header
+}
+
+func (w *failingResponseWriter) WriteHeader(status int) { w.status = status }
+func (w *failingResponseWriter) Write(body []byte) (int, error) {
+	w.writes++
+	return 0, errors.New("client disconnected")
+}
+
+func TestCopyResponseDrainsTerminalUsageAfterClientDisconnect(t *testing.T) {
+	body := "data: {\"type\":\"response.created\"}\n\n" +
+		"data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n" +
+		"data: {\"type\":\"response.completed\",\"response\":{\"model\":\"gpt-5.6-sol\",\"usage\":{\"input_tokens\":11,\"output_tokens\":7,\"input_tokens_details\":{\"cached_tokens\":3,\"cache_write_tokens\":2}}}}\n\n"
+	source := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}
+	destination := &failingResponseWriter{}
+	metrics, err := CopyResponse(destination, source, time.Now().Add(-time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !metrics.ClientDisconnected || destination.writes != 1 {
+		t.Fatalf("disconnect metrics = %+v, writes = %d", metrics, destination.writes)
+	}
+	if metrics.InputTokens != 11 || metrics.OutputTokens != 7 || metrics.CachedTokens != 3 || metrics.CacheCreationTokens != 2 {
+		t.Fatalf("terminal usage was not drained: %+v", metrics)
+	}
+}
+
+func TestCopyResponseReturnsSafeFailoverBeforeVisibleOutput(t *testing.T) {
+	body := "data: {\"type\":\"response.created\"}\n\n" +
+		"data: {\"type\":\"response.in_progress\"}\n\n" +
+		"data: {\"type\":\"response.failed\",\"response\":{\"model\":\"gpt-5.6-terra\",\"usage\":{\"input_tokens\":9},\"error\":{\"code\":\"rate_limit_exceeded\",\"message\":\"limited\"}}}\n\n"
+	source := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}
+	recorder := httptest.NewRecorder()
+	metrics, err := CopyResponse(recorder, source, time.Now())
+	var failure *StreamFailoverError
+	if !errors.As(err, &failure) || failure.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("error = %#v", err)
+	}
+	if recorder.Body.Len() != 0 || metrics.InputTokens != 9 || metrics.UpstreamModel != "gpt-5.6-terra" {
+		t.Fatalf("response = %q, metrics = %+v", recorder.Body.String(), metrics)
+	}
+	if !strings.Contains(string(failure.StreamBody), "response.failed") {
+		t.Fatalf("failover body = %q", failure.StreamBody)
+	}
+}
+
+func TestCopyResponseCommitsPreambleAtPendingBufferLimit(t *testing.T) {
+	preamble := "data: {\"type\":\"response.created\"}\n\n"
+	failure := "data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"code\":\"rate_limit_exceeded\"}}}\n\n"
+	body := preamble + failure
+	source := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}
+	recorder := httptest.NewRecorder()
+
+	if _, err := copySSEWithPendingLimit(recorder, source, time.Now(), len(preamble)); err != nil {
+		t.Fatal(err)
+	}
+	if recorder.Body.String() != body {
+		t.Fatalf("body = %q", recorder.Body.String())
+	}
+}
+
+func TestCopyResponseReturnsSemanticStatusForNonStreamingTerminalFailure(t *testing.T) {
+	responseJSON := `{"id":"resp_failed","status":"failed","error":{"code":"rate_limit_exceeded","message":"limited"}}`
+	body := "data: {\"type\":\"response.failed\",\"response\":" + responseJSON + "}\n\n"
+	source := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}
+	recorder := httptest.NewRecorder()
+	_, err := CopyResponseForRequest(recorder, source, time.Now(), false)
+	var failure *StreamFailoverError
+	if !errors.As(err, &failure) || failure.StatusCode != http.StatusTooManyRequests || string(failure.Response) != responseJSON || len(failure.StreamBody) != 0 {
+		t.Fatalf("error = %#v", err)
+	}
+	if recorder.Body.Len() != 0 {
+		t.Fatalf("body was committed before failover: %q", recorder.Body.String())
+	}
+
+	final := httptest.NewRecorder()
+	if err := WriteStreamFailoverError(final, source, failure, false); err != nil {
+		t.Fatal(err)
+	}
+	if final.Code != http.StatusTooManyRequests || final.Body.String() != responseJSON {
+		t.Fatalf("status = %d, body = %q", final.Code, final.Body.String())
+	}
+}
+
+func TestCopyResponseDoesNotFailoverAfterVisibleOutput(t *testing.T) {
+	body := "data: {\"type\":\"response.output_text.delta\",\"delta\":\"visible\"}\n\n" +
+		"data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"code\":\"rate_limit_exceeded\"}}}\n\n"
+	source := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}
+	recorder := httptest.NewRecorder()
+	if _, err := CopyResponse(recorder, source, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if recorder.Body.String() != body {
+		t.Fatalf("body = %q", recorder.Body.String())
+	}
+}
+
+func TestCopyResponsePassesThroughNonRetryableFailureBeforeOutput(t *testing.T) {
+	body := "data: {\"type\":\"response.created\"}\n\n" +
+		"data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"code\":\"content_policy_violation\",\"message\":\"not allowed by safety policy\"}}}\n\n"
+	source := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}
+	recorder := httptest.NewRecorder()
+	if _, err := CopyResponse(recorder, source, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if recorder.Body.String() != body {
+		t.Fatalf("body = %q", recorder.Body.String())
+	}
+}
+
+func TestCopyResponseParsesImageAndWebSearchUsage(t *testing.T) {
+	body := `data: {"type":"response.completed","response":{"model":"gpt-5.6-sol","usage":{"input_tokens":20,"output_tokens":30,"input_tokens_details":{"image_tokens":4},"output_tokens_details":{"image_tokens":12}},"output":[{"type":"image_generation_call","status":"completed"},{"type":"web_search_call","status":"completed"},{"type":"web_search_call","status":"failed"}]}}` + "\n\n"
+	source := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}
+	metrics, err := CopyResponse(httptest.NewRecorder(), source, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metrics.ImageInputTokens != 4 || metrics.ImageOutputTokens != 12 || metrics.ImageCount != 1 || metrics.WebSearchCalls != 1 {
+		t.Fatalf("metrics = %+v", metrics)
+	}
+}
+
 func TestCopyResponsePreservesSSEBodyAndContentType(t *testing.T) {
 	body := "data: {\"type\":\"response.output_text.delta\"}\n\n" +
-		"data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":3,\"output_tokens\":5,\"input_tokens_details\":{\"cached_tokens\":1}}}}\n\n"
+		"data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":3,\"output_tokens\":5,\"input_tokens_details\":{\"cached_tokens\":1,\"cache_write_tokens\":2}}}}\n\n"
 	source := &http.Response{
 		StatusCode: http.StatusOK,
 		Header:     make(http.Header),
@@ -441,7 +580,7 @@ func TestCopyResponsePreservesSSEBodyAndContentType(t *testing.T) {
 	if metrics.TTFT <= 0 || metrics.Duration <= 0 {
 		t.Fatalf("metrics = %+v", metrics)
 	}
-	if metrics.InputTokens != 3 || metrics.OutputTokens != 5 || metrics.CachedTokens != 1 {
+	if metrics.InputTokens != 3 || metrics.OutputTokens != 5 || metrics.CachedTokens != 1 || metrics.CacheCreationTokens != 2 {
 		t.Fatalf("usage metrics = %+v", metrics)
 	}
 }
@@ -492,14 +631,14 @@ func TestCopyResponseExtractsUsageFromJSON(t *testing.T) {
 	source := &http.Response{
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
-		Body:       io.NopCloser(strings.NewReader(`{"usage":{"input_tokens":8,"output_tokens":2,"input_tokens_details":{"cached_tokens":4}}}`)),
+		Body:       io.NopCloser(strings.NewReader(`{"usage":{"input_tokens":8,"output_tokens":2,"input_tokens_details":{"cached_tokens":4,"cache_write_tokens":3}}}`)),
 	}
 	recorder := httptest.NewRecorder()
 	metrics, err := CopyResponseForRequest(recorder, source, time.Now(), false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if metrics.InputTokens != 8 || metrics.OutputTokens != 2 || metrics.CachedTokens != 4 {
+	if metrics.InputTokens != 8 || metrics.OutputTokens != 2 || metrics.CachedTokens != 4 || metrics.CacheCreationTokens != 3 {
 		t.Fatalf("metrics = %+v", metrics)
 	}
 }
@@ -515,9 +654,9 @@ func TestParseResponseUsageAcceptsOnlyTerminalEvents(t *testing.T) {
 	}
 	for _, eventType := range terminalEvents {
 		t.Run(eventType, func(t *testing.T) {
-			line := []byte("data: {\"type\":\"" + eventType + "\",\"response\":{\"usage\":{\"input_tokens\":13,\"output_tokens\":8,\"input_tokens_details\":{\"cached_tokens\":5}}}}\n")
+			line := []byte("data: {\"type\":\"" + eventType + "\",\"response\":{\"usage\":{\"input_tokens\":13,\"output_tokens\":8,\"input_tokens_details\":{\"cached_tokens\":5,\"cache_write_tokens\":3}}}}\n")
 			usage, ok := parseResponseUsage(line)
-			if !ok || usage.InputTokens != 13 || usage.OutputTokens != 8 || usage.InputTokenDetails.CachedTokens != 5 {
+			if !ok || usage.Usage.InputTokens != 13 || usage.Usage.OutputTokens != 8 || usage.Usage.InputTokenDetails.CachedTokens != 5 || usage.Usage.InputTokenDetails.CacheWriteTokens != 3 {
 				t.Fatalf("parseResponseUsage() = %+v, %v", usage, ok)
 			}
 		})

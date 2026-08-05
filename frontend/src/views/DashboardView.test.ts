@@ -9,8 +9,10 @@ describe('DashboardView refresh', () => {
     const wrapper = mount(DashboardView, {
       props: {
         dashboard: {
-          today_tokens: { input_tokens: 1, output_tokens: 2, cached_tokens: 0, total_tokens: 3 },
-          total_tokens: { input_tokens: 1, output_tokens: 2, cached_tokens: 0, total_tokens: 3 },
+          today_tokens: { input_tokens: 1, output_tokens: 2, cached_tokens: 0, cache_creation_tokens: 0, image_input_tokens: 0, image_output_tokens: 0, image_count: 0, total_tokens: 3 },
+          total_tokens: { input_tokens: 1, output_tokens: 2, cached_tokens: 0, cache_creation_tokens: 0, image_input_tokens: 0, image_output_tokens: 0, image_count: 0, total_tokens: 3 },
+          today_web_search_calls: 0,
+          total_web_search_calls: 0,
           performance: {
             requests_today: 1,
             success_rate: 100,

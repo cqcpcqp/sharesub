@@ -254,16 +254,32 @@ type PerformanceSummary struct {
 }
 
 type TokenUsage struct {
-	InputTokens  int64 `json:"input_tokens"`
-	OutputTokens int64 `json:"output_tokens"`
-	CachedTokens int64 `json:"cached_tokens"`
-	TotalTokens  int64 `json:"total_tokens"`
+	InputTokens         int64 `json:"input_tokens"`
+	OutputTokens        int64 `json:"output_tokens"`
+	CachedTokens        int64 `json:"cached_tokens"`
+	CacheCreationTokens int64 `json:"cache_creation_tokens"`
+	ImageInputTokens    int64 `json:"image_input_tokens"`
+	ImageOutputTokens   int64 `json:"image_output_tokens"`
+	ImageCount          int64 `json:"image_count"`
+	TotalTokens         int64 `json:"total_tokens"`
+}
+
+type CostBreakdown struct {
+	InputMicros         int64 `json:"input_micros"`
+	OutputMicros        int64 `json:"output_micros"`
+	CacheCreationMicros int64 `json:"cache_creation_micros"`
+	CacheReadMicros     int64 `json:"cache_read_micros"`
+	ImageInputMicros    int64 `json:"image_input_micros"`
+	ImageOutputMicros   int64 `json:"image_output_micros"`
+	WebSearchMicros     int64 `json:"web_search_micros"`
+	TotalMicros         int64 `json:"total_micros"`
 }
 
 type WindowUsage struct {
 	WindowType          string     `json:"window_type"`
 	RequestCount        int64      `json:"request_count"`
 	TokenUsage          TokenUsage `json:"token_usage"`
+	WebSearchCalls      int64      `json:"web_search_calls"`
 	EstimatedCostMicros int64      `json:"estimated_cost_micros"`
 	WindowStart         time.Time  `json:"window_start"`
 	WindowEnd           time.Time  `json:"window_end"`
@@ -274,6 +290,7 @@ type MemberUsageRank struct {
 	Username            string     `json:"username"`
 	RequestCount        int64      `json:"request_count"`
 	TokenUsage          TokenUsage `json:"token_usage"`
+	WebSearchCalls      int64      `json:"web_search_calls"`
 	EstimatedCostMicros int64      `json:"estimated_cost_micros"`
 }
 
@@ -295,16 +312,22 @@ type DashboardPerformance struct {
 }
 
 type DashboardTrendPoint struct {
-	BucketStart  time.Time `json:"bucket_start"`
-	InputTokens  int64     `json:"input_tokens"`
-	OutputTokens int64     `json:"output_tokens"`
-	CachedTokens int64     `json:"cached_tokens"`
+	BucketStart         time.Time `json:"bucket_start"`
+	InputTokens         int64     `json:"input_tokens"`
+	OutputTokens        int64     `json:"output_tokens"`
+	CachedTokens        int64     `json:"cached_tokens"`
+	CacheCreationTokens int64     `json:"cache_creation_tokens"`
+	ImageInputTokens    int64     `json:"image_input_tokens"`
+	ImageOutputTokens   int64     `json:"image_output_tokens"`
+	ImageCount          int64     `json:"image_count"`
+	WebSearchCalls      int64     `json:"web_search_calls"`
 }
 
 type ModelUsage struct {
 	Model               string     `json:"model"`
 	RequestCount        int64      `json:"request_count"`
 	TokenUsage          TokenUsage `json:"token_usage"`
+	WebSearchCalls      int64      `json:"web_search_calls"`
 	EstimatedCostMicros int64      `json:"estimated_cost_micros"`
 }
 
@@ -322,10 +345,12 @@ type PlanPerformance struct {
 }
 
 type Dashboard struct {
-	TodayTokens TokenUsage            `json:"today_tokens"`
-	TotalTokens TokenUsage            `json:"total_tokens"`
-	Performance DashboardPerformance  `json:"performance"`
-	Trend       []DashboardTrendPoint `json:"trend"`
+	TodayTokens         TokenUsage            `json:"today_tokens"`
+	TotalTokens         TokenUsage            `json:"total_tokens"`
+	TodayWebSearchCalls int64                 `json:"today_web_search_calls"`
+	TotalWebSearchCalls int64                 `json:"total_web_search_calls"`
+	Performance         DashboardPerformance  `json:"performance"`
+	Trend               []DashboardTrendPoint `json:"trend"`
 }
 
 type PlanInsights struct {
@@ -376,11 +401,17 @@ type GatewayMetric struct {
 	AccountID         string
 	MemberID          string
 	Model             string
+	RequestedModel    string
+	UpstreamModel     string
+	BillingModel      string
 	ServiceTier       string
 	StatusCode        int
 	TTFT              time.Duration
 	Duration          time.Duration
 	TokenUsage        TokenUsage
+	ImageCount        int64
+	WebSearchCalls    int64
+	CostBreakdown     CostBreakdown
 	AccountCostMicros int64
 	CreatedAt         time.Time
 }

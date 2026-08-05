@@ -20,10 +20,49 @@ func TestAccountCostMicrosUsesPriorityPricing(t *testing.T) {
 	}
 }
 
-func TestAccountCostMicrosAppliesGPT54LongContextPricing(t *testing.T) {
+func TestAccountCostMicrosMatchesSub2APIDefaultLongContextPolicy(t *testing.T) {
 	usage := domain.TokenUsage{InputTokens: 300_000, OutputTokens: 100_000}
-	if got, want := AccountCostMicros("gpt-5.4", "", usage), int64(3_750_000); got != want {
-		t.Fatalf("long-context account cost = %d, want %d", got, want)
+	if got, want := AccountCostMicros("gpt-5.4", "", usage), int64(2_250_000); got != want {
+		t.Fatalf("default account cost = %d, want %d", got, want)
+	}
+}
+
+func TestAccountCostMicrosUsesGPT56ModelPricing(t *testing.T) {
+	usage := domain.TokenUsage{
+		InputTokens: 1_000_000, CachedTokens: 200_000, CacheCreationTokens: 100_000, OutputTokens: 500_000,
+	}
+	tests := []struct {
+		model string
+		want  int64
+	}{
+		{model: "gpt-5.6-sol", want: 19_225_000},
+		{model: "gpt-5.6-terra", want: 7_690_000},
+		{model: "gpt-5.6-luna", want: 769_000},
+	}
+	for _, test := range tests {
+		t.Run(test.model, func(t *testing.T) {
+			if got := AccountCostMicros(test.model, "", usage); got != test.want {
+				t.Fatalf("account cost = %d, want %d", got, test.want)
+			}
+		})
+	}
+}
+
+func TestAccountCostMicrosUsesGPT56PriorityCacheCreationPricing(t *testing.T) {
+	usage := domain.TokenUsage{
+		InputTokens: 1_000_000, CachedTokens: 200_000, CacheCreationTokens: 100_000, OutputTokens: 500_000,
+	}
+	if got, want := AccountCostMicros("gpt-5.6-sol", "priority", usage), int64(38_450_000); got != want {
+		t.Fatalf("priority account cost = %d, want %d", got, want)
+	}
+}
+
+func TestAccountCostMicrosNormalizesGPT56AliasesToSol(t *testing.T) {
+	usage := domain.TokenUsage{InputTokens: 100_000}
+	for _, model := range []string{"gpt-5.6", "openai/gpt-5.6", "gpt-5.6-codex"} {
+		if got, want := AccountCostMicros(model, "", usage), int64(500_000); got != want {
+			t.Fatalf("account cost for %q = %d, want %d", model, got, want)
+		}
 	}
 }
 
@@ -38,5 +77,21 @@ func TestAccountCostMicrosUsesFlexTierMultiplier(t *testing.T) {
 	usage := domain.TokenUsage{InputTokens: 100_000}
 	if got, want := AccountCostMicros("gpt-5.3-codex", "flex", usage), int64(87_500); got != want {
 		t.Fatalf("flex account cost = %d, want %d", got, want)
+	}
+}
+
+func TestAccountCostAddsResponsesWebSearchToTokenBilling(t *testing.T) {
+	usage := domain.TokenUsage{InputTokens: 100_000, OutputTokens: 50_000}
+	got := AccountCost("gpt-5.3-codex", "", usage, 2)
+	if got.InputMicros != 175_000 || got.OutputMicros != 700_000 || got.WebSearchMicros != 20_000 || got.TotalMicros != 895_000 {
+		t.Fatalf("web search cost = %+v", got)
+	}
+}
+
+func TestAccountCostUsesSub2APIDefaultImagePerRequestBilling(t *testing.T) {
+	usage := domain.TokenUsage{InputTokens: 1_000, OutputTokens: 2_000, ImageOutputTokens: 1_500, ImageCount: 2}
+	got := AccountCost("gpt-5.6-luna", "", usage, 0)
+	if got.TotalMicros != 402_000 || got.ImageOutputMicros != 402_000 || got.InputMicros != 0 || got.OutputMicros != 0 {
+		t.Fatalf("image cost = %+v", got)
 	}
 }

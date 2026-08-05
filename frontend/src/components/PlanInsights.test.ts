@@ -51,7 +51,8 @@ describe('PlanInsights performance period', () => {
     expect(wrapper.emitted('update:performancePeriod')).toEqual([['6h']])
     await wrapper.setProps({ performancePeriod: '6h' })
     expect(wrapper.find('.analytics-grid').text()).toContain('最近 6 小时')
-    expect(wrapper.find('.recent-usage-panel').text()).toContain('TOP 12 · 最近 6 小时')
+    expect(wrapper.find('.recent-usage-panel').text()).toContain('最近 6 小时')
+    expect(wrapper.find('.recent-usage-panel').text()).not.toContain('TOP 12')
     const rankingSelect = selects.find(select => select !== performanceSelect && (select.props('options') as Array<{ value: string }>).some(option => option.value === 'today'))!
     expect(rankingSelect.props('value')).toBe('today')
   })

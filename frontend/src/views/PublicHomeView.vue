@@ -19,9 +19,8 @@
     <main>
       <section class="public-hero">
         <div class="public-hero-copy">
-          <span class="public-eyebrow"><Sparkles :size="14" /> 为 Codex 协作而生</span>
           <h1>一起使用，<br /><em>也各自清楚。</em></h1>
-          <p>把你有权使用的 OpenAI Codex 账号接入 ShareSub，通过 Plan 管理成员、分配额度，并让每个人使用独立的 API Key。</p>
+          <p><strong>为 Codex 协作而生。</strong>把你有权使用的 OpenAI Codex 账号接入 ShareSub，通过 Plan 管理成员、分配额度，并让每个人使用独立的 API Key。</p>
           <div class="public-hero-actions">
             <NButton type="primary" size="large" @click="emit('register')">开始使用<template #icon><ArrowRight :size="18" /></template></NButton>
             <NButton size="large" secondary tag="a" href="#workflow">了解工作方式</NButton>
@@ -32,8 +31,8 @@
             <span><KeyRound :size="16" /> 每位成员独立密钥</span>
           </div>
         </div>
-        <div class="public-hero-visual" aria-label="Plan 配额分配示意">
-          <div class="demo-window">
+        <div class="public-hero-visual" role="img" aria-label="Plan 配额分配示意：一个运行中的 Codex Team Plan，五小时窗口已使用百分之六十二，三名成员的额度分配分别为百分之四十、百分之三十和百分之三十">
+          <div class="demo-window" aria-hidden="true">
             <header><span><i /><i /><i /></span><small>PLAN OVERVIEW</small></header>
             <div class="demo-plan-heading"><span><Layers3 :size="20" /></span><div><small>共享方案</small><strong>Codex Team Plan</strong></div><b>运行中</b></div>
             <div class="demo-quota"><div><span>5 小时窗口</span><strong>62%</strong></div><i><b /></i><small>成员用量实时归属，额度边界清晰可见</small></div>
@@ -46,7 +45,7 @@
       </section>
 
       <section id="workflow" class="public-section public-workflow">
-        <header><span>HOW IT WORKS</span><h2>从账号到协作，只需四步</h2><p>房主掌握账号和共享边界，成员保有各自独立的使用入口。</p></header>
+        <header><h2>从账号到协作，只需四步</h2><p>房主掌握账号和共享边界，成员保有各自独立的使用入口。</p></header>
         <div class="workflow-grid">
           <article v-for="(step, index) in workflow" :key="step.title"><b>0{{ index + 1 }}</b><component :is="step.icon" :size="22" /><h3>{{ step.title }}</h3><p>{{ step.description }}</p></article>
         </div>
@@ -58,18 +57,18 @@
       </section>
 
       <section id="trust" class="public-section public-trust">
-        <div><span>SECURITY & TRANSPARENCY</span><h2>可信，不靠一句“请放心”</h2><p>我们只展示当前产品已经实现的安全与透明能力，不用模糊承诺包装产品。</p></div>
+        <div><h2>可信，不靠一句“请放心”</h2><p>我们只展示当前产品已经实现的安全与透明能力，不用模糊承诺包装产品。</p></div>
         <div class="trust-grid">
           <article v-for="item in trustItems" :key="item.title"><component :is="item.icon" :size="21" /><h3>{{ item.title }}</h3><p>{{ item.description }}</p></article>
         </div>
       </section>
 
       <section id="faq" class="public-section public-faq">
-        <header><span>FAQ</span><h2>开始之前，你可能想知道</h2></header>
+        <header><h2>开始之前，你可能想知道</h2></header>
         <div><details v-for="item in faq" :key="item.question"><summary>{{ item.question }}<Plus :size="18" /></summary><p>{{ item.answer }}</p></details></div>
       </section>
 
-      <section class="public-cta"><div><span>READY TO START?</span><h2>把共享变成一件清楚的事</h2><p>创建账户，接入你有权使用的账号，并邀请可信成员开始协作。</p></div><NButton type="primary" size="large" @click="emit('register')">免费创建账户<template #icon><ArrowRight :size="18" /></template></NButton></section>
+      <section class="public-cta"><div><h2>把共享变成一件清楚的事</h2><p>创建账户，接入你有权使用的账号，并邀请可信成员开始协作。</p></div><NButton type="primary" size="large" @click="emit('register')">免费创建账户<template #icon><ArrowRight :size="18" /></template></NButton></section>
     </main>
 
     <footer class="public-footer">
@@ -83,7 +82,7 @@
 
 <script setup lang="ts">
 import { NButton } from 'naive-ui'
-import { ArrowRight, Crown, Gauge, KeyRound, Layers3, LockKeyhole, MessageSquareOff, Plus, Route, ShieldCheck, Sparkles, UserRoundPlus, UsersRound } from 'lucide-vue-next'
+import { ArrowRight, Crown, Gauge, KeyRound, Layers3, LockKeyhole, MessageSquareOff, Plus, Route, ShieldCheck, UserRoundPlus, UsersRound } from 'lucide-vue-next'
 import BrandMark from '../components/BrandMark.vue'
 import type { PublicPageID } from '../appRoutes'
 

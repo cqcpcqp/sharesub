@@ -42,7 +42,8 @@ func (s *Store) CleanupResources(ctx context.Context, now time.Time, policy Rete
 			WITH candidates AS (
 				SELECT g.id,(g.created_at AT TIME ZONE 'UTC')::date AS usage_day,
 					m.user_id,g.plan_id,g.account_id,g.member_id,g.status_code,
-					g.input_tokens,g.output_tokens,g.cached_tokens,g.estimated_cost_micros
+					g.input_tokens,g.output_tokens,g.cached_tokens,g.cache_creation_tokens,
+					g.image_input_tokens,g.image_output_tokens,g.image_count,g.web_search_calls,g.estimated_cost_micros
 				FROM gateway_request_metrics g
 				JOIN plan_members m ON m.id=g.member_id
 				WHERE g.created_at<$1
@@ -52,11 +53,13 @@ func (s *Store) CleanupResources(ctx context.Context, now time.Time, policy Rete
 			), rollup AS (
 				INSERT INTO gateway_metric_daily_rollups(
 					usage_day,user_id,plan_id,account_id,member_id,request_count,success_count,
-					input_tokens,output_tokens,cached_tokens,estimated_cost_micros
+					input_tokens,output_tokens,cached_tokens,cache_creation_tokens,image_input_tokens,image_output_tokens,
+					image_count,web_search_calls,estimated_cost_micros
 				)
 				SELECT usage_day,user_id,plan_id,account_id,member_id,count(*),
 					count(*) FILTER (WHERE status_code BETWEEN 200 AND 299),
-					sum(input_tokens),sum(output_tokens),sum(cached_tokens),sum(estimated_cost_micros)
+					sum(input_tokens),sum(output_tokens),sum(cached_tokens),sum(cache_creation_tokens),
+					sum(image_input_tokens),sum(image_output_tokens),sum(image_count),sum(web_search_calls),sum(estimated_cost_micros)
 				FROM candidates
 				GROUP BY usage_day,user_id,plan_id,account_id,member_id
 				ON CONFLICT(usage_day,user_id,plan_id,account_id,member_id) DO UPDATE SET
@@ -65,6 +68,11 @@ func (s *Store) CleanupResources(ctx context.Context, now time.Time, policy Rete
 					input_tokens=gateway_metric_daily_rollups.input_tokens+EXCLUDED.input_tokens,
 					output_tokens=gateway_metric_daily_rollups.output_tokens+EXCLUDED.output_tokens,
 					cached_tokens=gateway_metric_daily_rollups.cached_tokens+EXCLUDED.cached_tokens,
+					cache_creation_tokens=gateway_metric_daily_rollups.cache_creation_tokens+EXCLUDED.cache_creation_tokens,
+					image_input_tokens=gateway_metric_daily_rollups.image_input_tokens+EXCLUDED.image_input_tokens,
+					image_output_tokens=gateway_metric_daily_rollups.image_output_tokens+EXCLUDED.image_output_tokens,
+					image_count=gateway_metric_daily_rollups.image_count+EXCLUDED.image_count,
+					web_search_calls=gateway_metric_daily_rollups.web_search_calls+EXCLUDED.web_search_calls,
 					estimated_cost_micros=gateway_metric_daily_rollups.estimated_cost_micros+EXCLUDED.estimated_cost_micros
 			)
 			DELETE FROM gateway_request_metrics g USING candidates c WHERE g.id=c.id`, metricCutoff, cleanupBatchSize)

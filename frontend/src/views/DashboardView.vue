@@ -1,11 +1,15 @@
 <template>
   <section class="view-content dashboard-content" aria-label="个人使用仪表盘" :aria-busy="loading">
-    <div v-if="dashboard" class="dashboard-actions">
+    <header v-if="dashboard" class="dashboard-actions">
+      <div>
+        <h1>仪表盘</h1>
+        <p>个人 Token、性能与最近 24 小时趋势</p>
+      </div>
       <NButton secondary size="small" :loading="refreshing" :disabled="refreshing" aria-label="刷新仪表盘数据" @click="emit('refresh')">
         <template #icon><RefreshCw :size="15" /></template>
         刷新数据
       </NButton>
-    </div>
+    </header>
     <div v-if="dashboard" class="dashboard-kpi-grid">
       <article class="dashboard-kpi dashboard-kpi-today">
         <div class="dashboard-kpi-icon"><Zap :size="21" /></div>
@@ -59,7 +63,6 @@
     <section v-if="dashboard" class="dashboard-trend-panel">
       <header class="dashboard-trend-header">
         <div>
-          <span class="section-kicker">USAGE TREND</span>
           <h2>Token 使用趋势</h2>
           <p>最近 24 小时 · 按本地时间展示</p>
         </div>
@@ -68,9 +71,10 @@
           <strong>{{ formatTokens(trendTotal) }}</strong>
         </div>
       </header>
-      <div class="dashboard-chart-wrap">
+      <div v-if="trendTotal > 0" class="dashboard-chart-wrap">
         <TokenUsageChart :trend="dashboard.trend" :theme="theme" />
       </div>
+      <NEmpty v-else class="dashboard-chart-empty" description="最近 24 小时还没有 Token 使用记录" />
     </section>
 
     <div v-else-if="loading" class="dashboard-loading" aria-live="polite">

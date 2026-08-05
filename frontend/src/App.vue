@@ -162,24 +162,19 @@
 
 <script setup lang="ts">
 import { darkTheme, NAlert, NButton, NConfigProvider, NPopover, NSpin, NTooltip } from 'naive-ui'
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch, type Component } from 'vue'
 import { ChevronRight, Compass, Ellipsis, KeyRound, Layers3, LayoutDashboard, LogOut, PanelLeftClose, PanelLeftOpen, Settings, ShieldCheck, UsersRound } from 'lucide-vue-next'
 import { api, clearSessionToken, sessionToken } from './api'
 import type { Account, APIKey, Dashboard, InvitePreview, Notification as UserNotification, Plan, PublicPlan, User } from './types'
-import AccountsView from './views/AccountsView.vue'
-import AdminView from './views/AdminView.vue'
 import APIKeySetupWizard from './components/APIKeySetupWizard.vue'
+import AsyncViewError from './components/AsyncViewError.vue'
+import AsyncViewLoading from './components/AsyncViewLoading.vue'
 import AuthView from './views/AuthView.vue'
 import BrandMark from './components/BrandMark.vue'
-import DashboardView from './views/DashboardView.vue'
 import InvitationStatusDialog from './components/InvitationStatusDialog.vue'
-import KeysView from './views/KeysView.vue'
-import LobbyView from './views/LobbyView.vue'
 import NotificationCenter from './components/NotificationCenter.vue'
 import OnboardingGuide from './components/OnboardingGuide.vue'
 import PasswordChangeDialog from './components/PasswordChangeDialog.vue'
-import PlansView from './views/PlansView.vue'
-import ProfileView from './views/ProfileView.vue'
 import PublicHomeView from './views/PublicHomeView.vue'
 import LegalDocumentView from './views/LegalDocumentView.vue'
 import ThemeSwitcher from './components/ThemeSwitcher.vue'
@@ -188,6 +183,24 @@ import { darkThemeOverrides, lightThemeOverrides } from './theme'
 import { locationWithoutHash, parseNavigationIntent, type InviteIntent } from './navigationIntent'
 import { isThemeMode, resolveTheme, type ThemeMode } from './themePreference'
 import { appRoutePath, parseAppRoute, type AppRoute, type PublicPageID, type ViewID } from './appRoutes'
+
+function defineAsyncView(loader: () => Promise<{ default: Component }>) {
+  return defineAsyncComponent({
+    loader,
+    loadingComponent: AsyncViewLoading,
+    errorComponent: AsyncViewError,
+    delay: 120,
+    timeout: 20_000,
+  })
+}
+
+const AccountsView = defineAsyncView(() => import('./views/AccountsView.vue'))
+const AdminView = defineAsyncView(() => import('./views/AdminView.vue'))
+const DashboardView = defineAsyncView(() => import('./views/DashboardView.vue'))
+const KeysView = defineAsyncView(() => import('./views/KeysView.vue'))
+const LobbyView = defineAsyncView(() => import('./views/LobbyView.vue'))
+const PlansView = defineAsyncView(() => import('./views/PlansView.vue'))
+const ProfileView = defineAsyncView(() => import('./views/ProfileView.vue'))
 
 const nav = [
   { id: 'dashboard' as const, label: '仪表盘', shortLabel: '仪表盘', icon: LayoutDashboard },

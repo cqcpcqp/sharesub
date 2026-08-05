@@ -10,12 +10,6 @@ import (
 	"github.com/sharesub/sharesub/backend/internal/domain"
 )
 
-const (
-	gpt54LongContextThreshold = int64(272_000)
-	gpt54InputMultiplier      = 2.0
-	gpt54OutputMultiplier     = 1.5
-)
-
 // The pricing snapshot is shared with sub2api and follows its LiteLLM-based
 // account-cost calculation instead of assuming every request uses one model.
 //
@@ -27,8 +21,12 @@ type modelPricing struct {
 	InputPricePriority     float64 `json:"input_cost_per_token_priority"`
 	OutputPrice            float64 `json:"output_cost_per_token"`
 	OutputPricePriority    float64 `json:"output_cost_per_token_priority"`
+	CacheCreationPrice     float64 `json:"cache_creation_input_token_cost"`
+	CacheCreationPriority  float64 `json:"cache_creation_input_token_cost_priority"`
 	CacheReadPrice         float64 `json:"cache_read_input_token_cost"`
 	CacheReadPricePriority float64 `json:"cache_read_input_token_cost_priority"`
+	ImageInputPrice        float64 `json:"input_cost_per_image_token"`
+	ImageOutputPrice       float64 `json:"output_cost_per_image_token"`
 }
 
 var (
@@ -37,14 +35,34 @@ var (
 )
 
 func AccountCostMicros(model, serviceTier string, usage domain.TokenUsage) int64 {
+	return AccountCost(model, serviceTier, usage, 0).TotalMicros
+}
+
+func AccountCost(model, serviceTier string, usage domain.TokenUsage, webSearchCalls int64) domain.CostBreakdown {
+	// Responses API web search is an add-on to the response's token usage.
+	// Image generation keeps sub2api's default per-generated-image mode, which
+	// replaces token billing for the generated response.
+	out := domain.CostBreakdown{WebSearchMicros: webSearchCalls * 10_000}
+	if usage.ImageCount > 0 {
+		// sub2api defaults an unspecified image size to 2K and uses its fallback
+		// image price ($0.134 * 1.5 = $0.201 per image).
+		out.ImageOutputMicros = usage.ImageCount * 201_000
+		out.TotalMicros = out.ImageOutputMicros + out.WebSearchMicros
+		return out
+	}
+
 	pricing, ok := pricingForModel(model)
 	if !ok {
-		return 0
+		out.TotalMicros = out.WebSearchMicros
+		return out
 	}
 
 	inputPrice := pricing.InputPrice
 	outputPrice := pricing.OutputPrice
+	cacheCreationPrice := pricing.CacheCreationPrice
 	cacheReadPrice := pricing.CacheReadPrice
+	imageInputPrice := pricing.ImageInputPrice
+	imageOutputPrice := pricing.ImageOutputPrice
 	tierMultiplier := 1.0
 	switch strings.ToLower(strings.TrimSpace(serviceTier)) {
 	case "priority":
@@ -57,24 +75,38 @@ func AccountCostMicros(model, serviceTier string, usage domain.TokenUsage) int64
 		if pricing.CacheReadPricePriority > 0 {
 			cacheReadPrice = pricing.CacheReadPricePriority
 		}
+		if pricing.CacheCreationPriority > 0 {
+			cacheCreationPrice = pricing.CacheCreationPriority
+		}
 	case "flex":
 		tierMultiplier = 0.5
 	}
-
-	if isGPT54Family(model) && usage.InputTokens > gpt54LongContextThreshold {
-		inputPrice *= gpt54InputMultiplier
-		cacheReadPrice *= gpt54InputMultiplier
-		outputPrice *= gpt54OutputMultiplier
+	if imageInputPrice == 0 {
+		imageInputPrice = inputPrice
+	}
+	if imageOutputPrice == 0 {
+		imageOutputPrice = outputPrice
 	}
 
-	nonCachedInput := usage.InputTokens - usage.CachedTokens
-	if nonCachedInput < 0 {
-		nonCachedInput = 0
+	textInput := usage.InputTokens - usage.CachedTokens - usage.CacheCreationTokens - usage.ImageInputTokens
+	if textInput < 0 {
+		textInput = 0
 	}
-	costUSD := (float64(nonCachedInput)*inputPrice +
-		float64(usage.CachedTokens)*cacheReadPrice +
-		float64(usage.OutputTokens)*outputPrice) * tierMultiplier
-	return int64(math.Round(costUSD * 1_000_000))
+	textOutput := usage.OutputTokens - usage.ImageOutputTokens
+	if textOutput < 0 {
+		textOutput = 0
+	}
+	toMicros := func(tokens int64, price float64) int64 {
+		return int64(math.Round(float64(tokens) * price * tierMultiplier * 1_000_000))
+	}
+	out.InputMicros = toMicros(textInput, inputPrice)
+	out.OutputMicros = toMicros(textOutput, outputPrice)
+	out.CacheCreationMicros = toMicros(usage.CacheCreationTokens, cacheCreationPrice)
+	out.CacheReadMicros = toMicros(usage.CachedTokens, cacheReadPrice)
+	out.ImageInputMicros = toMicros(usage.ImageInputTokens, imageInputPrice)
+	out.ImageOutputMicros = toMicros(usage.ImageOutputTokens, imageOutputPrice)
+	out.TotalMicros = out.InputMicros + out.OutputMicros + out.CacheCreationMicros + out.CacheReadMicros + out.ImageInputMicros + out.ImageOutputMicros + out.WebSearchMicros
+	return out
 }
 
 func pricingForModel(model string) (modelPricing, bool) {
@@ -131,6 +163,12 @@ func canonicalModel(model string) string {
 
 func knownCodexFamily(model string) string {
 	switch {
+	case strings.Contains(model, "gpt-5.6-terra"):
+		return "gpt-5.6-terra"
+	case strings.Contains(model, "gpt-5.6-luna"):
+		return "gpt-5.6-luna"
+	case strings.Contains(model, "gpt-5.6"):
+		return "gpt-5.6-sol"
 	case strings.Contains(model, "gpt-5.5"):
 		return "gpt-5.5"
 	case strings.Contains(model, "gpt-5.4-mini"):
@@ -164,9 +202,4 @@ func knownCodexFamily(model string) string {
 	default:
 		return ""
 	}
-}
-
-func isGPT54Family(model string) bool {
-	family := knownCodexFamily(canonicalModel(model))
-	return family == "gpt-5.4" || family == "gpt-5.5"
 }

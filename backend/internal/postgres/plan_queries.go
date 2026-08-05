@@ -177,7 +177,9 @@ func (s *Store) planInsights(ctx context.Context, planID, userID, accountID stri
 
 	rows, err = s.pool.Query(ctx, `
 		SELECT q.window_type,q.window_start,q.reset_at,
-			count(g.id),COALESCE(sum(g.input_tokens),0),COALESCE(sum(g.output_tokens),0),COALESCE(sum(g.cached_tokens),0),COALESCE(sum(g.estimated_cost_micros),0)
+			count(g.id),COALESCE(sum(g.input_tokens),0),COALESCE(sum(g.output_tokens),0),COALESCE(sum(g.cached_tokens),0),
+			COALESCE(sum(g.cache_creation_tokens),0),COALESCE(sum(g.image_input_tokens),0),COALESCE(sum(g.image_output_tokens),0),
+			COALESCE(sum(g.image_count),0),COALESCE(sum(g.web_search_calls),0),COALESCE(sum(g.estimated_cost_micros),0)
 		FROM account_quota_snapshots q
 		LEFT JOIN gateway_request_metrics g ON g.plan_id=$1 AND g.account_id=q.account_id AND g.created_at>=q.window_start AND g.created_at<q.reset_at
 		WHERE q.account_id=$2 AND q.reset_at>now()
@@ -188,7 +190,10 @@ func (s *Store) planInsights(ctx context.Context, planID, userID, accountID stri
 	}
 	for rows.Next() {
 		var usage domain.WindowUsage
-		if err := rows.Scan(&usage.WindowType, &usage.WindowStart, &usage.WindowEnd, &usage.RequestCount, &usage.TokenUsage.InputTokens, &usage.TokenUsage.OutputTokens, &usage.TokenUsage.CachedTokens, &usage.EstimatedCostMicros); err != nil {
+		if err := rows.Scan(&usage.WindowType, &usage.WindowStart, &usage.WindowEnd, &usage.RequestCount,
+			&usage.TokenUsage.InputTokens, &usage.TokenUsage.OutputTokens, &usage.TokenUsage.CachedTokens,
+			&usage.TokenUsage.CacheCreationTokens, &usage.TokenUsage.ImageInputTokens, &usage.TokenUsage.ImageOutputTokens,
+			&usage.TokenUsage.ImageCount, &usage.WebSearchCalls, &usage.EstimatedCostMicros); err != nil {
 			rows.Close()
 			return out, err
 		}
@@ -242,11 +247,12 @@ func (s *Store) planInsights(ctx context.Context, planID, userID, accountID stri
 
 func (s *Store) planModelUsage(ctx context.Context, planID string, windowStart, windowEnd time.Time) ([]domain.ModelUsage, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT model,count(*),sum(input_tokens),sum(output_tokens),sum(cached_tokens),sum(estimated_cost_micros)
+		SELECT requested_model,count(*),sum(input_tokens),sum(output_tokens),sum(cached_tokens),
+			sum(cache_creation_tokens),sum(image_input_tokens),sum(image_output_tokens),sum(image_count),sum(web_search_calls),sum(estimated_cost_micros)
 		FROM gateway_request_metrics
 		WHERE plan_id=$1 AND created_at>=$2 AND created_at<=$3
-		GROUP BY model
-		ORDER BY sum(input_tokens+output_tokens) DESC,count(*) DESC,model`, planID, windowStart, windowEnd)
+		GROUP BY requested_model
+		ORDER BY sum(input_tokens+output_tokens) DESC,count(*) DESC,requested_model`, planID, windowStart, windowEnd)
 	if err != nil {
 		return nil, err
 	}
@@ -254,7 +260,9 @@ func (s *Store) planModelUsage(ctx context.Context, planID string, windowStart, 
 	out := make([]domain.ModelUsage, 0)
 	for rows.Next() {
 		var usage domain.ModelUsage
-		if err := rows.Scan(&usage.Model, &usage.RequestCount, &usage.TokenUsage.InputTokens, &usage.TokenUsage.OutputTokens, &usage.TokenUsage.CachedTokens, &usage.EstimatedCostMicros); err != nil {
+		if err := rows.Scan(&usage.Model, &usage.RequestCount, &usage.TokenUsage.InputTokens, &usage.TokenUsage.OutputTokens, &usage.TokenUsage.CachedTokens,
+			&usage.TokenUsage.CacheCreationTokens, &usage.TokenUsage.ImageInputTokens, &usage.TokenUsage.ImageOutputTokens,
+			&usage.TokenUsage.ImageCount, &usage.WebSearchCalls, &usage.EstimatedCostMicros); err != nil {
 			return nil, err
 		}
 		usage.TokenUsage.TotalTokens = usage.TokenUsage.InputTokens + usage.TokenUsage.OutputTokens
@@ -269,12 +277,16 @@ func (s *Store) planTokenTrend(ctx context.Context, planID string, trendStart, n
 			SELECT generate_series($2::timestamptz,$3::timestamptz - INTERVAL '1 microsecond',$4::interval) AS bucket_start
 		), usage AS (
 			SELECT date_bin($4::interval,created_at,$2::timestamptz) AS bucket_start,
-				sum(input_tokens) AS input_tokens,sum(output_tokens) AS output_tokens,sum(cached_tokens) AS cached_tokens
+				sum(input_tokens) AS input_tokens,sum(output_tokens) AS output_tokens,sum(cached_tokens) AS cached_tokens,
+				sum(cache_creation_tokens) AS cache_creation_tokens,sum(image_input_tokens) AS image_input_tokens,
+				sum(image_output_tokens) AS image_output_tokens,sum(image_count) AS image_count,sum(web_search_calls) AS web_search_calls
 			FROM gateway_request_metrics
 			WHERE plan_id=$1 AND created_at>=$2 AND created_at<=$3
 			GROUP BY 1
 		)
-		SELECT b.bucket_start,COALESCE(u.input_tokens,0),COALESCE(u.output_tokens,0),COALESCE(u.cached_tokens,0)
+		SELECT b.bucket_start,COALESCE(u.input_tokens,0),COALESCE(u.output_tokens,0),COALESCE(u.cached_tokens,0),
+			COALESCE(u.cache_creation_tokens,0),COALESCE(u.image_input_tokens,0),COALESCE(u.image_output_tokens,0),
+			COALESCE(u.image_count,0),COALESCE(u.web_search_calls,0)
 		FROM buckets b LEFT JOIN usage u ON u.bucket_start=b.bucket_start
 		ORDER BY b.bucket_start`, planID, trendStart, now, bucketSize.String())
 	if err != nil {
@@ -284,7 +296,8 @@ func (s *Store) planTokenTrend(ctx context.Context, planID string, trendStart, n
 	out := make([]domain.DashboardTrendPoint, 0, 24)
 	for rows.Next() {
 		var point domain.DashboardTrendPoint
-		if err := rows.Scan(&point.BucketStart, &point.InputTokens, &point.OutputTokens, &point.CachedTokens); err != nil {
+		if err := rows.Scan(&point.BucketStart, &point.InputTokens, &point.OutputTokens, &point.CachedTokens,
+			&point.CacheCreationTokens, &point.ImageInputTokens, &point.ImageOutputTokens, &point.ImageCount, &point.WebSearchCalls); err != nil {
 			return nil, err
 		}
 		out = append(out, point)
@@ -307,13 +320,17 @@ func (s *Store) planRecentUsage(ctx context.Context, planID string, trendStart, 
 			SELECT generate_series($2::timestamptz,$3::timestamptz - INTERVAL '1 microsecond',$4::interval) AS bucket_start
 		), usage AS (
 			SELECT g.member_id,date_bin($4::interval,g.created_at,$2::timestamptz) AS bucket_start,
-				sum(g.input_tokens) AS input_tokens,sum(g.output_tokens) AS output_tokens,sum(g.cached_tokens) AS cached_tokens
+				sum(g.input_tokens) AS input_tokens,sum(g.output_tokens) AS output_tokens,sum(g.cached_tokens) AS cached_tokens,
+				sum(g.cache_creation_tokens) AS cache_creation_tokens,sum(g.image_input_tokens) AS image_input_tokens,
+				sum(g.image_output_tokens) AS image_output_tokens,sum(g.image_count) AS image_count,sum(g.web_search_calls) AS web_search_calls
 			FROM gateway_request_metrics g
 			JOIN top_members top ON top.member_id=g.member_id
 			WHERE g.plan_id=$1 AND g.created_at>=$2 AND g.created_at<=$3
 			GROUP BY g.member_id,2
 		)
-		SELECT top.member_id,top.username,b.bucket_start,COALESCE(u.input_tokens,0),COALESCE(u.output_tokens,0),COALESCE(u.cached_tokens,0)
+		SELECT top.member_id,top.username,b.bucket_start,COALESCE(u.input_tokens,0),COALESCE(u.output_tokens,0),COALESCE(u.cached_tokens,0),
+			COALESCE(u.cache_creation_tokens,0),COALESCE(u.image_input_tokens,0),COALESCE(u.image_output_tokens,0),
+			COALESCE(u.image_count,0),COALESCE(u.web_search_calls,0)
 		FROM top_members top CROSS JOIN buckets b
 		LEFT JOIN usage u ON u.member_id=top.member_id AND u.bucket_start=b.bucket_start
 		ORDER BY top.total_tokens DESC,top.member_id,b.bucket_start`, planID, trendStart, now, bucketSize.String())
@@ -326,7 +343,8 @@ func (s *Store) planRecentUsage(ctx context.Context, planID string, trendStart, 
 	for rows.Next() {
 		var memberID, username string
 		var point domain.DashboardTrendPoint
-		if err := rows.Scan(&memberID, &username, &point.BucketStart, &point.InputTokens, &point.OutputTokens, &point.CachedTokens); err != nil {
+		if err := rows.Scan(&memberID, &username, &point.BucketStart, &point.InputTokens, &point.OutputTokens, &point.CachedTokens,
+			&point.CacheCreationTokens, &point.ImageInputTokens, &point.ImageOutputTokens, &point.ImageCount, &point.WebSearchCalls); err != nil {
 			return nil, err
 		}
 		index, ok := memberIndexes[memberID]
@@ -354,8 +372,8 @@ func (s *Store) PlanPerformance(ctx context.Context, planID, userID string, wind
 			WHERE p.id=$1
 		)
 		SELECT count(g.id),count(g.id) FILTER (WHERE g.status_code BETWEEN 200 AND 299),
-			COALESCE(avg(g.ttft_ms),0)::float8,
-			COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY g.ttft_ms),0)::float8,
+			COALESCE(avg(g.ttft_ms) FILTER (WHERE g.ttft_ms > 0),0)::float8,
+			COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY g.ttft_ms) FILTER (WHERE g.ttft_ms > 0),0)::float8,
 			COALESCE(avg(g.duration_ms),0)::float8,
 			COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY g.duration_ms),0)::float8
 		FROM authorized a
@@ -383,17 +401,21 @@ func (s *Store) PlanPerformance(ctx context.Context, planID, userID string, wind
 func (s *Store) memberUsageRanking(ctx context.Context, planID string, windowStart, windowEnd time.Time) ([]domain.MemberUsageRank, error) {
 	rows, err := s.pool.Query(ctx, `
 		WITH usage AS (
-			SELECT g.member_id,1::bigint AS request_count,g.input_tokens,g.output_tokens,g.cached_tokens,g.estimated_cost_micros
+			SELECT g.member_id,1::bigint AS request_count,g.input_tokens,g.output_tokens,g.cached_tokens,g.cache_creation_tokens,
+				g.image_input_tokens,g.image_output_tokens,g.image_count,g.web_search_calls,g.estimated_cost_micros
 			FROM gateway_request_metrics g
 			WHERE g.plan_id=$1 AND g.created_at>=$2 AND g.created_at<$3
 			UNION ALL
-			SELECT r.member_id,r.request_count,r.input_tokens,r.output_tokens,r.cached_tokens,r.estimated_cost_micros
+			SELECT r.member_id,r.request_count,r.input_tokens,r.output_tokens,r.cached_tokens,r.cache_creation_tokens,
+				r.image_input_tokens,r.image_output_tokens,r.image_count,r.web_search_calls,r.estimated_cost_micros
 			FROM gateway_metric_daily_rollups r
 			WHERE r.plan_id=$1
 				AND r.usage_day>=($2 AT TIME ZONE 'UTC')::date
 				AND r.usage_day<=($3 AT TIME ZONE 'UTC')::date
 		)
-		SELECT m.id,u.username,COALESCE(sum(g.request_count),0),COALESCE(sum(g.input_tokens),0),COALESCE(sum(g.output_tokens),0),COALESCE(sum(g.cached_tokens),0),COALESCE(sum(g.estimated_cost_micros),0)
+		SELECT m.id,u.username,COALESCE(sum(g.request_count),0),COALESCE(sum(g.input_tokens),0),COALESCE(sum(g.output_tokens),0),COALESCE(sum(g.cached_tokens),0),
+			COALESCE(sum(g.cache_creation_tokens),0),COALESCE(sum(g.image_input_tokens),0),COALESCE(sum(g.image_output_tokens),0),
+			COALESCE(sum(g.image_count),0),COALESCE(sum(g.web_search_calls),0),COALESCE(sum(g.estimated_cost_micros),0)
 		FROM usage g
 		JOIN plan_members m ON m.id=g.member_id
 		JOIN users u ON u.id=m.user_id
@@ -406,7 +428,10 @@ func (s *Store) memberUsageRanking(ctx context.Context, planID string, windowSta
 	out := make([]domain.MemberUsageRank, 0)
 	for rows.Next() {
 		var rank domain.MemberUsageRank
-		if err := rows.Scan(&rank.MemberID, &rank.Username, &rank.RequestCount, &rank.TokenUsage.InputTokens, &rank.TokenUsage.OutputTokens, &rank.TokenUsage.CachedTokens, &rank.EstimatedCostMicros); err != nil {
+		if err := rows.Scan(&rank.MemberID, &rank.Username, &rank.RequestCount,
+			&rank.TokenUsage.InputTokens, &rank.TokenUsage.OutputTokens, &rank.TokenUsage.CachedTokens,
+			&rank.TokenUsage.CacheCreationTokens, &rank.TokenUsage.ImageInputTokens, &rank.TokenUsage.ImageOutputTokens,
+			&rank.TokenUsage.ImageCount, &rank.WebSearchCalls, &rank.EstimatedCostMicros); err != nil {
 			return nil, err
 		}
 		rank.TokenUsage.TotalTokens = rank.TokenUsage.InputTokens + rank.TokenUsage.OutputTokens

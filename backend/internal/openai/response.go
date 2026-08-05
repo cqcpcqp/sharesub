@@ -16,11 +16,44 @@ const maxSSELineBytes = 16 << 20
 var errSSELineTooLarge = fmt.Errorf("upstream SSE event exceeds %d bytes", maxSSELineBytes)
 
 type ProxyMetrics struct {
-	TTFT         time.Duration
-	Duration     time.Duration
-	InputTokens  int64
-	OutputTokens int64
-	CachedTokens int64
+	TTFT                time.Duration
+	Duration            time.Duration
+	InputTokens         int64
+	OutputTokens        int64
+	CachedTokens        int64
+	CacheCreationTokens int64
+	ImageInputTokens    int64
+	ImageOutputTokens   int64
+	ImageCount          int64
+	WebSearchCalls      int64
+	UpstreamModel       string
+	ClientDisconnected  bool
+}
+
+type StreamFailoverError struct {
+	StatusCode int
+	StreamBody []byte
+	Response   json.RawMessage
+}
+
+func (e *StreamFailoverError) Error() string {
+	return fmt.Sprintf("retryable upstream terminal failure: status %d", e.StatusCode)
+}
+
+func WriteStreamFailoverError(dst http.ResponseWriter, src *http.Response, failure *StreamFailoverError, clientWantsStream bool) error {
+	copyResponseHeaders(dst.Header(), src.Header)
+	if clientWantsStream {
+		if dst.Header().Get("Content-Type") == "" {
+			dst.Header().Set("Content-Type", "text/event-stream")
+		}
+		dst.WriteHeader(src.StatusCode)
+		_, err := dst.Write(failure.StreamBody)
+		return err
+	}
+	dst.Header().Set("Content-Type", "application/json")
+	dst.WriteHeader(failure.StatusCode)
+	_, err := dst.Write(failure.Response)
+	return err
 }
 
 func CopyResponse(dst http.ResponseWriter, src *http.Response, startedAt time.Time) (ProxyMetrics, error) {
@@ -42,6 +75,57 @@ func CopyResponseForRequest(dst http.ResponseWriter, src *http.Response, started
 	return copyBufferedResponse(dst, src, startedAt)
 }
 
+func DrainResponse(src *http.Response, startedAt time.Time) (ProxyMetrics, []byte, error) {
+	contentType := strings.ToLower(src.Header.Get("Content-Type"))
+	if strings.Contains(contentType, "text/event-stream") {
+		reader := bufio.NewReader(src.Body)
+		var firstByteAt, firstTokenAt time.Time
+		var terminal terminalResponse
+		body := make([]byte, 0, 4096)
+		for {
+			line, err := readLimitedLine(reader)
+			if len(line) > 0 {
+				if len(body)+len(line) <= maxBufferedResponseBytes {
+					body = append(body, line...)
+				}
+				now := time.Now()
+				if firstByteAt.IsZero() {
+					firstByteAt = now
+				}
+				if firstTokenAt.IsZero() && isClientOutputEvent(line) {
+					firstTokenAt = now
+				}
+				if parsed, ok := parseResponseUsage(line); ok {
+					terminal = parsed
+				}
+			}
+			if err != nil {
+				if err == io.EOF {
+					return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), body, nil
+				}
+				return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), body, err
+			}
+		}
+	}
+	body, err := io.ReadAll(io.LimitReader(src.Body, maxBufferedResponseBytes+1))
+	firstByteAt := time.Now()
+	if err != nil {
+		return proxyMetrics(startedAt, firstByteAt, time.Time{}, terminalResponse{}, false), body, err
+	}
+	if len(body) > maxBufferedResponseBytes {
+		return proxyMetrics(startedAt, firstByteAt, time.Time{}, terminalResponse{}, false), nil, fmt.Errorf("upstream response exceeds %d bytes", maxBufferedResponseBytes)
+	}
+	terminal, _ := parseJSONResponseUsage(body)
+	return proxyMetrics(startedAt, firstByteAt, time.Time{}, terminal, false), body, nil
+}
+
+func WriteDrainedResponse(dst http.ResponseWriter, src *http.Response, body []byte) error {
+	copyResponseHeaders(dst.Header(), src.Header)
+	dst.WriteHeader(src.StatusCode)
+	_, err := dst.Write(body)
+	return err
+}
+
 func copyResponseHeaders(dst, src http.Header) {
 	for _, key := range responseHeaders {
 		for _, value := range src.Values(key) {
@@ -51,16 +135,43 @@ func copyResponseHeaders(dst, src http.Header) {
 }
 
 func copySSE(dst http.ResponseWriter, src *http.Response, startedAt time.Time) (ProxyMetrics, error) {
-	copyResponseHeaders(dst.Header(), src.Header)
-	if dst.Header().Get("Content-Type") == "" {
-		dst.Header().Set("Content-Type", "text/event-stream")
-	}
-	dst.WriteHeader(src.StatusCode)
+	return copySSEWithPendingLimit(dst, src, startedAt, maxBufferedResponseBytes)
+}
+
+func copySSEWithPendingLimit(dst http.ResponseWriter, src *http.Response, startedAt time.Time, pendingLimit int) (ProxyMetrics, error) {
 	flusher, _ := dst.(http.Flusher)
 	reader := bufio.NewReader(src.Body)
 	var firstByteAt, firstTokenAt time.Time
-	var usage responseUsage
+	var terminal terminalResponse
 	terminalSeen := false
+	clientOutputStarted := false
+	clientDisconnected := false
+	pending := make([]byte, 0, 4096)
+	writeClient := func(data []byte) {
+		if clientDisconnected || len(data) == 0 {
+			return
+		}
+		if _, err := dst.Write(data); err != nil {
+			clientDisconnected = true
+			return
+		}
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+	startClientOutput := func() {
+		if clientOutputStarted {
+			return
+		}
+		clientOutputStarted = true
+		copyResponseHeaders(dst.Header(), src.Header)
+		if dst.Header().Get("Content-Type") == "" {
+			dst.Header().Set("Content-Type", "text/event-stream")
+		}
+		dst.WriteHeader(src.StatusCode)
+		writeClient(pending)
+		pending = pending[:0]
+	}
 	for {
 		line, err := readLimitedLine(reader)
 		if len(line) > 0 {
@@ -68,35 +179,63 @@ func copySSE(dst http.ResponseWriter, src *http.Response, startedAt time.Time) (
 			if firstByteAt.IsZero() {
 				firstByteAt = now
 			}
-			if firstTokenAt.IsZero() && isTokenEvent(line) {
+			startsOutput := isClientOutputEvent(line)
+			if firstTokenAt.IsZero() && startsOutput {
 				firstTokenAt = now
 			}
 			if parsed, ok := parseResponseUsage(line); ok {
-				usage = parsed
+				terminal = parsed
 			}
-			if eventType, ok := responseEventType(line); ok && isTerminalResponseEvent(eventType) {
+			if !clientOutputStarted && len(line) >= pendingLimit-len(pending) {
+				startClientOutput()
+			}
+			eventType, hasEvent := responseEventType(line)
+			if hasEvent && isTerminalResponseEvent(eventType) {
 				terminalSeen = true
+				if eventType == "response.failed" && !clientOutputStarted {
+					pending = append(pending, line...)
+					if status, retryable := retryableTerminalFailure(terminal); retryable {
+						return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, clientDisconnected), &StreamFailoverError{StatusCode: status, StreamBody: append([]byte(nil), pending...)}
+					}
+					startClientOutput()
+					continue
+				}
 			}
-			if _, writeErr := dst.Write(line); writeErr != nil {
-				return proxyMetrics(startedAt, firstByteAt, firstTokenAt, usage), writeErr
-			}
-			if flusher != nil {
-				flusher.Flush()
+			if !clientOutputStarted {
+				pending = append(pending, line...)
+				if startsOutput {
+					startClientOutput()
+				}
+			} else {
+				writeClient(line)
 			}
 		}
 		if err != nil {
 			if err == io.EOF {
 				if successfulStatus(src.StatusCode) && !terminalSeen {
-					_ = writeResponsesFailedSSE(dst, src.Header, ErrIncompleteStream.Error())
-					return proxyMetrics(startedAt, firstByteAt, firstTokenAt, usage), ErrIncompleteStream
+					if !clientOutputStarted {
+						startClientOutput()
+					}
+					if !clientDisconnected {
+						_ = writeResponsesFailedSSE(dst, src.Header, ErrIncompleteStream.Error())
+					}
+					return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, clientDisconnected), ErrIncompleteStream
 				}
-				return proxyMetrics(startedAt, firstByteAt, firstTokenAt, usage), nil
+				if !clientOutputStarted {
+					startClientOutput()
+				}
+				return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, clientDisconnected), nil
 			}
 			if successfulStatus(src.StatusCode) && !terminalSeen {
-				_ = writeResponsesFailedSSE(dst, src.Header, "upstream stream read failed")
-				return proxyMetrics(startedAt, firstByteAt, firstTokenAt, usage), fmt.Errorf("%w: %v", ErrIncompleteStream, err)
+				if !clientOutputStarted {
+					startClientOutput()
+				}
+				if !clientDisconnected {
+					_ = writeResponsesFailedSSE(dst, src.Header, "upstream stream read failed")
+				}
+				return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, clientDisconnected), fmt.Errorf("%w: %v", ErrIncompleteStream, err)
 			}
-			return proxyMetrics(startedAt, firstByteAt, firstTokenAt, usage), err
+			return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, clientDisconnected), err
 		}
 	}
 }
@@ -104,8 +243,9 @@ func copySSE(dst http.ResponseWriter, src *http.Response, startedAt time.Time) (
 func copySSEAsJSON(dst http.ResponseWriter, src *http.Response, startedAt time.Time) (ProxyMetrics, error) {
 	reader := bufio.NewReader(src.Body)
 	var firstByteAt, firstTokenAt time.Time
-	var usage responseUsage
+	var terminal terminalResponse
 	var finalResponse json.RawMessage
+	var terminalType string
 	for {
 		line, err := readLimitedLine(reader)
 		if len(line) > 0 {
@@ -113,7 +253,7 @@ func copySSEAsJSON(dst http.ResponseWriter, src *http.Response, startedAt time.T
 			if firstByteAt.IsZero() {
 				firstByteAt = now
 			}
-			if firstTokenAt.IsZero() && isTokenEvent(line) {
+			if firstTokenAt.IsZero() && isClientOutputEvent(line) {
 				firstTokenAt = now
 			}
 			payload, ok := ssePayload(line)
@@ -123,9 +263,10 @@ func copySSEAsJSON(dst http.ResponseWriter, src *http.Response, startedAt time.T
 					Response json.RawMessage `json:"response"`
 				}
 				if json.Unmarshal(payload, &event) == nil && isTerminalResponseEvent(event.Type) && len(event.Response) > 0 && string(event.Response) != "null" {
+					terminalType = event.Type
 					finalResponse = append(finalResponse[:0], event.Response...)
 					if parsed, ok := parseJSONResponseUsage(event.Response); ok {
-						usage = parsed
+						terminal = parsed
 					}
 				}
 			}
@@ -133,20 +274,25 @@ func copySSEAsJSON(dst http.ResponseWriter, src *http.Response, startedAt time.T
 		if err != nil {
 			if err != io.EOF {
 				writeProxyJSONError(dst, http.StatusBadGateway, "upstream_error", "upstream stream read failed")
-				return proxyMetrics(startedAt, firstByteAt, firstTokenAt, usage), err
+				return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), err
 			}
 			break
 		}
 	}
 	if len(finalResponse) == 0 {
 		writeProxyJSONError(dst, http.StatusBadGateway, "upstream_error", ErrIncompleteStream.Error())
-		return proxyMetrics(startedAt, firstByteAt, firstTokenAt, usage), ErrIncompleteStream
+		return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), ErrIncompleteStream
+	}
+	if terminalType == "response.failed" {
+		if status, retryable := retryableTerminalFailure(terminal); retryable {
+			return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), &StreamFailoverError{StatusCode: status, Response: append(json.RawMessage(nil), finalResponse...)}
+		}
 	}
 	copyResponseHeaders(dst.Header(), src.Header)
 	dst.Header().Set("Content-Type", "application/json")
 	dst.WriteHeader(src.StatusCode)
 	_, err := dst.Write(finalResponse)
-	return proxyMetrics(startedAt, firstByteAt, firstTokenAt, usage), err
+	return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), err
 }
 
 func readLimitedLine(reader *bufio.Reader) ([]byte, error) {
@@ -169,21 +315,21 @@ func copyBufferedResponse(dst http.ResponseWriter, src *http.Response, startedAt
 	firstByteAt := time.Now()
 	if err != nil {
 		writeProxyJSONError(dst, http.StatusBadGateway, "upstream_error", "upstream response read failed")
-		return proxyMetrics(startedAt, firstByteAt, time.Time{}, responseUsage{}), err
+		return proxyMetrics(startedAt, firstByteAt, time.Time{}, terminalResponse{}, false), err
 	}
 	if len(body) > maxBufferedResponseBytes {
 		err = fmt.Errorf("upstream response exceeds %d bytes", maxBufferedResponseBytes)
 		writeProxyJSONError(dst, http.StatusBadGateway, "upstream_error", err.Error())
-		return proxyMetrics(startedAt, firstByteAt, time.Time{}, responseUsage{}), err
+		return proxyMetrics(startedAt, firstByteAt, time.Time{}, terminalResponse{}, false), err
 	}
-	usage, _ := parseJSONResponseUsage(body)
+	terminal, _ := parseJSONResponseUsage(body)
 	copyResponseHeaders(dst.Header(), src.Header)
 	if dst.Header().Get("Content-Type") == "" {
 		dst.Header().Set("Content-Type", "application/json")
 	}
 	dst.WriteHeader(src.StatusCode)
 	_, writeErr := dst.Write(body)
-	return proxyMetrics(startedAt, firstByteAt, time.Time{}, usage), writeErr
+	return proxyMetrics(startedAt, firstByteAt, time.Time{}, terminal, false), writeErr
 }
 
 func writeProxyJSONError(dst http.ResponseWriter, status int, code, message string) {
@@ -235,21 +381,24 @@ func successfulStatus(status int) bool {
 	return status >= 200 && status < 300
 }
 
-func proxyMetrics(startedAt, firstByteAt, firstTokenAt time.Time, usage responseUsage) ProxyMetrics {
-	first := firstTokenAt
-	if first.IsZero() {
-		first = firstByteAt
-	}
+func proxyMetrics(startedAt, firstByteAt, firstTokenAt time.Time, terminal terminalResponse, clientDisconnected bool) ProxyMetrics {
 	ttft := time.Duration(0)
-	if !first.IsZero() {
-		ttft = first.Sub(startedAt)
+	if !firstTokenAt.IsZero() {
+		ttft = firstTokenAt.Sub(startedAt)
 	}
 	return ProxyMetrics{
-		TTFT:         ttft,
-		Duration:     time.Since(startedAt),
-		InputTokens:  usage.InputTokens,
-		OutputTokens: usage.OutputTokens,
-		CachedTokens: usage.InputTokenDetails.CachedTokens,
+		TTFT:                ttft,
+		Duration:            time.Since(startedAt),
+		InputTokens:         terminal.Usage.InputTokens,
+		OutputTokens:        terminal.Usage.OutputTokens,
+		CachedTokens:        terminal.Usage.InputTokenDetails.CachedTokens,
+		CacheCreationTokens: terminal.Usage.InputTokenDetails.CacheWriteTokens,
+		ImageInputTokens:    terminal.Usage.InputTokenDetails.ImageTokens,
+		ImageOutputTokens:   terminal.Usage.OutputTokenDetails.ImageTokens,
+		ImageCount:          terminal.imageCount(),
+		WebSearchCalls:      terminal.webSearchCalls(),
+		UpstreamModel:       terminal.Model,
+		ClientDisconnected:  clientDisconnected,
 	}
 }
 
@@ -257,35 +406,118 @@ type responseUsage struct {
 	InputTokens       int64 `json:"input_tokens"`
 	OutputTokens      int64 `json:"output_tokens"`
 	InputTokenDetails struct {
-		CachedTokens int64 `json:"cached_tokens"`
+		CachedTokens     int64 `json:"cached_tokens"`
+		CacheWriteTokens int64 `json:"cache_write_tokens"`
+		ImageTokens      int64 `json:"image_tokens"`
 	} `json:"input_tokens_details"`
+	OutputTokenDetails struct {
+		ImageTokens int64 `json:"image_tokens"`
+	} `json:"output_tokens_details"`
 }
 
-func parseJSONResponseUsage(payload []byte) (responseUsage, bool) {
-	var response struct {
-		Usage *responseUsage `json:"usage"`
-	}
-	if json.Unmarshal(payload, &response) != nil || response.Usage == nil {
-		return responseUsage{}, false
-	}
-	return *response.Usage, true
+type responseOutputItem struct {
+	Type   string `json:"type"`
+	Status string `json:"status"`
 }
 
-func parseResponseUsage(line []byte) (responseUsage, bool) {
+type responseError struct {
+	Type    string `json:"type"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+type terminalResponse struct {
+	Model  string               `json:"model"`
+	Usage  responseUsage        `json:"usage"`
+	Output []responseOutputItem `json:"output"`
+	Error  *responseError       `json:"error"`
+}
+
+func (r terminalResponse) imageCount() int64 {
+	var count int64
+	for _, item := range r.Output {
+		if item.Type == "image_generation_call" && item.Status == "completed" {
+			count++
+		}
+	}
+	return count
+}
+
+func (r terminalResponse) webSearchCalls() int64 {
+	var count int64
+	for _, item := range r.Output {
+		if item.Type == "web_search_call" && item.Status == "completed" {
+			count++
+		}
+	}
+	return count
+}
+
+func parseJSONResponseUsage(payload []byte) (terminalResponse, bool) {
+	var response terminalResponse
+	if json.Unmarshal(payload, &response) != nil {
+		return terminalResponse{}, false
+	}
+	return response, true
+}
+
+func parseResponseUsage(line []byte) (terminalResponse, bool) {
 	payload, ok := ssePayload(line)
 	if !ok {
-		return responseUsage{}, false
+		return terminalResponse{}, false
 	}
 	var event struct {
-		Type     string `json:"type"`
-		Response struct {
-			Usage responseUsage `json:"usage"`
-		} `json:"response"`
+		Type     string           `json:"type"`
+		Response terminalResponse `json:"response"`
 	}
 	if json.Unmarshal(payload, &event) != nil || !isTerminalResponseEvent(event.Type) {
-		return responseUsage{}, false
+		return terminalResponse{}, false
 	}
-	return event.Response.Usage, true
+	return event.Response, true
+}
+
+func terminalFailureStatus(response terminalResponse) int {
+	if response.Error == nil {
+		return http.StatusBadGateway
+	}
+	combined := strings.ToLower(strings.TrimSpace(response.Error.Type + " " + response.Error.Code + " " + response.Error.Message))
+	switch {
+	case strings.Contains(combined, "context_length") || strings.Contains(combined, "context window") || strings.Contains(combined, "invalid_request"):
+		if response.Error.Code == "server_is_overloaded" || response.Error.Code == "slow_down" || transientProcessingFailure(combined) {
+			return http.StatusServiceUnavailable
+		}
+		return http.StatusBadRequest
+	case strings.Contains(combined, "rate_limit"):
+		return http.StatusTooManyRequests
+	case strings.Contains(combined, "authentication") || strings.Contains(combined, "unauthorized") || strings.Contains(combined, "invalid_api_key"):
+		return http.StatusUnauthorized
+	case strings.Contains(combined, "permission") || strings.Contains(combined, "forbidden") || strings.Contains(combined, "access denied"):
+		return http.StatusForbidden
+	case response.Error.Code == "server_is_overloaded" || response.Error.Code == "slow_down":
+		return http.StatusServiceUnavailable
+	default:
+		return http.StatusBadGateway
+	}
+}
+
+func retryableTerminalFailure(response terminalResponse) (int, bool) {
+	status := terminalFailureStatus(response)
+	if response.Error == nil {
+		return status, true
+	}
+	combined := strings.ToLower(strings.TrimSpace(response.Error.Type + " " + response.Error.Code + " " + response.Error.Message))
+	for _, marker := range []string{"content_policy", "policy", "safety", "high-risk cyber", "not allowed", "violat"} {
+		if strings.Contains(combined, marker) {
+			return status, false
+		}
+	}
+	return status, status != http.StatusBadRequest
+}
+
+func transientProcessingFailure(message string) bool {
+	return strings.Contains(message, "an error occurred while processing your request") ||
+		strings.Contains(message, "selected model is at capacity") ||
+		(strings.Contains(message, "you can retry your request") && strings.Contains(message, "help.openai.com") && strings.Contains(message, "request id"))
 }
 
 func isTerminalResponseEvent(eventType string) bool {
@@ -297,9 +529,17 @@ func isTerminalResponseEvent(eventType string) bool {
 	}
 }
 
-func isTokenEvent(line []byte) bool {
+func isClientOutputEvent(line []byte) bool {
 	eventType, ok := responseEventType(line)
-	return ok && strings.HasSuffix(eventType, ".delta")
+	if !ok {
+		return false
+	}
+	switch eventType {
+	case "response.created", "response.in_progress", "response.failed":
+		return false
+	default:
+		return !strings.HasPrefix(eventType, "rate_limits.")
+	}
 }
 
 func responseEventType(line []byte) (string, bool) {

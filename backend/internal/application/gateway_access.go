@@ -255,11 +255,13 @@ func (s *Service) RecordGatewayAccountQuota(ctx context.Context, access GatewayA
 	return s.store.RecordAccountQuotaSignals(ctx, access.Credential.Account.ID, signals, s.now())
 }
 
-func (s *Service) RecordGatewayMetric(ctx context.Context, access GatewayAccess, requestID, model, serviceTier string, statusCode int, ttft, duration time.Duration, tokenUsage domain.TokenUsage) error {
-	return s.store.RecordGatewayMetric(ctx, domain.GatewayMetric{
-		RequestID: requestID, APIKeyID: access.Credential.APIKeyID, PlanID: access.Credential.Plan.ID,
-		AccountID: access.Credential.Account.ID, MemberID: access.Credential.Member.ID,
-		Model: model, ServiceTier: serviceTier, StatusCode: statusCode, TTFT: ttft, Duration: duration,
-		TokenUsage: tokenUsage, AccountCostMicros: billing.AccountCostMicros(model, serviceTier, tokenUsage), CreatedAt: s.now(),
-	})
+func (s *Service) RecordGatewayMetric(ctx context.Context, access GatewayAccess, metric domain.GatewayMetric) error {
+	metric.APIKeyID = access.Credential.APIKeyID
+	metric.PlanID = access.Credential.Plan.ID
+	metric.AccountID = access.Credential.Account.ID
+	metric.MemberID = access.Credential.Member.ID
+	metric.CostBreakdown = billing.AccountCost(metric.BillingModel, metric.ServiceTier, metric.TokenUsage, metric.WebSearchCalls)
+	metric.AccountCostMicros = metric.CostBreakdown.TotalMicros
+	metric.CreatedAt = s.now()
+	return s.store.RecordGatewayMetric(ctx, metric)
 }

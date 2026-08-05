@@ -1,7 +1,7 @@
 <template>
   <section class="account-config-summary">
     <header class="section-heading">
-      <div><span class="section-kicker">OPENAI ACCOUNT</span><h3>{{ account.name }}</h3><p>{{ account.notes || '暂无备注' }}</p></div>
+      <div><h3>{{ account.name }}</h3><p>{{ account.notes || '暂无备注' }}</p></div>
       <StatusBadge :value="account.status" />
     </header>
     <dl class="account-config-list">
