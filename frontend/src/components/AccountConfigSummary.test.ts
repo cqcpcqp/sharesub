@@ -12,7 +12,7 @@ const account: Account = {
     service_tier: 'priority', action: 'filter', user_ids: ['member'], error_message: '',
     model_whitelist: ['gpt-5.5*'], fallback_action: 'pass', fallback_error_message: '',
   }],
-  token_expires_at: '2026-08-13T02:46:00Z', status: 'active', created_at: '2026-08-01T00:00:00Z',
+  subscription_expires_at: '2026-09-06T10:00:00Z', token_expires_at: '2026-08-13T02:46:00Z', status: 'active', created_at: '2026-08-01T00:00:00Z',
 }
 
 const member: Member = {
@@ -28,11 +28,19 @@ describe('AccountConfigSummary', () => {
     expect(wrapper.text()).toContain('过滤 service_tier')
     expect(wrapper.text()).toContain('alice · alice@example.com')
     expect(wrapper.text()).toContain('gpt-5.5*')
+    expect(wrapper.text()).toContain('订阅有效期至')
+    expect(wrapper.text()).toContain('2026')
+    expect(wrapper.text()).toContain('OAuth Token 到期')
   })
 
   it('shows the passthrough state when no rules are configured', () => {
     const wrapper = mount(AccountConfigSummary, { props: { account: { ...account, fast_policy: [] }, members: [] } })
     expect(wrapper.text()).toContain('未配置策略')
     expect(wrapper.text()).toContain('原样透传')
+  })
+
+  it('shows when the account has no recorded subscription expiry', () => {
+    const wrapper = mount(AccountConfigSummary, { props: { account: { ...account, plan_type: 'free', subscription_expires_at: null } } })
+    expect(wrapper.text()).toContain('暂无订阅有效期')
   })
 })

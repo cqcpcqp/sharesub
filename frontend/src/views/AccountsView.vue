@@ -54,8 +54,12 @@
             <dd>{{ account.proxy_url || '继承系统代理' }}</dd>
           </div>
           <div>
-            <dt><CalendarClock :size="14" />Token 到期</dt>
+            <dt><CalendarClock :size="14" />OAuth Token 到期</dt>
             <dd>{{ formatDate(account.token_expires_at) }}</dd>
+          </div>
+          <div class="account-subscription-expiry">
+            <dt><CalendarRange :size="14" />订阅有效期至</dt>
+            <dd>{{ account.subscription_expires_at ? formatDate(account.subscription_expires_at) : '暂无订阅有效期' }}</dd>
           </div>
         </dl>
         <NAlert v-if="account.last_error" type="warning" :show-icon="true" class="account-error">
@@ -128,7 +132,7 @@
 <script setup lang="ts">
 import { NAlert, NButton } from 'naive-ui'
 import { computed, ref } from 'vue'
-import { Bot, CalendarClock, ExternalLink, Gauge, Network, Pencil, Plus, RotateCw, Save, TimerReset } from 'lucide-vue-next'
+import { Bot, CalendarClock, CalendarRange, ExternalLink, Gauge, Network, Pencil, Plus, RotateCw, Save, TimerReset } from 'lucide-vue-next'
 import { api, parseOAuthCallback } from '../api'
 import type { Account, AccountConfigInput, Member, OAuthStart, Plan } from '../types'
 import AccountConfigFields from '../components/AccountConfigFields.vue'

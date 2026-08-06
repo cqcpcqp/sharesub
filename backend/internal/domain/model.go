@@ -113,6 +113,7 @@ type Account struct {
 	Email                  string           `json:"email"`
 	ChatGPTAccountID       string           `json:"chatgpt_account_id"`
 	PlanType               string           `json:"plan_type"`
+	SubscriptionExpiresAt  *time.Time       `json:"subscription_expires_at"`
 	AccessTokenCiphertext  []byte           `json:"-"`
 	RefreshTokenCiphertext []byte           `json:"-"`
 	ProxyURLCiphertext     []byte           `json:"-"`

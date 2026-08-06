@@ -41,6 +41,7 @@
 .account-identity p { display: -webkit-box; overflow: hidden; margin: 2px 0 0; color: var(--muted); font-size: 11px; line-height: 1.55; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .account-card dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px 18px; margin: 22px 0 0; }
 .account-card dl > div { display: grid; gap: 5px; }
+.account-card dl > .account-subscription-expiry { grid-column: 1 / -1; }
 .account-card dt { display: flex; align-items: center; gap: 6px; color: var(--muted-light); font-size: 11px; font-weight: 760; text-transform: uppercase; }
 .account-card dd { min-width: 0; margin: 0; overflow: hidden; color: var(--ink); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .account-error { margin-top: 16px; }

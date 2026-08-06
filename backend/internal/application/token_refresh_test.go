@@ -15,13 +15,14 @@ import (
 
 type tokenRefreshStore struct {
 	Store
-	mu         sync.Mutex
-	account    domain.Account
-	lease      bool
-	candidates []domain.Account
-	updates    int
-	marks      int
-	updateErr  error
+	mu                  sync.Mutex
+	account             domain.Account
+	lease               bool
+	candidates          []domain.Account
+	updates             int
+	subscriptionUpdates int
+	marks               int
+	updateErr           error
 }
 
 func (s *tokenRefreshStore) AccountByID(context.Context, string) (domain.Account, error) {
@@ -64,6 +65,17 @@ func (s *tokenRefreshStore) UpdateAccountTokensIfRefreshTokenUnchanged(_ context
 	return true, nil
 }
 
+func (s *tokenRefreshStore) UpdateAccountSubscriptionExpiresAtIfRefreshTokenUnchanged(_ context.Context, _ string, expectedRefresh []byte, subscriptionExpiresAt *time.Time) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !bytes.Equal(s.account.RefreshTokenCiphertext, expectedRefresh) || s.account.Status != domain.StatusActive {
+		return false, nil
+	}
+	s.account.SubscriptionExpiresAt = subscriptionExpiresAt
+	s.subscriptionUpdates++
+	return true, nil
+}
+
 func (s *tokenRefreshStore) ListExpiringAccounts(context.Context, time.Time, int) ([]domain.Account, error) {
 	return append([]domain.Account(nil), s.candidates...), nil
 }
@@ -81,11 +93,13 @@ func (s *tokenRefreshStore) MarkAccountErrorIfRefreshTokenUnchanged(_ context.Co
 }
 
 type tokenRefreshOAuth struct {
-	calls atomic.Int32
-	token OAuthToken
-	err   error
-	delay time.Duration
-	hook  func()
+	calls            atomic.Int32
+	token            OAuthToken
+	err              error
+	subscriptionErr  error
+	delay            time.Duration
+	hook             func()
+	subscriptionHook func()
 }
 
 func (o *tokenRefreshOAuth) AuthorizationURL(string, string, string) string { return "" }
@@ -101,6 +115,43 @@ func (o *tokenRefreshOAuth) Refresh(context.Context, string) (OAuthToken, error)
 		time.Sleep(o.delay)
 	}
 	return o.token, o.err
+}
+func (o *tokenRefreshOAuth) SubscriptionExpiresAt(context.Context, string, string, string) (*time.Time, error) {
+	if o.subscriptionHook != nil {
+		o.subscriptionHook()
+	}
+	if o.subscriptionErr != nil {
+		return nil, o.subscriptionErr
+	}
+	expiresAt := time.Date(2026, 9, 6, 10, 0, 0, 0, time.UTC)
+	return &expiresAt, nil
+}
+
+func TestRefreshSubscriptionUpdateDoesNotOverwriteReauthorization(t *testing.T) {
+	now := time.Date(2026, 8, 6, 10, 0, 0, 0, time.UTC)
+	manager := testSecurityManager(t)
+	account := encryptedRefreshAccount(t, manager, now)
+	store := &tokenRefreshStore{account: account}
+	reauthorizedExpiry := time.Date(2026, 11, 6, 10, 0, 0, 0, time.UTC)
+	oauth := &tokenRefreshOAuth{token: OAuthToken{
+		AccessToken: "refreshed-access", RefreshToken: "refreshed-refresh", ExpiresAt: now.Add(10 * 24 * time.Hour),
+	}}
+	oauth.subscriptionHook = func() {
+		store.mu.Lock()
+		defer store.mu.Unlock()
+		scope := store.account.OwnerUserID + ":" + store.account.ChatGPTAccountID
+		store.account.RefreshTokenCiphertext, _ = manager.Encrypt("reauthorized-refresh", []byte(scope+":refresh"))
+		store.account.SubscriptionExpiresAt = &reauthorizedExpiry
+	}
+	service := &Service{store: store, security: manager, oauth: oauth, now: func() time.Time { return now }}
+
+	_, refreshed, err := service.refreshAccountToken(context.Background(), account, 2*time.Minute, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !refreshed || store.subscriptionUpdates != 0 || store.account.SubscriptionExpiresAt == nil || !store.account.SubscriptionExpiresAt.Equal(reauthorizedExpiry) {
+		t.Fatalf("refreshed = %v, subscription updates = %d, expiry = %v", refreshed, store.subscriptionUpdates, store.account.SubscriptionExpiresAt)
+	}
 }
 
 func TestRefreshAccountTokenSerializesConcurrentRefresh(t *testing.T) {
@@ -132,8 +183,32 @@ func TestRefreshAccountTokenSerializesConcurrentRefresh(t *testing.T) {
 			t.Fatalf("access token = %q, want new-access", got)
 		}
 	}
-	if oauth.calls.Load() != 1 || store.updates != 1 {
-		t.Fatalf("refresh calls = %d, updates = %d, want one each", oauth.calls.Load(), store.updates)
+	if oauth.calls.Load() != 1 || store.updates != 1 || store.subscriptionUpdates != 1 {
+		t.Fatalf("refresh calls = %d, token updates = %d, subscription updates = %d, want one each", oauth.calls.Load(), store.updates, store.subscriptionUpdates)
+	}
+	wantSubscriptionExpiry := time.Date(2026, 9, 6, 10, 0, 0, 0, time.UTC)
+	if store.account.SubscriptionExpiresAt == nil || !store.account.SubscriptionExpiresAt.Equal(wantSubscriptionExpiry) {
+		t.Fatalf("subscription expiry = %v, want %v", store.account.SubscriptionExpiresAt, wantSubscriptionExpiry)
+	}
+}
+
+func TestRefreshAccountTokenRemainsUsableWhenSubscriptionQueryFails(t *testing.T) {
+	now := time.Date(2026, 8, 6, 10, 0, 0, 0, time.UTC)
+	manager := testSecurityManager(t)
+	account := encryptedRefreshAccount(t, manager, now)
+	store := &tokenRefreshStore{account: account}
+	oauth := &tokenRefreshOAuth{
+		token:           OAuthToken{AccessToken: "new-access", RefreshToken: "new-refresh", ExpiresAt: now.Add(10 * 24 * time.Hour)},
+		subscriptionErr: errors.New("subscription endpoint unavailable"),
+	}
+	service := &Service{store: store, security: manager, oauth: oauth, now: func() time.Time { return now }}
+
+	access, refreshed, err := service.refreshAccountToken(context.Background(), account, 2*time.Minute, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if access != "new-access" || !refreshed || store.updates != 1 || store.subscriptionUpdates != 0 {
+		t.Fatalf("access = %q, refreshed = %v, token updates = %d, subscription updates = %d", access, refreshed, store.updates, store.subscriptionUpdates)
 	}
 }
 

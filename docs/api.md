@@ -77,9 +77,9 @@ OAuth 开始接口返回 `authorization_url` 和 `flow_id`。完成授权后，�
 
 `fast_policy` 规则按顺序首条命中，指定成员规则优先于全局规则。每条规则包含 `service_tier`（`all`、`priority`、`flex`）、`action`（`pass`、`filter`、`force_priority`、`block`）、`user_ids`、`error_message`、`model_whitelist`、`fallback_action` 和 `fallback_error_message`。`model_whitelist` 支持精确模型名与末尾 `*` 通配符；未命中白名单时执行 fallback 动作。过滤或强制改写后的实际 service tier 同步用于请求成本统计。
 
-账号列表与已绑定 Plan 详情中的 `account` 返回 `id`、`owner_user_id`、上述配置、OpenAI 邮箱、ChatGPT Account ID、套餐类型、Token 到期时间、状态、最近错误和创建时间；未绑定账号的 Plan 固定返回 `account: null` 和 `plan.account_id: ""`。OAuth access token、refresh token 以及任何密文字段永远不会进入 JSON 响应。只有账号所有者可以修改配置；Plan 的所有有效成员都能通过 Plan 详情查看该账号的完整配置。
+账号列表与已绑定 Plan 详情中的 `account` 返回 `id`、`owner_user_id`、上述配置、OpenAI 邮箱、ChatGPT Account ID、套餐类型、付费订阅有效期 `subscription_expires_at`、OAuth Token 到期时间、状态、最近错误和创建时间。`subscription_expires_at` 的固定类型为 RFC 3339 时间字符串或 `null`；当前没有取得订阅有效期时返回 `null`。未绑定账号的 Plan 固定返回 `account: null` 和 `plan.account_id: ""`。OAuth access token、refresh token 以及任何密文字段永远不会进入 JSON 响应。只有账号所有者可以修改配置；Plan 的所有有效成员都能通过 Plan 详情查看该账号的完整配置。
 
-“Token 到期时间”是当前 OpenAI OAuth access token 的到期时间，不是账号套餐或 ShareSub API Key 的到期时间。API 服务默认每 5 分钟扫描一次，并提前 30 分钟使用 refresh token 自动换取新凭据；请求与额度探测路径在剩余不足 2 分钟时也会触发同一刷新流程。刷新使用数据库租约锁和凭据条件更新，避免多实例重复刷新或覆盖刚完成的重新授权。连续刷新失败后账号会进入 `refresh_required` 状态。
+“OAuth Token 到期时间”是当前 OpenAI OAuth access token 的到期时间；`subscription_expires_at` 是 ChatGPT 当前付费订阅的有效截止时间，两者含义不同。API 服务默认每 5 分钟扫描一次，并提前 30 分钟使用 refresh token 自动换取新凭据，同时重新查询订阅有效期；请求与额度探测路径在剩余不足 2 分钟时也会触发同一刷新流程。刷新使用数据库租约锁和凭据条件更新，避免多实例重复刷新或覆盖刚完成的重新授权。连续刷新失败后账号会进入 `refresh_required` 状态。
 
 ## 共享方案、公开大厅与邀请
 

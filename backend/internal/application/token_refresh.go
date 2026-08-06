@@ -175,6 +175,11 @@ func (s *Service) refreshAccountTokenWithAttempts(ctx context.Context, account d
 		return "", false, err
 	}
 	if updated {
+		if err := s.hydrateAccountProxy(&latest); err == nil {
+			if subscriptionExpiresAt, queryErr := s.oauth.SubscriptionExpiresAt(ctx, refreshed.AccessToken, latest.ChatGPTAccountID, latest.ProxyURL); queryErr == nil {
+				_, _ = s.store.UpdateAccountSubscriptionExpiresAtIfRefreshTokenUnchanged(ctx, latest.ID, refreshCiphertext, subscriptionExpiresAt)
+			}
+		}
 		return refreshed.AccessToken, true, nil
 	}
 	current, err := s.store.AccountByID(ctx, latest.ID)

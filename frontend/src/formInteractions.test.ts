@@ -46,6 +46,7 @@ const account: Account = {
   email: 'openai@example.com',
   chatgpt_account_id: 'chatgpt-account',
   plan_type: 'plus',
+  subscription_expires_at: '2026-09-03T00:00:00Z',
   proxy_url: '',
   max_concurrency: 0,
     rpm_limit: 0,
@@ -609,6 +610,13 @@ describe('form interactions', () => {
     expect(callback.element).toHaveProperty('value', 'http://localhost:1455/auth/callback?code=test&state=flow')
     await callback.setValue('')
     expect(callback.element).toHaveProperty('value', '')
+  })
+
+  it('shows the OpenAI subscription expiry separately from the OAuth token expiry', () => {
+    const wrapper = mount(AccountsView, { props: { accounts: [account] } })
+    expect(wrapper.text()).toContain('订阅有效期至')
+    expect(wrapper.text()).toContain('OAuth Token 到期')
+    expect(wrapper.text()).toContain('2026')
   })
 
   it('edits and clears the profile username', async () => {

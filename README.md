@@ -9,7 +9,7 @@ ShareSub 是一个仅支持 OpenAI Codex 的账号共享平台。房主可以先
 - 仅支持 OpenAI Codex OAuth 账号，不支持 Anthropic、Gemini、Bedrock 等其他平台。
 - Plan 分为公开和私密两种；公开 Plan 会展示在大厅，但申请必须由房主审批。
 - 一个共享方案最多绑定一个房主拥有的 OpenAI 账号；未绑定时可以配置 Plan，但不能公开发布、配置 API Key 路由或转发请求。
-- OpenAI 账号支持名称、备注、启停状态、独立代理、最大并发和 RPM 上限；只有账号所有者可编辑，Plan 的所有成员可查看完整配置。
+- OpenAI 账号支持名称、备注、启停状态、独立代理、最大并发和 RPM 上限；OAuth 接入与刷新会同步当前付费订阅的有效期，只有账号所有者可编辑配置，Plan 的所有成员可查看完整配置。
 - API Key 归用户所有，一个 Key 可以绑定用户已加入的多个 Plan。
 - API Key 支持按优先级故障转移，或按可用额度均衡选路。
 - Codex 网关支持流式和非流式 Responses、远程 compact、模型列表以及 sub2api 兼容路径。

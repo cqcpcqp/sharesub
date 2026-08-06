@@ -75,6 +75,7 @@ export interface Account {
   email: string
   chatgpt_account_id: string
   plan_type: string
+  subscription_expires_at: string | null
   proxy_url: string
   max_concurrency: number
   rpm_limit: number

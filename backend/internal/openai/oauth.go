@@ -15,11 +15,12 @@ import (
 )
 
 const (
-	clientID     = "app_EMoamEEZ73f0CkXaXp7hrann"
-	authorizeURL = "https://auth.openai.com/oauth/authorize"
-	tokenURL     = "https://auth.openai.com/oauth/token"
-	scopes       = "openid profile email offline_access"
-	refreshScope = "openid profile email"
+	clientID        = "app_EMoamEEZ73f0CkXaXp7hrann"
+	authorizeURL    = "https://auth.openai.com/oauth/authorize"
+	tokenURL        = "https://auth.openai.com/oauth/token"
+	subscriptionURL = "https://chatgpt.com/backend-api/subscriptions"
+	scopes          = "openid profile email offline_access"
+	refreshScope    = "openid profile email"
 )
 
 type OAuthClient struct {
@@ -85,6 +86,43 @@ func (c *OAuthClient) Refresh(ctx context.Context, refreshToken string) (applica
 		token.RefreshToken = refreshToken
 	}
 	return token, nil
+}
+
+func (c *OAuthClient) SubscriptionExpiresAt(ctx context.Context, accessToken, accountID, proxyURL string) (*time.Time, error) {
+	client := c.client
+	if proxyURL != "" {
+		client = req.C().SetTimeout(120 * time.Second).ImpersonateChrome()
+		client.SetProxyURL(proxyURL)
+	}
+	var subscription struct {
+		PlanType    string `json:"plan_type"`
+		ActiveUntil string `json:"active_until"`
+		WillRenew   bool   `json:"will_renew"`
+		ID          string `json:"id"`
+	}
+	resp, err := client.R().
+		SetContext(ctx).
+		SetHeader("Authorization", "Bearer "+accessToken).
+		SetHeader("Origin", "https://chatgpt.com").
+		SetHeader("Referer", "https://chatgpt.com/").
+		SetHeader("Accept", "application/json").
+		SetQueryParam("account_id", accountID).
+		SetSuccessResult(&subscription).
+		Get(subscriptionURL)
+	if err != nil {
+		return nil, fmt.Errorf("query OpenAI subscription: %w", err)
+	}
+	if !resp.IsSuccessState() {
+		return nil, fmt.Errorf("OpenAI subscription query returned status %d", resp.StatusCode)
+	}
+	if subscription.ActiveUntil == "" {
+		return nil, nil
+	}
+	expiresAt, err := time.Parse(time.RFC3339, subscription.ActiveUntil)
+	if err != nil {
+		return nil, fmt.Errorf("parse OpenAI subscription active_until: %w", err)
+	}
+	return &expiresAt, nil
 }
 
 type tokenResponse struct {

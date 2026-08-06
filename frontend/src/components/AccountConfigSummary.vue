@@ -8,7 +8,8 @@
       <div><dt><Mail :size="15" />账号邮箱</dt><dd>{{ account.email }}</dd></div>
       <div><dt><Hash :size="15" />Account ID</dt><dd><code>{{ account.chatgpt_account_id }}</code></dd></div>
       <div><dt><Sparkles :size="15" />套餐类型</dt><dd>{{ account.plan_type }}</dd></div>
-      <div><dt><CalendarClock :size="15" />Token 到期</dt><dd>{{ formatDate(account.token_expires_at) }}</dd></div>
+      <div><dt><CalendarRange :size="15" />订阅有效期至</dt><dd>{{ account.subscription_expires_at ? formatDate(account.subscription_expires_at) : '暂无订阅有效期' }}</dd></div>
+      <div><dt><CalendarClock :size="15" />OAuth Token 到期</dt><dd>{{ formatDate(account.token_expires_at) }}</dd></div>
       <div><dt><Network :size="15" />账号代理</dt><dd><code>{{ account.proxy_url || '继承系统代理' }}</code></dd></div>
       <div><dt><Gauge :size="15" />最大并发</dt><dd>{{ limitLabel(account.max_concurrency, '请求') }}</dd></div>
       <div><dt><TimerReset :size="15" />RPM 上限</dt><dd>{{ limitLabel(account.rpm_limit, '次/分钟') }}</dd></div>
@@ -61,7 +62,7 @@
 
 <script setup lang="ts">
 import { NAlert, NTag } from 'naive-ui'
-import { ArrowRight, Boxes, CalendarClock, Fingerprint, Gauge, Hash, ListOrdered, Mail, Network, Sparkles, TimerReset, Users, Zap } from 'lucide-vue-next'
+import { ArrowRight, Boxes, CalendarClock, CalendarRange, Fingerprint, Gauge, Hash, ListOrdered, Mail, Network, Sparkles, TimerReset, Users, Zap } from 'lucide-vue-next'
 import type { Account, FastPolicyAction, FastPolicyTier, Member } from '../types'
 import StatusBadge from './StatusBadge.vue'
 

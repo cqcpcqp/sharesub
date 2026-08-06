@@ -152,7 +152,7 @@ func (s *Store) ResolveGatewayRoutes(ctx context.Context, hash []byte, now time.
 		SELECT k.id,k.strategy,r.priority,
 			m.id,m.plan_id,m.user_id,u.username,u.email,m.role,m.status,m.share_basis_points,m.created_at,
 			p.id,p.owner_user_id,p.account_id,p.name,p.status,p.visibility,p.public_slots,p.public_share_basis_points,p.allocation_mode,p.created_at,
-			a.id,a.owner_user_id,a.name,a.notes,a.email,a.chatgpt_account_id,a.plan_type,a.access_token_ciphertext,a.refresh_token_ciphertext,a.proxy_url_ciphertext,a.max_concurrency,a.rpm_limit,a.fast_policy,a.token_expires_at,a.status,a.last_error,a.created_at,
+			a.id,a.owner_user_id,a.name,a.notes,a.email,a.chatgpt_account_id,a.plan_type,a.subscription_expires_at,a.access_token_ciphertext,a.refresh_token_ciphertext,a.proxy_url_ciphertext,a.max_concurrency,a.rpm_limit,a.fast_policy,a.token_expires_at,a.status,a.last_error,a.created_at,
 			COALESCE((SELECT max(q.used_micros) FROM member_quota_windows q WHERE q.member_id=m.id AND q.account_id=a.id AND q.reset_at>$2),0),
 			COALESCE((SELECT max(q.used_micros) FROM account_quota_snapshots q WHERE q.account_id=a.id AND q.reset_at>$2),0)
 		FROM api_keys k
@@ -172,7 +172,7 @@ func (s *Store) ResolveGatewayRoutes(ctx context.Context, hash []byte, now time.
 		err := rows.Scan(&credential.APIKeyID, &credential.APIKeyStrategy, &credential.RoutePriority,
 			&credential.Member.ID, &credential.Member.PlanID, &credential.Member.UserID, &credential.Member.Username, &credential.Member.Email, &credential.Member.Role, &credential.Member.Status, &credential.Member.ShareBasisPoints, &credential.Member.CreatedAt,
 			&credential.Plan.ID, &credential.Plan.OwnerUserID, &credential.Plan.AccountID, &credential.Plan.Name, &credential.Plan.Status, &credential.Plan.Visibility, &credential.Plan.PublicSlots, &credential.Plan.PublicShareBasisPoints, &credential.Plan.AllocationMode, &credential.Plan.CreatedAt,
-			&credential.Account.ID, &credential.Account.OwnerUserID, &credential.Account.Name, &credential.Account.Notes, &credential.Account.Email, &credential.Account.ChatGPTAccountID, &credential.Account.PlanType, &credential.AccessTokenCiphertext, &credential.RefreshTokenCiphertext, &credential.ProxyURLCiphertext, &credential.Account.MaxConcurrency, &credential.Account.RPMLimit, &credential.Account.FastPolicy, &credential.TokenExpiresAt, &credential.Account.Status, &credential.Account.LastError, &credential.Account.CreatedAt,
+			&credential.Account.ID, &credential.Account.OwnerUserID, &credential.Account.Name, &credential.Account.Notes, &credential.Account.Email, &credential.Account.ChatGPTAccountID, &credential.Account.PlanType, &credential.Account.SubscriptionExpiresAt, &credential.AccessTokenCiphertext, &credential.RefreshTokenCiphertext, &credential.ProxyURLCiphertext, &credential.Account.MaxConcurrency, &credential.Account.RPMLimit, &credential.Account.FastPolicy, &credential.TokenExpiresAt, &credential.Account.Status, &credential.Account.LastError, &credential.Account.CreatedAt,
 			&credential.UsageMicros, &credential.AccountUsageMicros)
 		if err != nil {
 			return out, err

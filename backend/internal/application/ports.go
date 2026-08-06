@@ -30,6 +30,7 @@ type Store interface {
 	UpdateAccountConfig(context.Context, string, domain.Account) (domain.Account, error)
 	UpdateAccountAuthorization(context.Context, string, domain.Account, domain.AuditEvent) (domain.Account, error)
 	UpdateAccountTokensIfRefreshTokenUnchanged(context.Context, string, []byte, []byte, []byte, time.Time) (bool, error)
+	UpdateAccountSubscriptionExpiresAtIfRefreshTokenUnchanged(context.Context, string, []byte, *time.Time) (bool, error)
 	MarkAccountErrorIfRefreshTokenUnchanged(context.Context, string, []byte, string) (bool, error)
 	ListExpiringAccounts(context.Context, time.Time, int) ([]domain.Account, error)
 	TryAcquireAccountRefreshLease(context.Context, string, string, time.Time) (bool, error)
@@ -112,4 +113,5 @@ type OpenAIOAuth interface {
 	AuthorizationURL(state, challenge, redirectURI string) string
 	Exchange(context.Context, string, string, string) (OAuthToken, error)
 	Refresh(context.Context, string) (OAuthToken, error)
+	SubscriptionExpiresAt(context.Context, string, string, string) (*time.Time, error)
 }

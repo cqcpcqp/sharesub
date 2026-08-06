@@ -244,6 +244,9 @@ func (s *Service) CompleteOpenAIConnect(ctx context.Context, userID, state, code
 	if err := s.setAccountProxy(&account, config.ProxyURL); err != nil {
 		return domain.Account{}, err
 	}
+	if subscriptionExpiresAt, queryErr := s.oauth.SubscriptionExpiresAt(ctx, token.AccessToken, token.ChatGPTAccountID, account.ProxyURL); queryErr == nil {
+		account.SubscriptionExpiresAt = subscriptionExpiresAt
+	}
 	stored, err := s.store.UpsertAccount(ctx, account)
 	if err != nil {
 		return domain.Account{}, err
@@ -298,6 +301,12 @@ func (s *Service) CompleteOpenAIReauthorize(ctx context.Context, userID, account
 	account.RefreshTokenCiphertext = refresh
 	account.TokenExpiresAt = token.ExpiresAt
 	account.Status = domain.StatusActive
+	if err := s.hydrateAccountProxy(&account); err != nil {
+		return domain.Account{}, err
+	}
+	if subscriptionExpiresAt, queryErr := s.oauth.SubscriptionExpiresAt(ctx, token.AccessToken, token.ChatGPTAccountID, account.ProxyURL); queryErr == nil {
+		account.SubscriptionExpiresAt = subscriptionExpiresAt
+	}
 	event, err := s.newAuditEvent(userID, "account.reauthorized", "account", account.ID, map[string]string{"account_name": account.Name})
 	if err != nil {
 		return domain.Account{}, err
