@@ -1,7 +1,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { APIRequestError, api } from '../api'
 import { allocationShareBasisPoints, formatShareBasisPoints } from '../planAllocation'
-import type { Account, AuditEvent, Member, PerformancePeriod, Plan, PlanAllocationMode, PlanDetail, User } from '../types'
+import type { Account, AuditEvent, Member, PerformancePeriod, Plan, PlanAllocationMode, PlanDetail, QuotaResetCredits, User } from '../types'
 
 const automaticQuotaRefreshes = new Map<string, number>()
 const automaticQuotaRefreshTTL = 5 * 60 * 1000
@@ -17,6 +17,9 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
   const detail = ref<PlanDetail | null>(null)
   const planLoading = ref(false)
   const quotaRefreshing = ref(false)
+  const quotaResetCredits = ref<QuotaResetCredits | null>(null)
+  const quotaResetCreditsLoading = ref(false)
+  const quotaResetting = ref(false)
   const performanceLoading = ref(false)
   const performancePeriod = ref<PerformancePeriod>('24h')
   const actionLoading = ref('')
@@ -31,6 +34,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
   const showDeleteConfirmTwo = ref(false)
   const deleteNameDraft = ref('')
   const renameDraft = ref('')
+  const descriptionDraft = ref('')
   const transferMemberID = ref<string | null>(null)
   const rebindAccountID = ref<string | null>(null)
 
@@ -61,6 +65,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
   const approvedApplications = computed(() => detail.value?.applications.filter(item => item.status === 'approved').length ?? 0)
   const availablePublicSlots = computed(() => Math.max(0, (detail.value?.plan.public_slots ?? 0) - approvedApplications.value))
   const canRename = computed(() => Boolean(detail.value && renameDraft.value.trim() && renameDraft.value.trim() !== detail.value.plan.name))
+  const canUpdateDescription = computed(() => Boolean(detail.value && descriptionDraft.value.trim() !== detail.value.plan.description))
   const canSavePublication = computed(() => publication.visibility === 'private' || (isAccountBound.value && Number.isInteger(publication.slots) && publication.slots! >= 1 && publication.slots! <= 100))
   const canConfirmDelete = computed(() => Boolean(detail.value && deleteNameDraft.value.trim() === detail.value.plan.name))
   const transferMemberOptions = computed(() => detail.value!.members
@@ -76,6 +81,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
   const actionLabels: Record<string, string> = {
     'plan.created': '创建了 Plan',
     'plan.renamed': '更新了 Plan 名称',
+    'plan.description_updated': '更新了 Plan 描述',
     'plan.publication_updated': '更新了大厅发布设置',
     'plan.archived': '归档了 Plan',
     'plan.restored': '恢复了 Plan',
@@ -119,6 +125,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
   let planRequestSequence = 0
   let performanceRequestSequence = 0
   let auditRequestSequence = 0
+  let quotaResetCreditsRequestSequence = 0
   let consumedInitialPlanID = ''
   let consumedInvitePlanID = ''
 
@@ -137,6 +144,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
         planRequestSequence += 1
         planLoading.value = false
         detail.value = null
+        clearQuotaResetState()
         return
       }
       if (detail.value && props.plans.some(plan => plan.id === detail.value!.plan.id)) return
@@ -167,9 +175,11 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
   async function loadPlan(id: string) {
     const requestSequence = ++planRequestSequence
     const changingPlan = detail.value?.plan.id !== id
+    const previousAccountID = detail.value?.account?.id ?? ''
     planLoading.value = true
     if (changingPlan) {
       detail.value = null
+      clearQuotaResetState()
       auditEvents.value = []
       auditRequestSequence += 1
       performanceRequestSequence += 1
@@ -177,6 +187,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
     try {
       const value = await api.plan(id)
       if (requestSequence !== planRequestSequence) return
+      if (!changingPlan && previousAccountID !== (value.account?.id ?? '')) clearQuotaResetState()
       detail.value = value
       syncDetail(value)
       if (activeTab.value === 'activity') void loadAudit(id)
@@ -244,6 +255,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
     publication.slots = value.plan.visibility === 'private' ? 1 : value.plan.public_slots
     publication.share = value.plan.allocation_mode === 'shared' ? 0 : value.plan.visibility === 'private' ? 10 : Math.round(value.plan.public_share_basis_points / 100)
     renameDraft.value = value.plan.name
+    descriptionDraft.value = value.plan.description
     transferMemberID.value = null
     rebindAccountID.value = null
   }
@@ -252,6 +264,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
     publication.visibility = value ? 'public' : 'private'
   }
   function updateRenameDraft(value: string) { renameDraft.value = value }
+  function updateDescriptionDraft(value: string) { descriptionDraft.value = value }
   function updateDeleteNameDraft(value: string) { deleteNameDraft.value = value }
   function updatePublicationSlots(value: number | null) { publication.slots = value }
   function updatePublicationShare(value: number) { publication.share = value }
@@ -298,6 +311,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
         owner_share_basis_points: allocationShareBasisPoints(createForm.allocationMode, createForm.share),
       })
       detail.value = value
+      clearQuotaResetState()
       syncDetail(value)
       showCreate.value = false
       if (!value.account) activeTab.value = 'account'
@@ -322,6 +336,73 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
       notifyError(error)
     } finally {
       quotaRefreshing.value = false
+    }
+  }
+
+  function clearQuotaResetState() {
+    quotaResetCreditsRequestSequence += 1
+    quotaResetCredits.value = null
+    quotaResetCreditsLoading.value = false
+    quotaResetting.value = false
+  }
+
+  function canManageQuotaReset() {
+    return Boolean(detail.value
+      && detail.value.account
+      && detail.value.plan.owner_user_id === props.user.id
+      && detail.value.plan.status !== 'archived')
+  }
+
+  function canQueryQuotaReset() {
+    return Boolean(detail.value?.account && detail.value.plan.status !== 'archived')
+  }
+
+  async function queryQuotaResetCredits() {
+    if (!canQueryQuotaReset() || !detail.value?.account) return
+    const planID = detail.value.plan.id
+    const accountID = detail.value.account.id
+    const requestSequence = ++quotaResetCreditsRequestSequence
+    quotaResetCreditsLoading.value = true
+    try {
+      const value = await api.planQuotaResetCredits(planID)
+      if (requestSequence !== quotaResetCreditsRequestSequence
+        || detail.value?.plan.id !== planID
+        || detail.value.account?.id !== accountID) return
+      quotaResetCredits.value = value
+    } catch (error) {
+      if (requestSequence === quotaResetCreditsRequestSequence) {
+        notifyErrorWithContext('查询重置次数失败', error)
+      }
+    } finally {
+      if (requestSequence === quotaResetCreditsRequestSequence) quotaResetCreditsLoading.value = false
+    }
+  }
+
+  async function resetQuota() {
+    if (!canManageQuotaReset()
+      || !detail.value?.account
+      || quotaResetCredits.value === null
+      || quotaResetCredits.value.available_count === 0
+      || quotaResetting.value) return
+    const planID = detail.value.plan.id
+    const accountID = detail.value.account.id
+    quotaResetting.value = true
+    try {
+      const result = await api.resetPlanQuota(planID)
+      notifySuccess(`已使用 1 次重置机会，OpenAI 已重置 ${result.windows_reset} 个额度窗口`)
+      if (detail.value?.plan.id !== planID || detail.value.account?.id !== accountID) return
+      quotaResetCredits.value = null
+      if (result.quota_refreshed) {
+        await loadPlan(planID)
+      } else {
+        emit('message', 'error', '重置已成功，但最新额度暂未同步；可稍后使用“查询额度”更新显示，请勿重复重置。')
+      }
+      await queryQuotaResetCredits()
+    } catch (error) {
+      if (detail.value?.plan.id === planID && detail.value.account?.id === accountID) quotaResetCredits.value = null
+      notifyErrorWithContext('重置请求未能确认结果，请先重新查询剩余次数', error)
+    } finally {
+      quotaResetting.value = false
     }
   }
 
@@ -420,6 +501,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
       await api.removeMember(planID, currentMember.value.id)
       planRequestSequence += 1
       detail.value = null
+      clearQuotaResetState()
       emit('changed')
       notifySuccess('你已退出 Plan')
     } catch (error) {
@@ -458,6 +540,22 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
       await loadPlan(planID)
       emit('changed')
       notifySuccess('Plan 名称已更新')
+    } catch (error) {
+      notifyError(error)
+    } finally {
+      actionLoading.value = ''
+    }
+  }
+
+  async function updatePlanDescription() {
+    if (!detail.value) return
+    const planID = detail.value.plan.id
+    actionLoading.value = 'description'
+    try {
+      await api.updatePlanDescription(planID, descriptionDraft.value.trim())
+      await loadPlan(planID)
+      emit('changed')
+      notifySuccess('Plan 描述已更新')
     } catch (error) {
       notifyError(error)
     } finally {
@@ -552,6 +650,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
       planRequestSequence += 1
       auditRequestSequence += 1
       detail.value = null
+      clearQuotaResetState()
       closeDeleteDialogs()
       emit('changed')
       notifySuccess('Plan 已永久删除')
@@ -592,19 +691,25 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
     emit('message', 'error', message)
   }
 
+  function notifyErrorWithContext(context: string, value: unknown) {
+    const message = value instanceof Error ? value.message : String(value)
+    emit('message', 'error', `${context}：${message}`)
+  }
+
   return {
-    detail, planLoading, quotaRefreshing, performanceLoading, performancePeriod, actionLoading, activeTab, auditEvents, auditLoading,
+    detail, planLoading, quotaRefreshing, quotaResetCredits, quotaResetCreditsLoading, quotaResetting,
+    performanceLoading, performancePeriod, actionLoading, activeTab, auditEvents, auditLoading,
     availableAccounts, loadPlan, loadAudit, loadPerformance,
     showCreate, showConnectAccount, showInviteComposer, inviteSecret, showDeleteConfirmOne, showDeleteConfirmTwo,
-    deleteNameDraft, renameDraft, transferMemberID, rebindAccountID, createForm, inviteForm,
+    deleteNameDraft, renameDraft, descriptionDraft, transferMemberID, rebindAccountID, createForm, inviteForm,
     publication, shareDrafts, accountOptions, planOptions, isOwner, isShared, isArchived, isAccountBound, owner,
-    currentMember, allocatedShare, availablePublicSlots, canRename, canSavePublication,
+    currentMember, allocatedShare, availablePublicSlots, canRename, canUpdateDescription, canSavePublication,
     canConfirmDelete, transferMemberOptions, rebindAccountOptions, actionLabels, metadataLabels,
-    setPublicationVisibility, updateRenameDraft, updateDeleteNameDraft, updatePublicationSlots,
+    setPublicationVisibility, updateRenameDraft, updateDescriptionDraft, updateDeleteNameDraft, updatePublicationSlots,
     updatePublicationShare, updateRebindAccount, updateTransferMember, updateCreateName,
     updateCreateAccount, updateCreateAllocationMode, updateCreateShare, updateInviteShare,
-    handleTabChange, openCreate, createPlan, refreshQuota, sendInvite, revokeInvite, savePublication,
-    saveShare, removeMember, leavePlan, review, applicationReviewBusy, renamePlan, updatePlanStatus,
+    handleTabChange, openCreate, createPlan, refreshQuota, queryQuotaResetCredits, resetQuota, sendInvite, revokeInvite, savePublication,
+    saveShare, removeMember, leavePlan, review, applicationReviewBusy, renamePlan, updatePlanDescription, updatePlanStatus,
     transferOwnership, rebindAccount, handleConnectedAccount, continueDelete, closeDeleteDialogs, deletePlan, copyInvite,
     formatDate, formatMetadata,
   }

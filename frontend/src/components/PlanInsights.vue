@@ -127,6 +127,17 @@
             <strong>{{ item.quota ? formatDate(item.quota.reset_at) : '--' }}</strong>
           </div>
 
+          <QuotaResetControls
+            v-if="item.type === '7d' && canQueryQuotaReset"
+            :credits="quotaResetCredits"
+            :querying="quotaResetCreditsLoading"
+            :resetting="quotaResetting"
+            :disabled="refreshing"
+            :allow-reset="canResetQuota"
+            @query="emit('queryQuotaResetCredits')"
+            @reset="emit('resetQuota')"
+          />
+
           <dl class="window-summary">
             <div>
               <dt>请求数</dt>
@@ -230,7 +241,7 @@
 import { computed, ref } from 'vue'
 import { NButton, NProgress, NSelect, NTooltip } from 'naive-ui'
 import { Activity, CircleHelp, Clock3, Gauge, RefreshCw, Timer, Zap } from 'lucide-vue-next'
-import type { Member, MemberRankingPeriodID, PerformancePeriod, PlanAllocationMode, PlanInsights, QuotaWindow, WindowUsage } from '../types'
+import type { Member, MemberRankingPeriodID, PerformancePeriod, PlanAllocationMode, PlanInsights, QuotaResetCredits, QuotaWindow, WindowUsage } from '../types'
 import type { ResolvedTheme } from '../themePreference'
 import { formatShareBasisPoints } from '../planAllocation'
 import { formatMilliseconds, formatTokens } from '../dashboardFormat'
@@ -238,6 +249,7 @@ import UserAvatar from './UserAvatar.vue'
 import MemberCostShareChart from './MemberCostShareChart.vue'
 import MemberUsageChart from './MemberUsageChart.vue'
 import ModelDistributionChart from './ModelDistributionChart.vue'
+import QuotaResetControls from './QuotaResetControls.vue'
 import TokenUsageChart from './TokenUsageChart.vue'
 
 const props = withDefaults(defineProps<{
@@ -246,17 +258,32 @@ const props = withDefaults(defineProps<{
   allocationMode: PlanAllocationMode
   canRefresh?: boolean
   refreshing?: boolean
+  canQueryQuotaReset?: boolean
+  canResetQuota?: boolean
+  quotaResetCredits?: QuotaResetCredits | null
+  quotaResetCreditsLoading?: boolean
+  quotaResetting?: boolean
   performancePeriod?: PerformancePeriod
   performanceLoading?: boolean
   theme: ResolvedTheme
 }>(), {
   canRefresh: false,
   refreshing: false,
+  canQueryQuotaReset: false,
+  canResetQuota: false,
+  quotaResetCredits: null,
+  quotaResetCreditsLoading: false,
+  quotaResetting: false,
   performancePeriod: '24h',
   performanceLoading: false,
 })
 
-const emit = defineEmits<{ refresh: []; 'update:performancePeriod': [value: PerformancePeriod] }>()
+const emit = defineEmits<{
+  refresh: []
+  queryQuotaResetCredits: []
+  resetQuota: []
+  'update:performancePeriod': [value: PerformancePeriod]
+}>()
 const performancePeriodLabels: Record<PerformancePeriod, string> = {
   today: '本日',
   '30m': '最近 30 分钟',

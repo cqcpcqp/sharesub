@@ -488,6 +488,20 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if exhausted, err := store.MemberQuotaExhausted(ctx, "shared-member", sharedPlan.AccountID, 10000, now); err != nil || !exhausted {
 		t.Fatalf("old account member quota exhausted = %v, %v", exhausted, err)
 	}
+	resetSignal := domain.QuotaSignal{WindowType: domain.Window5H, WindowStart: now, ResetAt: signal.ResetAt, AccountUsedMicros: 0}
+	if err := store.RecordQuotaResetSignals(ctx, sharedPlan.AccountID, []domain.QuotaSignal{resetSignal}, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	var resetUsedMicros int64
+	if err := pool.QueryRow(ctx, `SELECT used_micros FROM account_quota_snapshots WHERE account_id=$1 AND window_type=$2`, sharedPlan.AccountID, domain.Window5H).Scan(&resetUsedMicros); err != nil {
+		t.Fatal(err)
+	}
+	if resetUsedMicros != 0 {
+		t.Fatalf("reset account used micros = %d, want 0", resetUsedMicros)
+	}
+	if exhausted, err := store.MemberQuotaExhausted(ctx, "shared-member", sharedPlan.AccountID, 10000, now); err != nil || exhausted {
+		t.Fatalf("member quota after official reset exhausted = %v, %v", exhausted, err)
+	}
 
 	transferred, err := store.TransferPlanOwnership(ctx, sharedPlan.ID, "owner", "shared-member", audit("transfer-shared", "owner", sharedPlan.ID))
 	if err != nil {

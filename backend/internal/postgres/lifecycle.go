@@ -107,7 +107,7 @@ func (s *Store) RenamePlan(ctx context.Context, planID, ownerID, name string, ev
 		return domain.Plan{}, err
 	}
 	defer tx.Rollback(ctx)
-	plan, err := scanPlan(tx.QueryRow(ctx, `UPDATE shared_plans SET name=$3,updated_at=$4 WHERE id=$1 AND owner_user_id=$2 RETURNING id,owner_user_id,account_id,name,status,visibility,public_slots,public_share_basis_points,allocation_mode,created_at,archived_at`, planID, ownerID, name, event.CreatedAt))
+	plan, err := scanPlan(tx.QueryRow(ctx, `UPDATE shared_plans SET name=$3,updated_at=$4 WHERE id=$1 AND owner_user_id=$2 RETURNING id,owner_user_id,account_id,name,description,status,visibility,public_slots,public_share_basis_points,allocation_mode,created_at,archived_at`, planID, ownerID, name, event.CreatedAt))
 	if err != nil {
 		return domain.Plan{}, err
 	}
@@ -115,6 +115,25 @@ func (s *Store) RenamePlan(ctx context.Context, planID, ownerID, name string, ev
 		return domain.Plan{}, err
 	}
 	if err := notifyPlanMembers(ctx, tx, event.ID, planID, ownerID, "plan_renamed", "Plan 名称已更新", "房主将 Plan 重命名为 "+name, event.CreatedAt); err != nil {
+		return domain.Plan{}, err
+	}
+	return plan, tx.Commit(ctx)
+}
+
+func (s *Store) UpdatePlanDescription(ctx context.Context, planID, ownerID, description string, event domain.AuditEvent) (domain.Plan, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	if err != nil {
+		return domain.Plan{}, err
+	}
+	defer tx.Rollback(ctx)
+	plan, err := scanPlan(tx.QueryRow(ctx, `UPDATE shared_plans SET description=$3,updated_at=$4 WHERE id=$1 AND owner_user_id=$2 RETURNING id,owner_user_id,account_id,name,description,status,visibility,public_slots,public_share_basis_points,allocation_mode,created_at,archived_at`, planID, ownerID, description, event.CreatedAt))
+	if err != nil {
+		return domain.Plan{}, err
+	}
+	if err := insertAuditEvent(ctx, tx, event); err != nil {
+		return domain.Plan{}, err
+	}
+	if err := notifyPlanMembers(ctx, tx, event.ID, planID, ownerID, "plan_description_updated", "Plan 描述已更新", "房主更新了 Plan 描述", event.CreatedAt); err != nil {
 		return domain.Plan{}, err
 	}
 	return plan, tx.Commit(ctx)
@@ -167,7 +186,7 @@ func (s *Store) UpdatePlanStatus(ctx context.Context, planID, ownerID, status st
 	plan, err := scanPlan(tx.QueryRow(ctx, `
 		UPDATE shared_plans SET status=$3,visibility=CASE WHEN $3='archived' THEN 'private' ELSE visibility END,public_slots=CASE WHEN $3='archived' THEN 0 ELSE public_slots END,public_share_basis_points=CASE WHEN $3='archived' THEN 0 ELSE public_share_basis_points END,archived_at=CASE WHEN $3='archived' THEN $4::timestamptz ELSE NULL END,updated_at=$4::timestamptz
 		WHERE id=$1 AND owner_user_id=$2
-		RETURNING id,owner_user_id,account_id,name,status,visibility,public_slots,public_share_basis_points,allocation_mode,created_at,archived_at`, planID, ownerID, status, event.CreatedAt))
+		RETURNING id,owner_user_id,account_id,name,description,status,visibility,public_slots,public_share_basis_points,allocation_mode,created_at,archived_at`, planID, ownerID, status, event.CreatedAt))
 	if err != nil {
 		return domain.Plan{}, err
 	}
@@ -238,7 +257,7 @@ func (s *Store) TransferPlanOwnership(ctx context.Context, planID, ownerID, memb
 	if _, err := tx.Exec(ctx, `UPDATE plan_members SET role='owner',updated_at=$3 WHERE id=$1 AND plan_id=$2 AND status='active'`, memberID, planID, event.CreatedAt); err != nil {
 		return domain.Plan{}, err
 	}
-	plan, err := scanPlan(tx.QueryRow(ctx, `UPDATE shared_plans SET owner_user_id=$3,updated_at=$4 WHERE id=$1 AND owner_user_id=$2 RETURNING id,owner_user_id,account_id,name,status,visibility,public_slots,public_share_basis_points,allocation_mode,created_at,archived_at`, planID, ownerID, targetUserID, event.CreatedAt))
+	plan, err := scanPlan(tx.QueryRow(ctx, `UPDATE shared_plans SET owner_user_id=$3,updated_at=$4 WHERE id=$1 AND owner_user_id=$2 RETURNING id,owner_user_id,account_id,name,description,status,visibility,public_slots,public_share_basis_points,allocation_mode,created_at,archived_at`, planID, ownerID, targetUserID, event.CreatedAt))
 	if err != nil {
 		return domain.Plan{}, err
 	}
@@ -289,7 +308,7 @@ func (s *Store) RebindPlanAccount(ctx context.Context, planID, ownerID, accountI
 	if alreadyBound {
 		return domain.Plan{}, domain.ErrAccountAlreadyBound
 	}
-	plan, err := scanPlan(tx.QueryRow(ctx, `UPDATE shared_plans SET account_id=$3,updated_at=$4 WHERE id=$1 AND owner_user_id=$2 RETURNING id,owner_user_id,account_id,name,status,visibility,public_slots,public_share_basis_points,allocation_mode,created_at,archived_at`, planID, ownerID, accountID, event.CreatedAt))
+	plan, err := scanPlan(tx.QueryRow(ctx, `UPDATE shared_plans SET account_id=$3,updated_at=$4 WHERE id=$1 AND owner_user_id=$2 RETURNING id,owner_user_id,account_id,name,description,status,visibility,public_slots,public_share_basis_points,allocation_mode,created_at,archived_at`, planID, ownerID, accountID, event.CreatedAt))
 	if err != nil {
 		return domain.Plan{}, err
 	}
@@ -472,7 +491,7 @@ func (s *Store) ReadAllNotifications(ctx context.Context, userID string, now tim
 func scanPlan(row pgx.Row) (domain.Plan, error) {
 	var plan domain.Plan
 	var accountID *string
-	err := row.Scan(&plan.ID, &plan.OwnerUserID, &accountID, &plan.Name, &plan.Status, &plan.Visibility, &plan.PublicSlots, &plan.PublicShareBasisPoints, &plan.AllocationMode, &plan.CreatedAt, &plan.ArchivedAt)
+	err := row.Scan(&plan.ID, &plan.OwnerUserID, &accountID, &plan.Name, &plan.Description, &plan.Status, &plan.Visibility, &plan.PublicSlots, &plan.PublicShareBasisPoints, &plan.AllocationMode, &plan.CreatedAt, &plan.ArchivedAt)
 	if accountID != nil {
 		plan.AccountID = *accountID
 	}

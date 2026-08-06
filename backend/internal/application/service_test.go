@@ -48,6 +48,18 @@ type planAccountStore struct {
 	performanceBucket    time.Duration
 }
 
+type planMetadataStore struct {
+	Store
+	description string
+	event       domain.AuditEvent
+}
+
+func (s *planMetadataStore) UpdatePlanDescription(_ context.Context, _, _ string, description string, event domain.AuditEvent) (domain.Plan, error) {
+	s.description = description
+	s.event = event
+	return domain.Plan{ID: "plan-id", Description: description}, nil
+}
+
 func (s *planAccountStore) PlanPerformance(_ context.Context, planID, userID string, startedAt, endedAt time.Time, bucketSize time.Duration) (domain.PlanPerformance, error) {
 	s.performancePlanID = planID
 	s.performanceUserID = userID
@@ -77,20 +89,38 @@ type avatarStore struct {
 
 type quotaProbeStore struct {
 	Store
-	credential domain.PlanQuotaCredential
-	updatedAt  time.Time
+	credential            domain.PlanQuotaCredential
+	updatedAt             time.Time
+	resetAccountID        string
+	resetSignals          []domain.QuotaSignal
+	resetRecordedAt       time.Time
+	ownerCredentialCalls  int
+	memberCredentialCalls int
+	memberPlanID          string
+	memberUserID          string
 }
 
 func (s *quotaProbeStore) PlanQuotaCredential(context.Context, string, string) (domain.PlanQuotaCredential, error) {
+	s.ownerCredentialCalls++
 	return s.credential, nil
 }
 
-func (s *quotaProbeStore) PlanQuotaCredentialForMember(context.Context, string, string) (domain.PlanQuotaCredential, error) {
+func (s *quotaProbeStore) PlanQuotaCredentialForMember(_ context.Context, planID, userID string) (domain.PlanQuotaCredential, error) {
+	s.memberCredentialCalls++
+	s.memberPlanID = planID
+	s.memberUserID = userID
 	return s.credential, nil
 }
 
 func (s *quotaProbeStore) AccountQuotaUpdatedAt(context.Context, string) (time.Time, error) {
 	return s.updatedAt, nil
+}
+
+func (s *quotaProbeStore) RecordQuotaResetSignals(_ context.Context, accountID string, signals []domain.QuotaSignal, recordedAt time.Time) error {
+	s.resetAccountID = accountID
+	s.resetSignals = signals
+	s.resetRecordedAt = recordedAt
+	return nil
 }
 
 func (s *avatarStore) UpdateUserAvatar(_ context.Context, _ string, avatar domain.UserAvatar, updatedAt time.Time) (domain.User, error) {
@@ -318,6 +348,29 @@ func TestPrepareAutomaticPlanQuotaProbeSkipsFreshSnapshot(t *testing.T) {
 	}
 }
 
+func TestPreparePlanQuotaProbeForMemberUsesMemberCredential(t *testing.T) {
+	now := time.Date(2026, 8, 6, 10, 0, 0, 0, time.UTC)
+	manager := testSecurityManager(t)
+	credential := domain.PlanQuotaCredential{
+		AccountID: "account", AccountOwnerUserID: "owner", ChatGPTAccountID: "chatgpt", TokenExpiresAt: now.Add(time.Hour),
+	}
+	var err error
+	credential.AccessTokenCiphertext, err = manager.Encrypt("access-token", []byte("owner:chatgpt:access"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &quotaProbeStore{credential: credential}
+	service := &Service{store: store, security: manager, now: func() time.Time { return now }}
+
+	probe, err := service.PreparePlanQuotaProbeForMember(context.Background(), "member", "plan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if probe.AccessToken != "access-token" || store.memberCredentialCalls != 1 || store.ownerCredentialCalls != 0 || store.memberPlanID != "plan" || store.memberUserID != "member" {
+		t.Fatalf("probe = %+v, owner calls = %d, member call = %d (%q, %q)", probe, store.ownerCredentialCalls, store.memberCredentialCalls, store.memberPlanID, store.memberUserID)
+	}
+}
+
 func TestPrepareAutomaticPlanQuotaProbePreparesStaleSnapshot(t *testing.T) {
 	now := time.Date(2026, 8, 4, 10, 0, 0, 0, time.UTC)
 	manager := testSecurityManager(t)
@@ -343,6 +396,21 @@ func TestPrepareAutomaticPlanQuotaProbePreparesStaleSnapshot(t *testing.T) {
 	}
 	if !shouldProbe || probe.AccessToken != "access-token" || probe.AccountID != "account" {
 		t.Fatalf("probe = %+v, shouldProbe = %v, want prepared stale snapshot probe", probe, shouldProbe)
+	}
+}
+
+func TestRecordResetQuotaSignalsUsesOwnerAccountAndForcedResetStorePath(t *testing.T) {
+	now := time.Date(2026, 8, 6, 11, 30, 0, 0, time.UTC)
+	store := &quotaProbeStore{credential: domain.PlanQuotaCredential{AccountID: "account"}}
+	service := &Service{store: store, now: func() time.Time { return now }}
+	signals := []domain.QuotaSignal{{
+		WindowType: domain.Window7D, WindowStart: now, ResetAt: now.Add(7 * 24 * time.Hour), AccountUsedMicros: 0,
+	}}
+	if err := service.RecordResetQuotaSignals(context.Background(), "owner", "plan", signals); err != nil {
+		t.Fatal(err)
+	}
+	if store.resetAccountID != "account" || len(store.resetSignals) != 1 || !store.resetRecordedAt.Equal(now) {
+		t.Fatalf("reset recording = account %q signals %+v at %v", store.resetAccountID, store.resetSignals, store.resetRecordedAt)
 	}
 }
 
@@ -516,6 +584,34 @@ func TestCreatePlanRejectsShareForWrongAllocationMode(t *testing.T) {
 				t.Fatal("invalid plan was created")
 			}
 		})
+	}
+}
+
+func TestUpdatePlanDescriptionTrimsAndPersistsDescription(t *testing.T) {
+	store := &planMetadataStore{}
+	service := &Service{store: store, now: func() time.Time { return time.Unix(0, 0) }}
+
+	plan, err := service.UpdatePlanDescription(context.Background(), "owner-id", "plan-id", "  团队项目的 Codex 协作空间  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Description != "团队项目的 Codex 协作空间" || store.description != plan.Description {
+		t.Fatalf("description = %q, stored = %q", plan.Description, store.description)
+	}
+	if store.event.Action != "plan.description_updated" || store.event.ResourceID != "plan-id" {
+		t.Fatalf("event = %+v", store.event)
+	}
+}
+
+func TestUpdatePlanDescriptionRejectsMoreThanTwoThousandCharacters(t *testing.T) {
+	store := &planMetadataStore{}
+	service := &Service{store: store, now: time.Now}
+
+	if _, err := service.UpdatePlanDescription(context.Background(), "owner-id", "plan-id", strings.Repeat("描", 2001)); err != domain.ErrInvalidInput {
+		t.Fatalf("UpdatePlanDescription() error = %v, want invalid input", err)
+	}
+	if store.description != "" {
+		t.Fatal("invalid description was persisted")
 	}
 }
 

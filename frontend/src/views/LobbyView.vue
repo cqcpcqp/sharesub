@@ -4,7 +4,7 @@
     <div v-if="filteredPlans.length" class="lobby-grid">
       <article v-for="item in filteredPlans" :key="item.plan.id" class="plan-card">
         <header><div class="plan-icon"><Layers3 :size="20" /></div><StatusBadge :value="item.available_slots > 0 ? 'public' : 'disabled'" /></header>
-        <div class="plan-card-main"><h3>{{ item.plan.name }}</h3><div class="plan-owner"><UserAvatar :size="34" :username="item.owner_username" :src="item.owner_avatar_url" /><p><strong>{{ item.owner_username }}</strong><small>{{ item.plan_type }} 账号</small></p></div></div>
+        <div class="plan-card-main"><h3>{{ item.plan.name }}</h3><p v-if="item.plan.description" class="plan-card-description">{{ item.plan.description }}</p><div class="plan-owner"><UserAvatar :size="34" :username="item.owner_username" :src="item.owner_avatar_url" /><p><strong>{{ item.owner_username }}</strong><small>{{ item.plan_type }} 账号</small></p></div></div>
         <div class="seat-meter"><div><span>席位使用情况</span><strong>{{ item.available_slots }} 个空位</strong></div><NProgress type="line" :percentage="seatUsage(item)" :show-indicator="false" :height="7" color="var(--card-accent)" rail-color="#e8eae6" /></div>
         <div class="plan-stats"><span><strong>{{ item.plan.allocation_mode === 'shared' ? '共享' : formatShareBasisPoints(item.plan.public_share_basis_points) }}</strong><small>{{ item.plan.allocation_mode === 'shared' ? '额度方式' : '每席份额' }}</small></span><span><strong>{{ item.plan.public_slots }}</strong><small>公开席位</small></span><span><strong>{{ item.member_count }}</strong><small>当前成员</small></span></div>
         <footer>
@@ -57,7 +57,7 @@ const selected = ref<PublicPlan | null>(null)
 const message = ref('')
 const applying = ref(false)
 const availableCount = computed(() => props.plans.filter(item => item.available_slots > 0).length)
-const filteredPlans = computed(() => { const needle = query.value.trim().toLowerCase(); return props.plans.filter(item => !needle || item.plan.name.toLowerCase().includes(needle) || item.owner_username.toLowerCase().includes(needle)) })
+const filteredPlans = computed(() => { const needle = query.value.trim().toLowerCase(); return props.plans.filter(item => !needle || item.plan.name.toLowerCase().includes(needle) || item.plan.description.toLowerCase().includes(needle) || item.owner_username.toLowerCase().includes(needle)) })
 function updateQuery(value: string) { query.value = value }
 function updateMessage(value: string) { message.value = value }
 function openApply(item: PublicPlan) { selected.value = item; message.value = '' }

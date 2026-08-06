@@ -113,6 +113,7 @@ export interface Plan {
   owner_user_id: string
   account_id: string
   name: string
+  description: string
   status: string
   visibility: PlanVisibility
   public_slots: number
@@ -348,6 +349,34 @@ export interface QuotaSignal {
 
 export interface QuotaRefreshResult {
   account_id: string
+  signals: QuotaSignal[]
+}
+
+export interface QuotaResetCredit {
+  expires_at: string
+}
+
+export interface QuotaResetCredits {
+  available_count: number
+  credits: QuotaResetCredit[]
+  fetched_at: string
+}
+
+export interface ConsumedQuotaResetCredit {
+  id: string
+  reset_type: string
+  status: string
+  granted_at: string
+  expires_at: string
+  redeem_started_at: string
+  redeemed_at: string
+}
+
+export interface PlanQuotaResetResult {
+  code: string
+  credit: ConsumedQuotaResetCredit | null
+  windows_reset: number
+  quota_refreshed: boolean
   signals: QuotaSignal[]
 }
 

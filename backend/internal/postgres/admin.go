@@ -161,7 +161,7 @@ func (s *Store) AdminUpdateAccountStatus(ctx context.Context, accountID, status 
 
 func (s *Store) AdminListPlans(ctx context.Context, metricsStart time.Time) ([]domain.AdminPlan, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT p.id,p.owner_user_id,p.account_id,p.name,p.status,p.visibility,p.public_slots,p.public_share_basis_points,p.allocation_mode,p.created_at,p.archived_at,
+		SELECT p.id,p.owner_user_id,p.account_id,p.name,p.description,p.status,p.visibility,p.public_slots,p.public_share_basis_points,p.allocation_mode,p.created_at,p.archived_at,
 			u.username,COALESCE(a.email,''),
 			(SELECT count(*) FROM plan_members m WHERE m.plan_id=p.id AND m.status='active'),
 			(SELECT count(*) FROM gateway_request_metrics g WHERE g.plan_id=p.id AND g.created_at>=$1),
@@ -176,7 +176,7 @@ func (s *Store) AdminListPlans(ctx context.Context, metricsStart time.Time) ([]d
 	for rows.Next() {
 		var item domain.AdminPlan
 		var accountID *string
-		if err := rows.Scan(&item.ID, &item.OwnerUserID, &accountID, &item.Name, &item.Status, &item.Visibility, &item.PublicSlots, &item.PublicShareBasisPoints, &item.AllocationMode, &item.CreatedAt, &item.ArchivedAt, &item.OwnerUsername, &item.AccountEmail, &item.MemberCount, &item.Requests24H, &item.TotalTokens24H); err != nil {
+		if err := rows.Scan(&item.ID, &item.OwnerUserID, &accountID, &item.Name, &item.Description, &item.Status, &item.Visibility, &item.PublicSlots, &item.PublicShareBasisPoints, &item.AllocationMode, &item.CreatedAt, &item.ArchivedAt, &item.OwnerUsername, &item.AccountEmail, &item.MemberCount, &item.Requests24H, &item.TotalTokens24H); err != nil {
 			return nil, err
 		}
 		if accountID != nil {

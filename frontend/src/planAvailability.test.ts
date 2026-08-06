@@ -7,6 +7,7 @@ const plan: Plan = {
   owner_user_id: 'owner',
   account_id: 'account',
   name: '共享 Plan',
+  description: '',
   status: 'active',
   visibility: 'private',
   public_slots: 0,

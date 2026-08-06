@@ -59,6 +59,7 @@ const archivedPlan: Plan = {
   owner_user_id: owner.id,
   account_id: account.id,
   name: '本地功能测试',
+  description: '团队项目的 Codex 协作空间',
   status: 'archived',
   visibility: 'private',
   public_slots: 0,
@@ -270,6 +271,30 @@ describe('form interactions', () => {
     expect(deleteButton!.attributes('disabled')).toBeUndefined()
   })
 
+  it('updates the Plan description from settings', async () => {
+    const updatedPlan = { ...archivedPlan, description: '仅用于代码审查与测试' }
+    vi.spyOn(api, 'plan').mockResolvedValueOnce(detail).mockResolvedValue({ ...detail, plan: updatedPlan })
+    const updateDescription = vi.spyOn(api, 'updatePlanDescription').mockResolvedValue(updatedPlan)
+    const wrapper = mount(PlansView, {
+      attachTo: document.body,
+      props: { accounts: [account], plans: [archivedPlan], user: owner, theme: 'light' },
+      global: { stubs: { teleport: true } },
+    })
+    await flushPromises()
+
+    const settings = wrapper.findAll('.n-tabs-tab').find(tab => tab.text().includes('设置'))!
+    await settings.trigger('click')
+    const description = wrapper.get('textarea[aria-label="Plan 描述"]')
+    await description.setValue('  仅用于代码审查与测试  ')
+    const save = findButton(wrapper, '保存描述')!
+    expect(save.attributes('disabled')).toBeUndefined()
+    await save.trigger('click')
+    await flushPromises()
+
+    expect(updateDescription).toHaveBeenCalledWith(archivedPlan.id, '仅用于代码审查与测试')
+    expect(wrapper.text()).toContain(updatedPlan.description)
+  })
+
   it('allows public seat input to be cleared while preventing an invalid save', async () => {
     vi.spyOn(api, 'plan').mockResolvedValue(activeDetail)
     const refreshQuota = vi.spyOn(api, 'refreshPlanQuota').mockResolvedValue({ account_id: account.id, signals: [] })
@@ -298,7 +323,12 @@ describe('form interactions', () => {
   it('automatically refreshes quota when a regular member enters an active Plan', async () => {
     vi.spyOn(api, 'plan').mockResolvedValue(memberDetail)
     const refreshQuota = vi.spyOn(api, 'refreshPlanQuota').mockResolvedValue({ account_id: account.id, signals: [] })
-    mount(PlansView, {
+    const queryCredits = vi.spyOn(api, 'planQuotaResetCredits').mockResolvedValue({
+      available_count: 1,
+      credits: [{ expires_at: '2026-08-12T05:09:00Z' }],
+      fetched_at: '2026-08-06T10:00:00Z',
+    })
+    const wrapper = mount(PlansView, {
       attachTo: document.body,
       props: { accounts: [], plans: [memberPlan], user: member, theme: 'light' },
       global: { stubs: { teleport: true } },
@@ -306,6 +336,114 @@ describe('form interactions', () => {
 
     await flushPromises()
     expect(refreshQuota).toHaveBeenCalledWith(memberPlan.id, true)
+    await wrapper.get('button[aria-label="查询重置次数"]').trigger('click')
+    await flushPromises()
+    expect(queryCredits).toHaveBeenCalledWith(memberPlan.id)
+    expect(wrapper.text()).toContain('次数 1')
+    expect(wrapper.get('button[aria-label="重置 OpenAI 额度"]').attributes('disabled')).toBeDefined()
+  })
+
+  it('queries and consumes Plan quota reset credits, then reloads quota and remaining credits', async () => {
+    const plan = { ...activePlan, id: 'plan-quota-reset' }
+    const planDetail = { ...activeDetail, plan }
+    vi.spyOn(api, 'plan').mockImplementation(async () => structuredClone(planDetail))
+    vi.spyOn(api, 'refreshPlanQuota').mockResolvedValue({ account_id: account.id, signals: [] })
+    const queryCredits = vi.spyOn(api, 'planQuotaResetCredits')
+      .mockResolvedValueOnce({
+        available_count: 2,
+        credits: [{ expires_at: '2026-08-12T05:09:00Z' }, { expires_at: '2026-08-13T02:13:00Z' }],
+        fetched_at: '2026-08-06T10:00:00Z',
+      })
+      .mockResolvedValueOnce({
+        available_count: 1,
+        credits: [{ expires_at: '2026-08-13T02:13:00Z' }],
+        fetched_at: '2026-08-06T10:01:00Z',
+      })
+    const reset = vi.spyOn(api, 'resetPlanQuota').mockResolvedValue({
+      code: 'rate_limit_reset_credit_redeemed',
+      credit: {
+        id: 'credit-1',
+        reset_type: 'codex_rate_limits',
+        status: 'redeemed',
+        granted_at: '2026-08-01T00:00:00Z',
+        expires_at: '2026-08-12T05:09:00Z',
+        redeem_started_at: '2026-08-06T10:00:00Z',
+        redeemed_at: '2026-08-06T10:00:01Z',
+      },
+      windows_reset: 2,
+      quota_refreshed: true,
+      signals: [],
+    })
+    const emit = vi.fn()
+    const scope = effectScope()
+    const view = scope.run(() => usePlansView(reactive({ accounts: [account], plans: [plan], user: owner, initialPlanId: '', invitePlanId: '' }), emit))!
+    await flushPromises()
+
+    await view.queryQuotaResetCredits()
+    expect(queryCredits).toHaveBeenNthCalledWith(1, plan.id)
+    expect(view.quotaResetCredits.value?.available_count).toBe(2)
+
+    await view.resetQuota()
+    expect(reset).toHaveBeenCalledOnce()
+    expect(reset).toHaveBeenCalledWith(plan.id)
+    expect(queryCredits).toHaveBeenNthCalledWith(2, plan.id)
+    expect(view.quotaResetCredits.value?.available_count).toBe(1)
+    expect(emit).toHaveBeenCalledWith('message', 'success', '已使用 1 次重置机会，OpenAI 已重置 2 个额度窗口')
+    scope.stop()
+  })
+
+  it('reports a successful reset separately when the post-reset quota sync fails', async () => {
+    const plan = { ...activePlan, id: 'plan-quota-reset-sync-failure' }
+    const planDetail = { ...activeDetail, plan }
+    vi.spyOn(api, 'plan').mockImplementation(async () => structuredClone(planDetail))
+    vi.spyOn(api, 'refreshPlanQuota').mockResolvedValue({ account_id: account.id, signals: [] })
+    vi.spyOn(api, 'planQuotaResetCredits')
+      .mockResolvedValueOnce({ available_count: 1, credits: [{ expires_at: '2026-08-12T05:09:00Z' }], fetched_at: '2026-08-06T10:00:00Z' })
+      .mockResolvedValueOnce({ available_count: 0, credits: [], fetched_at: '2026-08-06T10:01:00Z' })
+    const reset = vi.spyOn(api, 'resetPlanQuota').mockResolvedValue({
+      code: 'rate_limit_reset_credit_redeemed',
+      credit: null,
+      windows_reset: 2,
+      quota_refreshed: false,
+      signals: [],
+    })
+    const emit = vi.fn()
+    const scope = effectScope()
+    const view = scope.run(() => usePlansView(reactive({ accounts: [account], plans: [plan], user: owner, initialPlanId: '', invitePlanId: '' }), emit))!
+    await flushPromises()
+
+    await view.queryQuotaResetCredits()
+    await view.resetQuota()
+
+    expect(reset).toHaveBeenCalledOnce()
+    expect(view.quotaResetCredits.value?.available_count).toBe(0)
+    expect(emit).toHaveBeenCalledWith('message', 'success', '已使用 1 次重置机会，OpenAI 已重置 2 个额度窗口')
+    expect(emit).toHaveBeenCalledWith('message', 'error', '重置已成功，但最新额度暂未同步；可稍后使用“查询额度”更新显示，请勿重复重置。')
+    scope.stop()
+  })
+
+  it('requires re-querying credits when a reset response cannot be confirmed', async () => {
+    const plan = { ...activePlan, id: 'plan-quota-reset-unknown-result' }
+    const planDetail = { ...activeDetail, plan }
+    vi.spyOn(api, 'plan').mockImplementation(async () => structuredClone(planDetail))
+    vi.spyOn(api, 'refreshPlanQuota').mockResolvedValue({ account_id: account.id, signals: [] })
+    vi.spyOn(api, 'planQuotaResetCredits').mockResolvedValue({
+      available_count: 1,
+      credits: [{ expires_at: '2026-08-12T05:09:00Z' }],
+      fetched_at: '2026-08-06T10:00:00Z',
+    })
+    vi.spyOn(api, 'resetPlanQuota').mockRejectedValue(new Error('upstream connection closed'))
+    const emit = vi.fn()
+    const scope = effectScope()
+    const view = scope.run(() => usePlansView(reactive({ accounts: [account], plans: [plan], user: owner, initialPlanId: '', invitePlanId: '' }), emit))!
+    await flushPromises()
+
+    await view.queryQuotaResetCredits()
+    await view.resetQuota()
+
+    expect(view.quotaResetCredits.value).toBeNull()
+    expect(emit).toHaveBeenCalledWith('message', 'error', '重置请求未能确认结果，请先重新查询剩余次数：upstream connection closed')
+    scope.stop()
   })
 
   it('keeps the selected performance period data after automatic quota refresh', async () => {

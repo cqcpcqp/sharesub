@@ -62,11 +62,13 @@ var compactRequestFields = []string{
 var ErrIncompleteStream = errors.New("upstream stream ended before a terminal response event")
 
 type Gateway struct {
-	httpClient   *http.Client
-	proxyMu      sync.Mutex
-	proxyClients map[string]*proxyClientEntry
-	slots        chan struct{}
-	now          func() time.Time
+	httpClient           *http.Client
+	proxyMu              sync.Mutex
+	proxyClients         map[string]*proxyClientEntry
+	slots                chan struct{}
+	now                  func() time.Time
+	quotaResetCreditsURL string
+	quotaResetConsumeURL string
 }
 
 type proxyClientEntry struct {
@@ -183,7 +185,13 @@ func prepareRequest(body []byte, compact, normalize bool) ([]byte, RequestBillin
 }
 
 func NewGateway(httpClient *http.Client, maxConcurrency ...int) *Gateway {
-	gateway := &Gateway{httpClient: httpClient, proxyClients: make(map[string]*proxyClientEntry), now: time.Now}
+	gateway := &Gateway{
+		httpClient:           httpClient,
+		proxyClients:         make(map[string]*proxyClientEntry),
+		now:                  time.Now,
+		quotaResetCreditsURL: chatGPTRateLimitResetCreditsURL,
+		quotaResetConsumeURL: chatGPTRateLimitResetConsumeURL,
+	}
 	if len(maxConcurrency) > 0 && maxConcurrency[0] > 0 {
 		gateway.slots = make(chan struct{}, maxConcurrency[0])
 	}

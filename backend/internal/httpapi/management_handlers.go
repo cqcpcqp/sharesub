@@ -198,14 +198,27 @@ func (s *Server) planPerformance(w http.ResponseWriter, r *http.Request) {
 	v, err := s.app.PlanPerformance(r.Context(), currentUser(r).ID, r.PathValue("planID"), r.URL.Query().Get("period"), r.URL.Query().Get("timezone"))
 	writeResult(w, v, err)
 }
-func (s *Server) renamePlan(w http.ResponseWriter, r *http.Request) {
+func (s *Server) updatePlan(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Name string `json:"name"`
+		Name        *string `json:"name"`
+		Description *string `json:"description"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	v, err := s.app.RenamePlan(r.Context(), currentUser(r).ID, r.PathValue("planID"), input.Name)
+	if (input.Name == nil) == (input.Description == nil) {
+		writeError(w, domain.ErrInvalidInput)
+		return
+	}
+	var (
+		v   domain.Plan
+		err error
+	)
+	if input.Name != nil {
+		v, err = s.app.RenamePlan(r.Context(), currentUser(r).ID, r.PathValue("planID"), *input.Name)
+	} else {
+		v, err = s.app.UpdatePlanDescription(r.Context(), currentUser(r).ID, r.PathValue("planID"), *input.Description)
+	}
 	writeResult(w, v, err)
 }
 func (s *Server) updatePlanStatus(w http.ResponseWriter, r *http.Request) {
@@ -290,6 +303,69 @@ func (s *Server) prepareQuotaRefresh(r *http.Request, userID, planID string) (ap
 	}
 	probe, err := s.app.PreparePlanQuotaProbe(r.Context(), userID, planID)
 	return probe, true, err
+}
+
+func (s *Server) planQuotaResetCredits(w http.ResponseWriter, r *http.Request) {
+	userID := currentUser(r).ID
+	planID := r.PathValue("planID")
+	probe, err := s.app.PreparePlanQuotaProbeForMember(r.Context(), userID, planID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	releaseSlot, ok := s.gateway.TryAcquire()
+	if !ok {
+		writeErrorStatus(w, http.StatusServiceUnavailable, "server_overloaded", "gateway concurrency limit reached")
+		return
+	}
+	defer releaseSlot()
+	credits, err := s.gateway.QueryQuotaResetCredits(r.Context(), probe.AccessToken, probe.ChatGPTAccountID, probe.ProxyURL)
+	if err != nil {
+		s.logger.Error("query OpenAI quota reset credits", "error", err, "plan_id", planID)
+		writeErrorStatus(w, http.StatusBadGateway, "quota_reset_credits_query_failed", "OpenAI quota reset credits query failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, credits)
+}
+
+func (s *Server) resetPlanQuota(w http.ResponseWriter, r *http.Request) {
+	userID := currentUser(r).ID
+	planID := r.PathValue("planID")
+	probe, err := s.app.PreparePlanQuotaProbe(r.Context(), userID, planID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	releaseSlot, ok := s.gateway.TryAcquire()
+	if !ok {
+		writeErrorStatus(w, http.StatusServiceUnavailable, "server_overloaded", "gateway concurrency limit reached")
+		return
+	}
+	defer releaseSlot()
+	reset, err := s.gateway.ConsumeQuotaResetCredit(r.Context(), probe.AccessToken, probe.ChatGPTAccountID, probe.ProxyURL)
+	if err != nil {
+		s.logger.Error("reset OpenAI quota", "error", err, "plan_id", planID)
+		writeErrorStatus(w, http.StatusBadGateway, "quota_reset_failed", "OpenAI quota reset failed")
+		return
+	}
+	result := domain.PlanQuotaResetResult{
+		Code: reset.Code, Credit: reset.Credit, WindowsReset: reset.WindowsReset,
+		QuotaRefreshed: false, Signals: make([]domain.QuotaSignal, 0),
+	}
+	signals, err := s.gateway.ProbeQuota(r.Context(), probe.AccessToken, probe.ChatGPTAccountID, probe.ProxyURL)
+	if err != nil {
+		s.logger.Error("refresh OpenAI quota after reset", "error", err, "plan_id", planID)
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
+	if err := s.app.RecordResetQuotaSignals(r.Context(), userID, planID, signals); err != nil {
+		s.logger.Error("record OpenAI quota after reset", "error", err, "plan_id", planID)
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
+	result.QuotaRefreshed = true
+	result.Signals = signals
+	writeJSON(w, http.StatusOK, result)
 }
 func (s *Server) listPublicPlans(w http.ResponseWriter, r *http.Request) {
 	v, err := s.app.ListPublicPlans(r.Context(), currentUser(r).ID)

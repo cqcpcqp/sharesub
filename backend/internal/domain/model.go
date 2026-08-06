@@ -141,6 +141,7 @@ type Plan struct {
 	OwnerUserID            string     `json:"owner_user_id"`
 	AccountID              string     `json:"account_id"`
 	Name                   string     `json:"name"`
+	Description            string     `json:"description"`
 	Status                 string     `json:"status"`
 	Visibility             string     `json:"visibility"`
 	PublicSlots            int        `json:"public_slots"`
@@ -421,6 +422,40 @@ type QuotaSignal struct {
 	WindowStart       time.Time `json:"window_start"`
 	ResetAt           time.Time `json:"reset_at"`
 	AccountUsedMicros int64     `json:"account_used_micros"`
+}
+
+type QuotaResetCredit struct {
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+type QuotaResetCredits struct {
+	AvailableCount int                `json:"available_count"`
+	Credits        []QuotaResetCredit `json:"credits"`
+	FetchedAt      time.Time          `json:"fetched_at"`
+}
+
+type ConsumedQuotaResetCredit struct {
+	ID              string `json:"id"`
+	ResetType       string `json:"reset_type"`
+	Status          string `json:"status"`
+	GrantedAt       string `json:"granted_at"`
+	ExpiresAt       string `json:"expires_at"`
+	RedeemStartedAt string `json:"redeem_started_at"`
+	RedeemedAt      string `json:"redeemed_at"`
+}
+
+type QuotaResetResult struct {
+	Code         string                    `json:"code"`
+	Credit       *ConsumedQuotaResetCredit `json:"credit"`
+	WindowsReset int                       `json:"windows_reset"`
+}
+
+type PlanQuotaResetResult struct {
+	Code           string                    `json:"code"`
+	Credit         *ConsumedQuotaResetCredit `json:"credit"`
+	WindowsReset   int                       `json:"windows_reset"`
+	QuotaRefreshed bool                      `json:"quota_refreshed"`
+	Signals        []QuotaSignal             `json:"signals"`
 }
 
 type PlanQuotaCredential struct {

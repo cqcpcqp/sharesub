@@ -87,13 +87,15 @@ OAuth 开始接口返回 `authorization_url` 和 `flow_id`。完成授权后，�
 | `POST` | `/api/plans` | 登录 Token | `account_id`（可为空字符串）, `name`, `allocation_mode`, `owner_share_basis_points` | 创建方案；空账号可稍后绑定 |
 | `GET` | `/api/plans/{planID}` | 登录 Token | 无 | 获取当前成员可见的方案详情 |
 | `GET` | `/api/plans/{planID}/performance` | 登录 Token | `period`, `timezone` | 获取当前成员可见的性能、模型分布、Token 趋势及最近使用汇总；`period` 固定为 `today`、`30m`、`6h`、`12h` 或 `24h`；本日边界按 IANA 时区计算 |
-| `PATCH` | `/api/plans/{planID}` | 登录 Token | `name` | 房主重命名 Plan |
+| `PATCH` | `/api/plans/{planID}` | 登录 Token | `name` 或 `description`（只传一个） | 房主修改 Plan 名称或描述 |
 | `PATCH` | `/api/plans/{planID}/status` | 登录 Token | `status` | 房主归档或恢复 Plan |
 | `DELETE` | `/api/plans/{planID}` | 登录 Token | 无 | 删除已经归档的 Plan |
 | `PATCH` | `/api/plans/{planID}/owner` | 登录 Token | `member_id` | 将房主身份转让给有效成员 |
 | `PATCH` | `/api/plans/{planID}/account` | 登录 Token | `account_id` | 首次绑定或改绑房主拥有的有效 OpenAI 账号 |
 | `GET` | `/api/plans/{planID}/audit-events` | 登录 Token | 无 | 获取最近 100 条 Plan 活动记录 |
 | `POST` | `/api/plans/{planID}/quota/refresh` | 登录 Token | 无 | 房主主动查询并更新账号额度窗口 |
+| `GET` | `/api/plans/{planID}/quota/reset-credits` | 登录 Token | 无 | 有效成员查询 Codex 额度重置机会及到期时间 |
+| `POST` | `/api/plans/{planID}/quota/reset` | 登录 Token | 无 | 房主消耗一次 Codex 额度重置机会并同步最新窗口 |
 | `GET` | `/api/public-plans` | 登录 Token | 无 | 获取大厅内全部公开 Plan |
 | `PATCH` | `/api/plans/{planID}/publication` | 登录 Token | `visibility`, `public_slots`, `public_share_basis_points` | 房主发布或取消公开 Plan |
 | `POST` | `/api/public-plans/{planID}/applications` | 登录 Token | `message` | 申请公开 Plan 席位 |
@@ -109,11 +111,51 @@ OAuth 开始接口返回 `authorization_url` 和 `flow_id`。完成授权后，�
 
 `allocation_mode` 为 `fixed` 或 `shared`，创建后不可更改。`fixed` 要求房主、成员、邀请和公开席位份额为 `1..10000`；`shared` 要求这些份额字段严格为 `0`。
 
-`visibility` 为 `private` 或 `public`。公开时席位数为 `1..100`；固定分配模式的每席份额为 `1..10000`，共享模式为 `0`。取消公开时席位数和份额都传 `0`。`decision` 为 `approve` 或 `reject`。批准会按 Plan 的额度方式立即创建成员。
+Plan 响应固定包含 `description` 字符串。描述允许为空，最多 2000 个字符；修改名称或描述时只能提交对应的一个字段。`visibility` 为 `private` 或 `public`。公开时席位数为 `1..100`；固定分配模式的每席份额为 `1..10000`，共享模式为 `0`。取消公开时席位数和份额都传 `0`。`decision` 为 `approve` 或 `reject`。批准会按 Plan 的额度方式立即创建成员。
 
 固定分配模式发布公开 Plan、创建邀请和修改成员份额时，有效成员、未过期邀请和未占用公开席位的预留份额总和不能超过 `10000`。共享模式不分配个人份额。
 
 Plan 详情的 `insights.window_usage` 按当前 OpenAI 账号实际返回的 5h/7d 窗口汇总请求数、完整的 `token_usage`、`web_search_calls` 和 `estimated_cost_micros`；`token_usage` 固定包含 Input/Output/Cached/Cache Creation/Image Input/Image Output Token、图片数与总 Token。`insights.member_quotas[].windows[].used_micros` 复用百分比微单位表示当前 5h/7d 窗口内成员请求账号费用占全体当前成员请求账号费用的比例；有费用的窗口合计固定为 `100000000`，无费用时全部为 `0`。`insights.performance`、`model_usage`、`token_trend` 与 `recent_usage` 默认为最近 24 小时，前端通过同一个 performance 接口统一切换本日、最近 30 分钟、6 小时、12 小时或 24 小时。本日从请求时区的 00:00 开始计算。后三项分别返回按模型汇总的请求/完整 Token 用量/Web Search 调用/账号费用，包含完整 Token、图片和 Web Search 字段的趋势，以及按 Token 排名前 12 位成员的使用趋势；固定时段的趋势粒度依次为 1 分钟、15 分钟、30 分钟和 1 小时，本日根据已过去时长选择相同层级。`member_ranking` 为兼容保留的最近 7 天成员用量排行。`member_rankings` 返回本日、最近 7 天、当前账号 7d 配额周期（存在有效 7d 快照时）以及本次账号生命周期四种固定口径，每项包含准确的 `window_start`、`window_end` 与成员排行。请求中的 `timezone` 用于确定“本日”边界。`estimated_cost_micros` 为兼容保留的字段名，值表示账号计费（micro-USD）：按每次请求的实际模型、服务层级和同 sub2api 的 LiteLLM 模型价格表计算，Responses Web Search 的按次费用会与同次请求的 Token 费用相加。
+
+额度重置机会查询允许绑定账号的有效 Plan 成员调用，消耗重置机会只允许房主调用。查询响应结构固定为：
+
+```json
+{
+  "available_count": 2,
+  "credits": [
+    { "expires_at": "2026-08-12T05:09:00Z" },
+    { "expires_at": "2026-08-13T02:13:00Z" }
+  ],
+  "fetched_at": "2026-08-06T10:00:00Z"
+}
+```
+
+重置会消耗一个 OpenAI `codex_rate_limits` 类型的可用机会，并尝试立即查询最新额度。响应固定包含 `code`、`credit`、`windows_reset`、`quota_refreshed` 和 `signals`；`credit` 没有返回时为 `null`。`quota_refreshed` 为 `false` 表示重置已经成功，但后续额度查询或本地同步失败，客户端不得将其描述为重置失败或提示用户再次重置。同步成功时会强制覆盖同一 `reset_at` 下的账号窗口快照，并清除对应的固定成员窗口记录，避免官方重置后本地仍判定额度耗尽。
+
+```json
+{
+  "code": "rate_limit_reset_credit_redeemed",
+  "credit": {
+    "id": "credit-id",
+    "reset_type": "codex_rate_limits",
+    "status": "redeemed",
+    "granted_at": "2026-08-01T00:00:00Z",
+    "expires_at": "2026-08-12T05:09:00Z",
+    "redeem_started_at": "2026-08-06T10:00:00Z",
+    "redeemed_at": "2026-08-06T10:00:01Z"
+  },
+  "windows_reset": 2,
+  "quota_refreshed": true,
+  "signals": [
+    {
+      "window_type": "7d",
+      "window_start": "2026-08-06T10:00:01Z",
+      "reset_at": "2026-08-13T10:00:01Z",
+      "account_used_micros": 0
+    }
+  ]
+}
+```
 
 成员退出或被移除后，原 API Key 到该 Plan 的路由会被禁用。再次加入会复用原成员记录，但不会自动恢复旧路由。归档会停止网关选路、取消公开状态、撤销待处理邀请并拒绝待处理申请；只有已归档 Plan 可以永久删除。
 

@@ -254,6 +254,24 @@ func (s *Store) RecordQuotaSignals(ctx context.Context, accountID, memberID stri
 	return tx.Commit(ctx)
 }
 
+func (s *Store) RecordQuotaResetSignals(ctx context.Context, accountID string, signals []domain.QuotaSignal, now time.Time) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	for _, signal := range signals {
+		_, err = tx.Exec(ctx, `INSERT INTO account_quota_snapshots(account_id,window_type,window_start,reset_at,used_micros,updated_at) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(account_id,window_type) DO UPDATE SET window_start=EXCLUDED.window_start,reset_at=EXCLUDED.reset_at,used_micros=EXCLUDED.used_micros,updated_at=EXCLUDED.updated_at`, accountID, signal.WindowType, signal.WindowStart, signal.ResetAt, signal.AccountUsedMicros, now)
+		if err != nil {
+			return err
+		}
+		if _, err = tx.Exec(ctx, `DELETE FROM member_quota_windows WHERE account_id=$1 AND window_type=$2`, accountID, signal.WindowType); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
 func lockAndMergeAccountQuotaSignal(ctx context.Context, tx pgx.Tx, accountID string, signal domain.QuotaSignal) (domain.QuotaSignal, int64, error) {
 	var oldUsed int64
 	var oldStart, oldReset time.Time

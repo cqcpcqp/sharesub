@@ -38,6 +38,7 @@ type Store interface {
 	PlanDetail(context.Context, string, string, time.Time, time.Time) (domain.PlanDetail, error)
 	PlanPerformance(context.Context, string, string, time.Time, time.Time, time.Duration) (domain.PlanPerformance, error)
 	RenamePlan(context.Context, string, string, string, domain.AuditEvent) (domain.Plan, error)
+	UpdatePlanDescription(context.Context, string, string, string, domain.AuditEvent) (domain.Plan, error)
 	UpdatePlanStatus(context.Context, string, string, string, domain.AuditEvent) (domain.Plan, error)
 	DeletePlan(context.Context, string, string, domain.AuditEvent) error
 	TransferPlanOwnership(context.Context, string, string, string, domain.AuditEvent) (domain.Plan, error)
@@ -79,6 +80,7 @@ type Store interface {
 	AccountQuotaExhausted(context.Context, string, time.Time) (bool, error)
 	RecordAccountQuotaSignals(context.Context, string, []domain.QuotaSignal, time.Time) error
 	RecordQuotaSignals(context.Context, string, string, []domain.QuotaSignal, string, time.Time) error
+	RecordQuotaResetSignals(context.Context, string, []domain.QuotaSignal, time.Time) error
 	RecordGatewayMetric(context.Context, domain.GatewayMetric) error
 }
 

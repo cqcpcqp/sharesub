@@ -16,6 +16,7 @@
 .plan-card:nth-child(3n + 3) .plan-icon { background: var(--blue-soft); color: var(--blue); }
 .plan-card-main { margin-top: 20px; }
 .plan-card-main h3 { margin: 0; color: var(--ink-strong); font-size: 18px; line-height: 1.35; }
+.plan-card-description { display: -webkit-box; overflow: hidden; margin: 7px 0 0; color: var(--muted); font-size: 11px; line-height: 1.55; white-space: pre-line; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .plan-owner { display: flex; align-items: center; gap: 9px; margin-top: 14px; }
 .plan-owner p { display: grid; gap: 2px; margin: 0; }
 .plan-owner strong { color: var(--ink); font-size: 11px; }
@@ -82,6 +83,8 @@
 .plan-heading-icon { width: 52px; height: 52px; display: grid; flex: 0 0 auto; place-items: center; border-radius: 8px; background: var(--teal-soft); color: var(--teal); }
 .plan-detail-header h2 { overflow: hidden; margin: 7px 0 0; color: var(--ink-strong); font-size: 23px; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
 .plan-detail-header p { overflow: hidden; margin: 5px 0 0; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.plan-detail-header p.plan-heading-description { display: -webkit-box; max-width: 72ch; line-height: 1.5; white-space: pre-line; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.plan-heading-meta { color: var(--muted-light) !important; }
 .eyebrow { display: flex; align-items: center; gap: 8px; color: var(--muted-light); font-size: 11px; text-transform: uppercase; }
 .plan-heading-side { min-width: 0; display: flex; flex: 0 1 auto; align-items: center; gap: 12px; }
 .plan-heading-side > span { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; }

@@ -27,7 +27,8 @@
                 <span v-if="detail.account">{{ detail.account.plan_type }}</span>
               </div>
               <h2>{{ detail.plan.name }}</h2>
-              <p>
+              <p v-if="detail.plan.description" class="plan-heading-description">{{ detail.plan.description }}</p>
+              <p class="plan-heading-meta">
                 <template v-if="detail.account">{{ detail.account.name }} · {{ detail.account.email }}</template>
                 <template v-else>尚未绑定 OpenAI 账号</template>
                 <template v-if="!isOwner"> · 由 {{ owner!.username }} 提供</template>
@@ -96,10 +97,17 @@
                 :allocation-mode="detail.plan.allocation_mode"
                 :can-refresh="isOwner && !isArchived"
                 :refreshing="quotaRefreshing"
+                :can-query-quota-reset="!isArchived"
+                :can-reset-quota="isOwner && !isArchived"
+                :quota-reset-credits="quotaResetCredits"
+                :quota-reset-credits-loading="quotaResetCreditsLoading"
+                :quota-resetting="quotaResetting"
                 :performance-period="performancePeriod"
                 :performance-loading="performanceLoading"
                 :theme="theme"
                 @refresh="refreshQuota"
+                @query-quota-reset-credits="queryQuotaResetCredits"
+                @reset-quota="resetQuota"
                 @update:performance-period="loadPerformance"
               />
               <section v-else class="account-setup account-setup-overview">
@@ -356,6 +364,20 @@
                       </NButton>
                     </div>
                   </form>
+
+                  <form class="setting-row description-control" @submit.prevent="updatePlanDescription">
+                    <div class="setting-identity">
+                      <span class="setting-icon"><FileText :size="18" /></span>
+                      <div><h4>Plan 描述</h4><p>向成员说明这个 Plan 的用途或协作约定</p></div>
+                    </div>
+                    <div class="setting-action">
+                      <AppInput :value="descriptionDraft" type="textarea" clearable :maxlength="2000" show-count :autosize="{ minRows: 3, maxRows: 6 }" :input-props="{ 'aria-label': 'Plan 描述' }" placeholder="填写 Plan 的用途或协作约定（可选）" @update:value="updateDescriptionDraft" />
+                      <NButton attr-type="submit" secondary class="setting-submit" :disabled="!canUpdateDescription" :loading="actionLoading === 'description'">
+                        <template #icon><Save :size="16" /></template>
+                        保存描述
+                      </NButton>
+                    </div>
+                  </form>
                 </section>
 
                 <section v-if="!isArchived" class="settings-group">
@@ -578,6 +600,7 @@ import {
   Check,
   Copy,
   Crown,
+  FileText,
   History,
   Layers3,
   Link2,
@@ -629,18 +652,19 @@ const emit = defineEmits<{
 }>()
 
 const {
-  detail, planLoading, quotaRefreshing, performanceLoading, performancePeriod, actionLoading, activeTab, auditEvents, auditLoading,
+  detail, planLoading, quotaRefreshing, quotaResetCredits, quotaResetCreditsLoading, quotaResetting,
+  performanceLoading, performancePeriod, actionLoading, activeTab, auditEvents, auditLoading,
   availableAccounts, loadPlan, loadAudit, loadPerformance,
   showCreate, showConnectAccount, showInviteComposer, inviteSecret, showDeleteConfirmOne, showDeleteConfirmTwo,
-  deleteNameDraft, renameDraft, transferMemberID, rebindAccountID, createForm, inviteForm,
+  deleteNameDraft, renameDraft, descriptionDraft, transferMemberID, rebindAccountID, createForm, inviteForm,
   publication, shareDrafts, accountOptions, planOptions, isOwner, isShared, isArchived, isAccountBound, owner,
-  currentMember, allocatedShare, availablePublicSlots, canRename, canSavePublication,
+  currentMember, allocatedShare, availablePublicSlots, canRename, canUpdateDescription, canSavePublication,
   canConfirmDelete, transferMemberOptions, rebindAccountOptions, actionLabels, metadataLabels,
-  setPublicationVisibility, updateRenameDraft, updateDeleteNameDraft, updatePublicationSlots,
+  setPublicationVisibility, updateRenameDraft, updateDescriptionDraft, updateDeleteNameDraft, updatePublicationSlots,
   updatePublicationShare, updateRebindAccount, updateTransferMember, updateCreateName,
   updateCreateAccount, updateCreateAllocationMode, updateCreateShare, updateInviteShare,
-  handleTabChange, openCreate, createPlan, refreshQuota, sendInvite, revokeInvite, savePublication,
-  saveShare, removeMember, leavePlan, review, applicationReviewBusy, renamePlan, updatePlanStatus,
+  handleTabChange, openCreate, createPlan, refreshQuota, queryQuotaResetCredits, resetQuota, sendInvite, revokeInvite, savePublication,
+  saveShare, removeMember, leavePlan, review, applicationReviewBusy, renamePlan, updatePlanDescription, updatePlanStatus,
   transferOwnership, rebindAccount, handleConnectedAccount, continueDelete, closeDeleteDialogs, deletePlan, copyInvite,
   formatDate, formatMetadata,
 } = usePlansView(props, emit)

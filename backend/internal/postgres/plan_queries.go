@@ -43,7 +43,7 @@ func (s *Store) CreatePlan(ctx context.Context, plan domain.Plan, owner domain.M
 	if plan.AccountID != "" {
 		accountID = plan.AccountID
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO shared_plans(id,owner_user_id,account_id,name,status,visibility,public_slots,public_share_basis_points,allocation_mode,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10)`, plan.ID, plan.OwnerUserID, accountID, plan.Name, plan.Status, plan.Visibility, plan.PublicSlots, plan.PublicShareBasisPoints, plan.AllocationMode, plan.CreatedAt)
+	_, err = tx.Exec(ctx, `INSERT INTO shared_plans(id,owner_user_id,account_id,name,description,status,visibility,public_slots,public_share_basis_points,allocation_mode,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11)`, plan.ID, plan.OwnerUserID, accountID, plan.Name, plan.Description, plan.Status, plan.Visibility, plan.PublicSlots, plan.PublicShareBasisPoints, plan.AllocationMode, plan.CreatedAt)
 	if err != nil {
 		return mapError(err)
 	}
@@ -58,7 +58,7 @@ func (s *Store) CreatePlan(ctx context.Context, plan domain.Plan, owner domain.M
 }
 
 func (s *Store) ListPlans(ctx context.Context, userID string) ([]domain.Plan, error) {
-	rows, err := s.pool.Query(ctx, `SELECT p.id,p.owner_user_id,p.account_id,p.name,p.status,p.visibility,p.public_slots,p.public_share_basis_points,p.allocation_mode,p.created_at,p.archived_at FROM shared_plans p JOIN plan_members m ON m.plan_id=p.id WHERE m.user_id=$1 AND m.status='active' ORDER BY p.created_at DESC`, userID)
+	rows, err := s.pool.Query(ctx, `SELECT p.id,p.owner_user_id,p.account_id,p.name,p.description,p.status,p.visibility,p.public_slots,p.public_share_basis_points,p.allocation_mode,p.created_at,p.archived_at FROM shared_plans p JOIN plan_members m ON m.plan_id=p.id WHERE m.user_id=$1 AND m.status='active' ORDER BY p.created_at DESC`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -90,7 +90,7 @@ func (s *Store) PlanDetail(ctx context.Context, planID, userID string, todayStar
 			RecentUsage:    make([]domain.MemberUsageTrend, 0),
 		},
 	}
-	plan, err := scanPlan(s.pool.QueryRow(ctx, `SELECT p.id,p.owner_user_id,p.account_id,p.name,p.status,p.visibility,p.public_slots,p.public_share_basis_points,p.allocation_mode,p.created_at,p.archived_at FROM shared_plans p JOIN plan_members viewer ON viewer.plan_id=p.id AND viewer.user_id=$2 AND viewer.status='active' WHERE p.id=$1`, planID, userID))
+	plan, err := scanPlan(s.pool.QueryRow(ctx, `SELECT p.id,p.owner_user_id,p.account_id,p.name,p.description,p.status,p.visibility,p.public_slots,p.public_share_basis_points,p.allocation_mode,p.created_at,p.archived_at FROM shared_plans p JOIN plan_members viewer ON viewer.plan_id=p.id AND viewer.user_id=$2 AND viewer.status='active' WHERE p.id=$1`, planID, userID))
 	if err != nil {
 		return out, mapError(err)
 	}

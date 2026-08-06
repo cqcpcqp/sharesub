@@ -11,7 +11,7 @@ import (
 
 func (s *Store) ListPublicPlans(ctx context.Context, userID string) ([]domain.PublicPlan, error) {
 	rows, err := s.pool.Query(ctx, `
-			SELECT p.id,p.owner_user_id,p.account_id,p.name,p.status,p.visibility,p.public_slots,p.public_share_basis_points,p.allocation_mode,p.created_at,p.archived_at,
+			SELECT p.id,p.owner_user_id,p.account_id,p.name,p.description,p.status,p.visibility,p.public_slots,p.public_share_basis_points,p.allocation_mode,p.created_at,p.archived_at,
 				u.username,u.avatar_updated_at,a.plan_type,
 				(SELECT count(*) FROM plan_members m WHERE m.plan_id=p.id AND m.status='active'),
 				GREATEST(p.public_slots-(SELECT count(*) FROM plan_join_applications j JOIN plan_members jm ON jm.id=j.member_id AND jm.status='active' WHERE j.plan_id=p.id AND j.status='approved'),0),
@@ -29,7 +29,7 @@ func (s *Store) ListPublicPlans(ctx context.Context, userID string) ([]domain.Pu
 	for rows.Next() {
 		var item domain.PublicPlan
 		var avatarUpdatedAt *time.Time
-		if err := rows.Scan(&item.Plan.ID, &item.Plan.OwnerUserID, &item.Plan.AccountID, &item.Plan.Name, &item.Plan.Status, &item.Plan.Visibility, &item.Plan.PublicSlots, &item.Plan.PublicShareBasisPoints, &item.Plan.AllocationMode, &item.Plan.CreatedAt, &item.Plan.ArchivedAt, &item.OwnerUsername, &avatarUpdatedAt, &item.PlanType, &item.MemberCount, &item.AvailableSlots, &item.ApplicationStatus); err != nil {
+		if err := rows.Scan(&item.Plan.ID, &item.Plan.OwnerUserID, &item.Plan.AccountID, &item.Plan.Name, &item.Plan.Description, &item.Plan.Status, &item.Plan.Visibility, &item.Plan.PublicSlots, &item.Plan.PublicShareBasisPoints, &item.Plan.AllocationMode, &item.Plan.CreatedAt, &item.Plan.ArchivedAt, &item.OwnerUsername, &avatarUpdatedAt, &item.PlanType, &item.MemberCount, &item.AvailableSlots, &item.ApplicationStatus); err != nil {
 			return nil, err
 		}
 		item.OwnerAvatarURL = userAvatarURL(item.Plan.OwnerUserID, avatarUpdatedAt)
@@ -44,7 +44,7 @@ func (s *Store) UpdatePlanPublication(ctx context.Context, ownerID, planID, visi
 		return domain.Plan{}, err
 	}
 	defer tx.Rollback(ctx)
-	plan, err := scanPlan(tx.QueryRow(ctx, `SELECT id,owner_user_id,account_id,name,status,visibility,public_slots,public_share_basis_points,allocation_mode,created_at,archived_at FROM shared_plans WHERE id=$1 FOR UPDATE`, planID))
+	plan, err := scanPlan(tx.QueryRow(ctx, `SELECT id,owner_user_id,account_id,name,description,status,visibility,public_slots,public_share_basis_points,allocation_mode,created_at,archived_at FROM shared_plans WHERE id=$1 FOR UPDATE`, planID))
 	if err != nil {
 		return domain.Plan{}, err
 	}
@@ -83,7 +83,7 @@ func (s *Store) UpdatePlanPublication(ctx context.Context, ownerID, planID, visi
 			return domain.Plan{}, domain.ErrShareExceeded
 		}
 	}
-	plan, err = scanPlan(tx.QueryRow(ctx, `UPDATE shared_plans SET visibility=$3,public_slots=$4,public_share_basis_points=$5,updated_at=now() WHERE id=$1 AND owner_user_id=$2 RETURNING id,owner_user_id,account_id,name,status,visibility,public_slots,public_share_basis_points,allocation_mode,created_at,archived_at`, planID, ownerID, visibility, slots, share))
+	plan, err = scanPlan(tx.QueryRow(ctx, `UPDATE shared_plans SET visibility=$3,public_slots=$4,public_share_basis_points=$5,updated_at=now() WHERE id=$1 AND owner_user_id=$2 RETURNING id,owner_user_id,account_id,name,description,status,visibility,public_slots,public_share_basis_points,allocation_mode,created_at,archived_at`, planID, ownerID, visibility, slots, share))
 	if err != nil {
 		return domain.Plan{}, err
 	}

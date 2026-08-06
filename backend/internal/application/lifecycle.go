@@ -18,6 +18,7 @@ type PlanQuotaProbe struct {
 }
 
 const automaticQuotaProbeTTL = 10 * time.Minute
+const maxPlanDescriptionLength = 2000
 
 func (s *Service) RenamePlan(ctx context.Context, ownerID, planID, name string) (domain.Plan, error) {
 	name = strings.TrimSpace(name)
@@ -29,6 +30,18 @@ func (s *Service) RenamePlan(ctx context.Context, ownerID, planID, name string) 
 		return domain.Plan{}, err
 	}
 	return s.store.RenamePlan(ctx, planID, ownerID, name, event)
+}
+
+func (s *Service) UpdatePlanDescription(ctx context.Context, ownerID, planID, description string) (domain.Plan, error) {
+	description = strings.TrimSpace(description)
+	if utf8.RuneCountInString(description) > maxPlanDescriptionLength {
+		return domain.Plan{}, domain.ErrInvalidInput
+	}
+	event, err := s.newAuditEvent(ownerID, "plan.description_updated", "plan", planID, nil)
+	if err != nil {
+		return domain.Plan{}, err
+	}
+	return s.store.UpdatePlanDescription(ctx, planID, ownerID, description, event)
 }
 
 func (s *Service) UpdatePlanStatus(ctx context.Context, ownerID, planID, status string) (domain.Plan, error) {
@@ -111,6 +124,14 @@ func (s *Service) PreparePlanQuotaProbe(ctx context.Context, ownerID, planID str
 	return s.preparePlanQuotaProbe(ctx, credential)
 }
 
+func (s *Service) PreparePlanQuotaProbeForMember(ctx context.Context, userID, planID string) (PlanQuotaProbe, error) {
+	credential, err := s.store.PlanQuotaCredentialForMember(ctx, planID, userID)
+	if err != nil {
+		return PlanQuotaProbe{}, err
+	}
+	return s.preparePlanQuotaProbe(ctx, credential)
+}
+
 func (s *Service) PrepareAutomaticPlanQuotaProbe(ctx context.Context, userID, planID string) (PlanQuotaProbe, bool, error) {
 	credential, err := s.store.PlanQuotaCredentialForMember(ctx, planID, userID)
 	if err != nil {
@@ -186,4 +207,15 @@ func (s *Service) RecordAutomaticQuotaSignals(ctx context.Context, userID, planI
 		return domain.ErrInvalidInput
 	}
 	return s.store.RecordQuotaSignals(ctx, credential.AccountID, credential.OwnerMemberID, signals, "", s.now())
+}
+
+func (s *Service) RecordResetQuotaSignals(ctx context.Context, ownerID, planID string, signals []domain.QuotaSignal) error {
+	credential, err := s.store.PlanQuotaCredential(ctx, planID, ownerID)
+	if err != nil {
+		return err
+	}
+	if len(signals) == 0 {
+		return domain.ErrInvalidInput
+	}
+	return s.store.RecordQuotaResetSignals(ctx, credential.AccountID, signals, s.now())
 }
