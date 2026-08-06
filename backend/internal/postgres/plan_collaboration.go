@@ -11,14 +11,14 @@ import (
 
 func (s *Store) ListPublicPlans(ctx context.Context, userID string) ([]domain.PublicPlan, error) {
 	rows, err := s.pool.Query(ctx, `
-			SELECT p.id,p.owner_user_id,p.account_id,p.name,p.description,p.status,p.visibility,p.public_slots,p.public_share_basis_points,p.allocation_mode,p.created_at,p.archived_at,
-			u.username,u.avatar_updated_at,a.plan_type,a.subscription_expires_at,
+			SELECT p.id,p.owner_user_id,COALESCE(p.account_id,''),p.name,p.description,p.status,p.visibility,p.public_slots,p.public_share_basis_points,p.allocation_mode,p.created_at,p.archived_at,
+			u.username,u.avatar_updated_at,COALESCE(a.plan_type,''),a.subscription_expires_at,
 				(SELECT count(*) FROM plan_members m WHERE m.plan_id=p.id AND m.status='active'),
 				GREATEST(p.public_slots-(SELECT count(*) FROM plan_join_applications j JOIN plan_members jm ON jm.id=j.member_id AND jm.status='active' WHERE j.plan_id=p.id AND j.status='approved'),0),
 			COALESCE((SELECT j.status FROM plan_join_applications j WHERE j.plan_id=p.id AND j.user_id=$1 ORDER BY j.created_at DESC LIMIT 1),'')
 		FROM shared_plans p
 		JOIN users u ON u.id=p.owner_user_id
-		JOIN openai_accounts a ON a.id=p.account_id
+		LEFT JOIN openai_accounts a ON a.id=p.account_id
 		WHERE p.visibility='public' AND p.status='active'
 		ORDER BY CASE WHEN p.owner_user_id=$1 THEN 0 ELSE 1 END,p.created_at DESC`, userID)
 	if err != nil {
@@ -57,8 +57,6 @@ func (s *Store) UpdatePlanPublication(ctx context.Context, ownerID, planID, visi
 	if visibility == domain.VisibilityPrivate {
 		slots = 0
 		share = 0
-	} else if plan.AccountID == "" {
-		return domain.Plan{}, domain.ErrInvalidInput
 	} else if plan.AllocationMode == domain.AllocationShared {
 		if share != 0 {
 			return domain.Plan{}, domain.ErrInvalidInput
@@ -143,10 +141,10 @@ func (s *Store) ReviewJoinApplication(ctx context.Context, ownerID, applicationI
 	}
 	defer tx.Rollback(ctx)
 	var application domain.JoinApplication
-	var actualOwner, visibility, allocationMode string
+	var actualOwner, accountID, visibility, allocationMode string
 	var slots, share int
 	var avatarUpdatedAt *time.Time
-	err = tx.QueryRow(ctx, `SELECT j.id,j.plan_id,j.user_id,u.username,u.email,u.avatar_updated_at,j.message,j.status,j.member_id,j.reviewed_at,j.created_at,p.owner_user_id,p.visibility,p.public_slots,p.public_share_basis_points,p.allocation_mode FROM plan_join_applications j JOIN users u ON u.id=j.user_id JOIN shared_plans p ON p.id=j.plan_id WHERE j.id=$1 FOR UPDATE OF j,p`, applicationID).Scan(&application.ID, &application.PlanID, &application.UserID, &application.Username, &application.Email, &avatarUpdatedAt, &application.Message, &application.Status, &application.MemberID, &application.ReviewedAt, &application.CreatedAt, &actualOwner, &visibility, &slots, &share, &allocationMode)
+	err = tx.QueryRow(ctx, `SELECT j.id,j.plan_id,j.user_id,u.username,u.email,u.avatar_updated_at,j.message,j.status,j.member_id,j.reviewed_at,j.created_at,p.owner_user_id,COALESCE(p.account_id,''),p.visibility,p.public_slots,p.public_share_basis_points,p.allocation_mode FROM plan_join_applications j JOIN users u ON u.id=j.user_id JOIN shared_plans p ON p.id=j.plan_id WHERE j.id=$1 FOR UPDATE OF j,p`, applicationID).Scan(&application.ID, &application.PlanID, &application.UserID, &application.Username, &application.Email, &avatarUpdatedAt, &application.Message, &application.Status, &application.MemberID, &application.ReviewedAt, &application.CreatedAt, &actualOwner, &accountID, &visibility, &slots, &share, &allocationMode)
 	if err != nil {
 		return domain.JoinApplication{}, mapError(err)
 	}
@@ -209,7 +207,10 @@ func (s *Store) ReviewJoinApplication(ctx context.Context, ownerID, applicationI
 	notificationType := "application_rejected"
 	if approve {
 		title = "已加入 Plan"
-		body = "你的加入申请已通过，可以开始配置 API Key"
+		body = "你的加入申请已通过，等待房主接入 OpenAI 账号后即可开始使用"
+		if accountID != "" {
+			body = "你的加入申请已通过，可以开始配置 API Key"
+		}
 		notificationType = "application_approved"
 	}
 	if err := insertNotification(ctx, tx, event.ID+":applicant", application.UserID, notificationType, title, body, "plan", application.PlanID, now); err != nil {

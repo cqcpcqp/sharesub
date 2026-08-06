@@ -393,8 +393,8 @@
                     </div>
                     <div class="setting-action">
                       <div class="publication-toggle">
-                        <div><strong>公开展示</strong><small>{{ publication.visibility === 'public' ? '当前已在大厅展示' : '当前仅 Plan 成员可见' }}</small></div>
-                        <NSwitch :value="publication.visibility === 'public'" :disabled="!isAccountBound" @update:value="setPublicationVisibility" />
+                        <div><strong>公开展示</strong><small>{{ publication.visibility === 'public' ? (isAccountBound ? '当前已在大厅展示' : '当前以筹备中状态在大厅展示') : '当前仅 Plan 成员可见' }}</small></div>
+                        <NSwitch :value="publication.visibility === 'public'" @update:value="setPublicationVisibility" />
                       </div>
                       <div v-if="publication.visibility === 'public'" class="setting-fields" :class="{ single: isShared }">
                         <label>公开席位<NInputNumber :value="publication.slots" :min="1" :max="100" :precision="0" @update:value="updatePublicationSlots" /></label>

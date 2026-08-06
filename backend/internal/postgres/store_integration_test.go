@@ -174,12 +174,47 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if restoredUnbound.AccountID != "" || restoredUnbound.Status != domain.StatusActive {
 		t.Fatalf("restored unbound Plan = %+v", restoredUnbound)
 	}
-	if _, err := store.UpdatePlanPublication(ctx, "owner", unboundPlan.ID, domain.VisibilityPublic, 1, 1000, audit("publish-unbound", "owner", unboundPlan.ID)); !errors.Is(err, domain.ErrInvalidInput) {
-		t.Fatalf("publish unbound plan error = %v, want invalid input", err)
+	publishedUnbound, err := store.UpdatePlanPublication(ctx, "owner", unboundPlan.ID, domain.VisibilityPublic, 1, 1000, audit("publish-unbound", "owner", unboundPlan.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if publishedUnbound.Visibility != domain.VisibilityPublic || publishedUnbound.AccountID != "" {
+		t.Fatalf("published unbound Plan = %+v", publishedUnbound)
+	}
+	if err := store.CreateUser(ctx, domain.User{ID: "prospective-user", Username: "prospective", Email: "prospective@example.com", PasswordHash: "hash", Status: domain.StatusActive, CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	unboundPublicPlans, err := store.ListPublicPlans(ctx, "prospective-user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(unboundPublicPlans) != 1 || unboundPublicPlans[0].Plan.ID != unboundPlan.ID || unboundPublicPlans[0].PlanType != "" || unboundPublicPlans[0].SubscriptionExpiresAt != nil {
+		t.Fatalf("unbound public Plans = %+v", unboundPublicPlans)
+	}
+	unboundApplication, err := store.CreateJoinApplication(ctx, domain.JoinApplication{ID: "unbound-application", PlanID: unboundPlan.ID, UserID: "prospective-user", Status: "pending", CreatedAt: now}, audit("apply-unbound", "prospective-user", unboundPlan.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	unboundApproved, err := store.ReviewJoinApplication(ctx, "owner", unboundApplication.ID, true, "unbound-public-member", now, audit("approve-unbound", "owner", unboundPlan.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unboundApproved.Status != "approved" || unboundApproved.MemberID == nil {
+		t.Fatalf("approved unbound application = %+v", unboundApproved)
+	}
+	var unboundApprovalNotification string
+	if err := pool.QueryRow(ctx, `SELECT body FROM notifications WHERE user_id='prospective-user' AND type='application_approved'`).Scan(&unboundApprovalNotification); err != nil {
+		t.Fatal(err)
+	}
+	if unboundApprovalNotification != "你的加入申请已通过，等待房主接入 OpenAI 账号后即可开始使用" {
+		t.Fatalf("unbound approval notification = %q", unboundApprovalNotification)
 	}
 	unboundKey := domain.APIKey{ID: "unbound-key", UserID: "owner", Name: "不可路由 Key", KeyPrefix: "sk-sharesub-unbound", KeyHash: []byte("unbound-hash"), KeyCiphertext: []byte("unbound-ciphertext"), Strategy: domain.RouteBalanced, Status: domain.StatusActive, CreatedAt: now}
 	if err := store.CreateAPIKey(ctx, unboundKey, []domain.APIKeyRoute{{PlanID: unboundPlan.ID, Priority: 100, Enabled: true}}); !errors.Is(err, domain.ErrForbidden) {
 		t.Fatalf("create key for unbound plan error = %v, want forbidden", err)
+	}
+	if _, err := store.UpdatePlanPublication(ctx, "owner", unboundPlan.ID, domain.VisibilityPrivate, 0, 0, audit("unpublish-unbound", "owner", unboundPlan.ID)); err != nil {
+		t.Fatal(err)
 	}
 	boundPlan, err := store.RebindPlanAccount(ctx, unboundPlan.ID, "owner", "later-account", audit("bind-unbound", "owner", unboundPlan.ID))
 	if err != nil {

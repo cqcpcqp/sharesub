@@ -66,7 +66,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
   const availablePublicSlots = computed(() => Math.max(0, (detail.value?.plan.public_slots ?? 0) - approvedApplications.value))
   const canRename = computed(() => Boolean(detail.value && renameDraft.value.trim() && renameDraft.value.trim() !== detail.value.plan.name))
   const canUpdateDescription = computed(() => Boolean(detail.value && descriptionDraft.value.trim() !== detail.value.plan.description))
-  const canSavePublication = computed(() => publication.visibility === 'private' || (isAccountBound.value && Number.isInteger(publication.slots) && publication.slots! >= 1 && publication.slots! <= 100))
+  const canSavePublication = computed(() => publication.visibility === 'private' || (Number.isInteger(publication.slots) && publication.slots! >= 1 && publication.slots! <= 100))
   const canConfirmDelete = computed(() => Boolean(detail.value && deleteNameDraft.value.trim() === detail.value.plan.name))
   const transferMemberOptions = computed(() => detail.value!.members
     .filter(member => member.role === 'member')

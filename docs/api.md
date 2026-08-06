@@ -100,7 +100,7 @@ OAuth 开始接口返回 `authorization_url` 和 `flow_id`。完成授权后，�
 | `POST` | `/api/plans/{planID}/quota/refresh` | 登录 Token | 无 | 房主主动查询并更新账号额度窗口 |
 | `GET` | `/api/plans/{planID}/quota/reset-credits` | 登录 Token | 无 | 有效成员查询 Codex 额度重置机会及到期时间 |
 | `POST` | `/api/plans/{planID}/quota/reset` | 登录 Token | 无 | 房主消耗一次 Codex 额度重置机会并同步最新窗口 |
-| `GET` | `/api/public-plans` | 登录 Token | 无 | 获取大厅内全部公开 Plan，包含所属账号的套餐类型和订阅有效期 `subscription_expires_at` |
+| `GET` | `/api/public-plans` | 登录 Token | 无 | 获取大厅内全部公开 Plan；未绑定账号时 `plan.account_id` 和 `plan_type` 为空字符串，`subscription_expires_at` 为 `null` |
 | `PATCH` | `/api/plans/{planID}/publication` | 登录 Token | `visibility`, `public_slots`, `public_share_basis_points` | 房主发布或取消公开 Plan |
 | `POST` | `/api/public-plans/{planID}/applications` | 登录 Token | `message` | 申请公开 Plan 席位 |
 | `PATCH` | `/api/join-applications/{applicationID}` | 登录 Token | `decision` | 房主批准或拒绝申请 |

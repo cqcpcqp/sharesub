@@ -438,7 +438,7 @@ async function openNotification(notification: UserNotification) {
     await nextTick()
     selectedPlanID.value = notification.resource_id
     navigateToView('plans')
-    if (notification.type === 'application_approved') openKeySetup(notification.resource_id)
+    if (notification.type === 'application_approved' && usablePlanIDs.value.has(notification.resource_id)) openKeySetup(notification.resource_id)
   } else if (notification.resource_type === 'account') navigateToView('accounts')
   else if (notification.resource_type === 'api_key') navigateToView('keys')
 }

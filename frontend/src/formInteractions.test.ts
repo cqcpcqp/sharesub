@@ -322,6 +322,39 @@ describe('form interactions', () => {
     expect(findButton(wrapper, '保存设置')!.attributes('disabled')).toBeUndefined()
   })
 
+  it('publishes an unbound Plan for member recruitment', async () => {
+    vi.spyOn(api, 'plan').mockResolvedValue(unboundDetail)
+    const updatePublication = vi.spyOn(api, 'updatePublication').mockResolvedValue({
+      ...unboundPlan,
+      visibility: 'public',
+      public_slots: 1,
+      public_share_basis_points: 0,
+    })
+    const wrapper = mount(PlansView, {
+      attachTo: document.body,
+      props: { accounts: [], plans: [unboundPlan], user: owner, theme: 'light' },
+      global: { stubs: { teleport: true } },
+    })
+    await flushPromises()
+
+    const settings = wrapper.findAll('.n-tabs-tab').find(tab => tab.text().includes('设置'))!
+    await settings.trigger('click')
+    const publicationSwitch = wrapper.get('.publication-control .n-switch')
+    expect(publicationSwitch.attributes('aria-disabled')).not.toBe('true')
+    await publicationSwitch.trigger('click')
+    expect(wrapper.text()).toContain('当前以筹备中状态在大厅展示')
+    const save = findButton(wrapper, '保存设置')!
+    expect(save.attributes('disabled')).toBeUndefined()
+    await save.trigger('click')
+    await flushPromises()
+
+    expect(updatePublication).toHaveBeenCalledWith(unboundPlan.id, {
+      visibility: 'public',
+      public_slots: 1,
+      public_share_basis_points: 0,
+    })
+  })
+
   it('automatically refreshes quota when a regular member enters an active Plan', async () => {
     vi.spyOn(api, 'plan').mockResolvedValue(memberDetail)
     const refreshQuota = vi.spyOn(api, 'refreshPlanQuota').mockResolvedValue({ account_id: account.id, signals: [] })
@@ -600,6 +633,26 @@ describe('form interactions', () => {
     expect(message.element).toHaveProperty('value', '一起使用')
     await message.setValue('')
     expect(message.element).toHaveProperty('value', '')
+  })
+
+  it('labels an unbound public Plan as preparing before application', async () => {
+    const preparingPlan: PublicPlan = {
+      ...publicPlan,
+      plan: { ...publicPlan.plan, account_id: '' },
+      plan_type: '',
+      subscription_expires_at: null,
+    }
+    const wrapper = mount(LobbyView, {
+      attachTo: document.body,
+      props: { plans: [preparingPlan], user: owner },
+      global: { stubs: { teleport: true } },
+    })
+
+    const card = wrapper.get('.plan-card')
+    expect(card.text()).toContain('筹备中 · 尚未绑定账号')
+    expect(card.get('.plan-subscription').text()).toContain('等待房主接入账号')
+    await findButton(wrapper, '申请加入')!.trigger('click')
+    expect(wrapper.text()).toContain('批准加入后需等待房主接入账号，才能开始使用')
   })
 
   it('edits and clears OAuth callback inputs', async () => {

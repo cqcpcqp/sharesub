@@ -36,7 +36,7 @@ ShareSub 让有权使用同一 Codex 账号的成员，通过独立 API Key、�
 ## Capabilities and Constraints
 
 - 仅支持 OpenAI Codex OAuth 账号，不支持 Anthropic、Gemini、Bedrock 或通用供应商抽象。
-- 一个 Plan 最多绑定一个由房主拥有的 OpenAI 账号；未绑定账号时可以探索成员与设置，但不能公开发布、配置 API Key 路由或转发请求。Plan 可以是公开或私密。
+- 一个 Plan 最多绑定一个由房主拥有的 OpenAI 账号；未绑定账号时可以配置 Plan、公开招募和审批成员，但不能配置 API Key 路由或转发请求。Plan 可以是公开或私密。
 - Plan 创建时确定固定份额或共享使用模式，创建后不能更改。
 - 额度同时按照 Codex 的五小时和七天窗口执行；固定份额模式限制成员额度，共享模式只限制账号总额度。
 - 每个 API Key 归创建它的用户所有，可以绑定多个用户已加入的 Plan，并使用优先级或均衡策略选路。
