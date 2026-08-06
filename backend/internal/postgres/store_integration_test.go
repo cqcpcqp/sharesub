@@ -293,7 +293,8 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if err := store.CreateInvite(ctx, sharedPlan.ID, "owner", sharedInvite, audit("invalid-invite", "owner", sharedPlan.ID)); !errors.Is(err, domain.ErrInvalidInput) {
 		t.Fatalf("shared invite nonzero share error = %v, want invalid input", err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO account_quota_snapshots(account_id,window_type,window_start,reset_at,used_micros,updated_at) VALUES('account','5h',$1,$2,100000000,$1)`, now, now.Add(time.Hour)); err != nil {
+	quotaResetAt := time.Now().UTC().Add(time.Hour)
+	if _, err := pool.Exec(ctx, `INSERT INTO account_quota_snapshots(account_id,window_type,window_start,reset_at,used_micros,updated_at) VALUES('account','5h',$1,$2,100000000,$1)`, now, quotaResetAt); err != nil {
 		t.Fatal(err)
 	}
 	exhausted, err := store.AccountQuotaExhausted(ctx, "account", now)
@@ -308,7 +309,7 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 		RequestID: "applicant-request", APIKeyID: "legacy-key", PlanID: "plan", AccountID: "account", MemberID: "applicant-member",
 		Model: "gpt-5.6-sol", RequestedModel: "gpt-5.6-sol", UpstreamModel: "gpt-5.6-sol", BillingModel: "gpt-5.6-sol", AccountCostMicros: 125,
 		StatusCode: http.StatusOK, TTFT: 120 * time.Millisecond, Duration: 850 * time.Millisecond,
-		TokenUsage: domain.TokenUsage{InputTokens: 1200, OutputTokens: 300, CachedTokens: 400, CacheCreationTokens: 50, ImageInputTokens: 20, ImageOutputTokens: 30, ImageCount: 1}, WebSearchCalls: 2, CreatedAt: now,
+		TokenUsage: domain.TokenUsage{InputTokens: 1200, OutputTokens: 300, CachedTokens: 400, CacheCreationTokens: 50, ImageInputTokens: 20, ImageOutputTokens: 30, ImageCount: 1}, ImageCount: 1, WebSearchCalls: 2, CreatedAt: now,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -351,6 +352,15 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	memberShares := make(map[string]int64)
+	for _, memberQuota := range usageDetail.Insights.MemberQuotas {
+		if len(memberQuota.Windows) == 1 && memberQuota.Windows[0].WindowType == domain.Window5H {
+			memberShares[memberQuota.MemberID] = memberQuota.Windows[0].UsedMicros
+		}
+	}
+	if memberShares["owner-member"] != 87_179_487 || memberShares["applicant-member"] != 12_820_513 {
+		t.Fatalf("member 5h cost shares = %+v", memberShares)
+	}
 	if len(usageDetail.Insights.ModelUsage) != 2 || usageDetail.Insights.ModelUsage[0].Model != "gpt-5.6-terra" || usageDetail.Insights.ModelUsage[1].EstimatedCostMicros != 125 {
 		t.Fatalf("plan model usage = %+v", usageDetail.Insights.ModelUsage)
 	}
@@ -361,15 +371,15 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 		t.Fatalf("plan recent usage = %+v", usageDetail.Insights.RecentUsage)
 	}
 	adminOverview, err := store.AdminOverview(ctx, now.Add(-24*time.Hour))
-	if err != nil || adminOverview.UserCount != 3 || adminOverview.Requests24H != 2 || adminOverview.Tokens24H != 11500 {
+	if err != nil || adminOverview.UserCount != 4 || adminOverview.Requests24H != 2 || adminOverview.Tokens24H != 11500 {
 		t.Fatalf("admin overview = %+v, error = %v", adminOverview, err)
 	}
 	adminUsers, err := store.AdminListUsers(ctx)
-	if err != nil || len(adminUsers) != 3 {
+	if err != nil || len(adminUsers) != 4 {
 		t.Fatalf("admin users = %+v, error = %v", adminUsers, err)
 	}
 	adminAccounts, err := store.AdminListAccounts(ctx)
-	if err != nil || len(adminAccounts) != 2 {
+	if err != nil || len(adminAccounts) != 3 {
 		t.Fatalf("admin accounts = %+v, error = %v", adminAccounts, err)
 	}
 	adminPlans, err := store.AdminListPlans(ctx, now.Add(-24*time.Hour))
@@ -379,7 +389,7 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 			adminPlanTokens = item.TotalTokens24H
 		}
 	}
-	if err != nil || len(adminPlans) != 2 || adminPlanTokens != 11500 {
+	if err != nil || len(adminPlans) != 3 || adminPlanTokens != 11500 {
 		t.Fatalf("admin plans = %+v, error = %v", adminPlans, err)
 	}
 	adminKeys, err := store.AdminListAPIKeys(ctx)

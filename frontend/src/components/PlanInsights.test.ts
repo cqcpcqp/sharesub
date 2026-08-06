@@ -57,27 +57,47 @@ describe('PlanInsights performance period', () => {
     expect(rankingSelect.props('value')).toBe('today')
   })
 
-  it('explains member quota attribution and displays one decimal place', () => {
+  it('explains member cost shares and displays separate 5h and 7d percentages', () => {
     const wrapper = mount(PlanInsights, {
       props: {
         insights: {
-          account_windows: [],
-          member_quotas: [{ member_id: 'member', windows: [{ window_type: '7d', used_micros: 2_060_000, account_used_micros: 33_000_000, reset_at: '2026-08-08T00:00:00Z' }] }],
+          account_windows: [
+            { window_type: '5h', used_micros: 20_000_000, account_used_micros: 20_000_000, reset_at: '2026-08-04T15:00:00Z' },
+            { window_type: '7d', used_micros: 33_000_000, account_used_micros: 33_000_000, reset_at: '2026-08-08T00:00:00Z' },
+          ],
+          member_quotas: [
+            { member_id: 'member-a', windows: [
+              { window_type: '5h', used_micros: 80_000_000, account_used_micros: 20_000_000, reset_at: '2026-08-04T15:00:00Z' },
+              { window_type: '7d', used_micros: 60_000_000, account_used_micros: 33_000_000, reset_at: '2026-08-08T00:00:00Z' },
+            ] },
+            { member_id: 'member-b', windows: [
+              { window_type: '5h', used_micros: 20_000_000, account_used_micros: 20_000_000, reset_at: '2026-08-04T15:00:00Z' },
+              { window_type: '7d', used_micros: 40_000_000, account_used_micros: 33_000_000, reset_at: '2026-08-08T00:00:00Z' },
+            ] },
+          ],
           performance: { request_count: 0, success_count: 0, average_ttft_ms: 0, p95_ttft_ms: 0, average_duration_ms: 0, p95_duration_ms: 0 },
           window_usage: [],
           member_ranking: [],
           member_rankings: [{ period: 'today', window_start: '2026-08-04T00:00:00Z', window_end: '2026-08-04T10:00:00Z', members: [] }],
           model_usage: [], token_trend: [], recent_usage: [],
         },
-        members: [{ id: 'member', plan_id: 'plan', user_id: 'user', username: '成员', avatar_url: '', email: 'member@example.com', role: 'member', status: 'active', share_basis_points: 0, created_at: '2026-08-04T00:00:00Z' }],
+        members: [
+          { id: 'member-a', plan_id: 'plan', user_id: 'user-a', username: '成员 A', avatar_url: '', email: 'a@example.com', role: 'member', status: 'active', share_basis_points: 0, created_at: '2026-08-04T00:00:00Z' },
+          { id: 'member-b', plan_id: 'plan', user_id: 'user-b', username: '成员 B', avatar_url: '', email: 'b@example.com', role: 'member', status: 'active', share_basis_points: 0, created_at: '2026-08-04T00:00:00Z' },
+        ],
         allocationMode: 'shared',
         theme: 'light',
       },
+      global: { stubs: { MemberCostShareChart: true } },
     })
 
-    expect(wrapper.get('button[aria-label="查看成员当前用量口径"]').attributes('aria-label')).toBe('查看成员当前用量口径')
-    expect(wrapper.find('.member-windows').text()).toContain('2.1%')
-    expect(wrapper.find('.member-windows').text()).not.toContain('2.06%')
+    expect(wrapper.get('button[aria-label="查看成员用量占比口径"]').attributes('aria-label')).toBe('查看成员用量占比口径')
+    expect(wrapper.findAll('.member-share-window')).toHaveLength(2)
+    const memberWindows = wrapper.findAll('.member-windows').map(item => item.text())
+    expect(memberWindows[0]).toContain('5h80.0%')
+    expect(memberWindows[0]).toContain('7d60.0%')
+    expect(memberWindows[1]).toContain('5h20.0%')
+    expect(memberWindows[1]).toContain('7d40.0%')
   })
 
   it('shows total tokens before the token breakdown in every quota card', () => {

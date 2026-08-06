@@ -3,7 +3,7 @@
     <header class="insights-heading">
       <div>
         <h3>额度与性能</h3>
-        <p>账号窗口、成员用量与{{ performancePeriodLabel }}网关表现</p>
+        <p>账号窗口、成员成本占比与{{ performancePeriodLabel }}网关表现</p>
       </div>
       <NSelect
         class="performance-period-select"
@@ -152,21 +152,34 @@
         <header class="panel-heading">
           <div>
             <div class="panel-title-row">
-              <h4>{{ allocationMode === 'shared' ? '成员当前用量' : '成员当前额度' }}</h4>
+              <h4>成员用量占比</h4>
               <NTooltip placement="top" trigger="hover">
                 <template #trigger>
-                  <button type="button" class="metric-help" aria-label="查看成员当前用量口径">
+                  <button type="button" class="metric-help" aria-label="查看成员用量占比口径">
                     <CircleHelp :size="14" />
                   </button>
                 </template>
-                <span class="metric-help-copy">按当前 5h/7d 窗口内账号已用百分比相对上次观测的正向增量累计，并归因到触发该次响应的成员；不是按 Token 数计算。手动额度查询只更新账号快照，不计入成员用量。</span>
+                <span class="metric-help-copy">分别统计当前 5h 和 7d 账号窗口内，经 ShareSub 转发的请求账号费用。成员占比等于该成员账号费用除以全体当前成员账号费用；不再按 OpenAI 额度百分比增量归因。</span>
               </NTooltip>
             </div>
           </div>
         </header>
-        <div class="member-list">
+        <div class="member-share-charts">
+          <article v-for="window in memberShareCharts" :key="window.type" class="member-share-window">
+            <header class="member-share-window-heading">
+              <span class="window-badge" :class="`member-share-badge-${window.type}`">{{ window.type }}</span>
+              <small>{{ window.label }}窗口</small>
+            </header>
+            <div v-if="window.total > 0" class="member-share-chart-wrap">
+              <MemberCostShareChart :shares="window.shares" :theme="theme" :window-type="window.type" :window-label="`${window.label}窗口`" />
+            </div>
+            <p v-else class="member-share-empty">{{ window.hasWindow ? '暂无账号费用' : '等待窗口数据' }}</p>
+          </article>
+        </div>
+        <div class="member-list member-share-list">
           <div v-for="member in members" :key="member.id" class="member-row">
             <div class="member-identity">
+              <span class="member-share-color" :style="{ backgroundColor: memberColor(member.id) }" aria-hidden="true" />
               <UserAvatar :size="32" :username="member.username" :src="member.avatar_url" />
               <div>
                 <strong>{{ member.username }}</strong>
@@ -174,8 +187,8 @@
               </div>
             </div>
             <div class="member-windows">
-              <span><small>5h</small><strong>{{ memberUsed(member.id, '5h') }}</strong></span>
-              <span><small>7d</small><strong>{{ memberUsed(member.id, '7d') }}</strong></span>
+              <span><small>5h</small><strong>{{ memberShare(member.id, '5h') }}</strong></span>
+              <span><small>7d</small><strong>{{ memberShare(member.id, '7d') }}</strong></span>
             </div>
           </div>
         </div>
@@ -222,6 +235,7 @@ import type { ResolvedTheme } from '../themePreference'
 import { formatShareBasisPoints } from '../planAllocation'
 import { formatMilliseconds, formatTokens } from '../dashboardFormat'
 import UserAvatar from './UserAvatar.vue'
+import MemberCostShareChart from './MemberCostShareChart.vue'
 import MemberUsageChart from './MemberUsageChart.vue'
 import ModelDistributionChart from './ModelDistributionChart.vue'
 import TokenUsageChart from './TokenUsageChart.vue'
@@ -277,8 +291,22 @@ const successRate = computed(() => props.insights.performance.request_count === 
   ? '--'
   : `${((props.insights.performance.success_count / props.insights.performance.request_count) * 100).toFixed(1)}%`)
 const modelColors = ['#4b7bec', '#18a27f', '#d59020', '#8b5cf6', '#e45b78', '#18a6b8', '#eb7f43', '#6f7a8a', '#57b86d', '#a66dd4', '#e3b341', '#3d93d8']
+const memberColors = ['#4b6cdb', '#18a27f', '#d59020', '#8b5cf6', '#e45b78', '#18a6b8', '#eb7f43', '#57b86d', '#a66dd4', '#3d93d8']
 const modelUsageTotal = computed(() => props.insights.model_usage.reduce((total, item) => total + item.token_usage.total_tokens, 0))
 const tokenTrendTotal = computed(() => props.insights.token_trend.reduce((total, point) => total + point.input_tokens + point.output_tokens, 0))
+const memberShareCharts = computed(() => quotaKinds.map(kind => {
+  const shares = props.members.map((member, index) => ({
+    label: member.username,
+    value: memberShareValue(member.id, kind.type) ?? 0,
+    color: memberColors[index % memberColors.length],
+  }))
+  return {
+    ...kind,
+    shares,
+    total: shares.reduce((total, item) => total + item.value, 0),
+    hasWindow: props.insights.account_windows.some(window => window.window_type === kind.type),
+  }
+}))
 
 const numberFormatter = new Intl.NumberFormat('zh-CN')
 const percentFormatter = new Intl.NumberFormat('zh-CN', { minimumFractionDigits: 1, maximumFractionDigits: 2 })
@@ -313,10 +341,19 @@ function formatUSD(value: number) {
   return usdFormatter.format(value / 1_000_000)
 }
 
-function memberUsed(memberID: string, kind: QuotaWindow['window_type']) {
-  const quota = props.insights.member_quotas.find(item => item.member_id === memberID)
-  const window = quota?.windows.find(item => item.window_type === kind)
-  return window ? `${memberPercentFormatter.format(window.used_micros / 1_000_000)}%` : '--'
+function memberShareValue(memberID: string, kind: QuotaWindow['window_type']) {
+  const quota = props.insights.member_quotas.find(item => item.member_id === memberID)!
+  return quota.windows.find(item => item.window_type === kind)?.used_micros
+}
+
+function memberShare(memberID: string, kind: QuotaWindow['window_type']) {
+  const value = memberShareValue(memberID, kind)
+  return value === undefined ? '--' : `${memberPercentFormatter.format(value / 1_000_000)}%`
+}
+
+function memberColor(memberID: string) {
+  const index = props.members.findIndex(member => member.id === memberID)
+  return memberColors[index % memberColors.length]
 }
 
 function formatDate(value: string) {
@@ -463,9 +500,20 @@ function usagePeriod(usage: WindowUsage | undefined) {
 .usage-columns { min-width: 0; display: grid; grid-template-columns: minmax(260px, .7fr) minmax(0, 1.3fr); gap: 12px; }
 .data-panel { min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); box-shadow: var(--shadow-xs); }
 .data-panel > .panel-heading { padding: 15px 16px 12px; }
+.member-share-charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); }
+.member-share-window { min-width: 0; padding: 13px 12px 14px; }
+.member-share-window + .member-share-window { border-left: 1px solid var(--line-soft); }
+.member-share-window-heading { display: flex; align-items: center; justify-content: center; gap: 7px; }
+.member-share-window-heading small { color: var(--muted); font-size: 11px; font-weight: 700; }
+.member-share-badge-5h { background: var(--teal-soft); color: var(--teal); }
+.member-share-badge-7d { background: var(--blue-soft); color: var(--blue); }
+.member-share-chart-wrap { min-height: 148px; display: grid; place-items: center; padding-top: 8px; }
+.member-share-empty { min-height: 148px; display: grid; place-items: center; margin: 0; color: var(--muted-light); font-size: 11px; text-align: center; }
 .member-list { padding: 0 16px 5px; }
+.member-share-list .member-row:first-child { border-top: 0; }
 .member-row { min-width: 0; min-height: 58px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid var(--line-soft); }
 .member-identity { min-width: 0; display: flex; align-items: center; gap: 9px; }
+.member-share-color { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; }
 .member-identity > div { min-width: 0; }
 .member-identity strong,
 .member-identity small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -536,6 +584,8 @@ tbody tr:hover { background: var(--surface-hover); }
 
 @media (max-width: 380px) {
   .performance-grid { grid-template-columns: 1fr; }
+  .member-share-charts { grid-template-columns: 1fr; }
+  .member-share-window + .member-share-window { border-top: 1px solid var(--line-soft); border-left: 0; }
   .quota-heading { align-items: flex-start; }
   .quota-heading :deep(.n-button) { width: 34px; min-width: 34px; padding: 0; }
   .quota-heading :deep(.n-button__content) { font-size: 0; }

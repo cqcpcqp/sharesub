@@ -86,7 +86,7 @@ const detail: PlanDetail = {
   applications: [],
   insights: {
     account_windows: [],
-    member_quotas: [],
+    member_quotas: [{ member_id: 'member', windows: [] }],
     performance: {
       request_count: 0,
       success_count: 0,
@@ -160,6 +160,10 @@ const memberDetail: PlanDetail = {
       created_at: createdAt,
     },
   ],
+  insights: {
+    ...activeDetail.insights,
+    member_quotas: [...activeDetail.insights.member_quotas, { member_id: 'member-record', windows: [] }],
+  },
 }
 
 function findButton(wrapper: ReturnType<typeof mount>, text: string) {
