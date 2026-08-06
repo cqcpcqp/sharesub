@@ -211,30 +211,20 @@ func (s *Service) resolveCredential(ctx context.Context, credential domain.Gatew
 		}
 		return GatewayAccess{Credential: credential, AccessToken: accessToken, ProxyURL: proxyURL}, nil
 	}
-	refreshToken, err := s.security.Decrypt(credential.RefreshTokenCiphertext, []byte(scope+":refresh"))
+	accessToken, _, err = s.refreshAccountToken(ctx, domain.Account{
+		ID: credential.Account.ID, OwnerUserID: credential.Account.OwnerUserID,
+		ChatGPTAccountID: credential.Account.ChatGPTAccountID, Status: credential.Account.Status,
+		AccessTokenCiphertext:  credential.AccessTokenCiphertext,
+		RefreshTokenCiphertext: credential.RefreshTokenCiphertext,
+		TokenExpiresAt:         credential.TokenExpiresAt,
+	}, 2*time.Minute, true)
 	if err != nil {
-		return GatewayAccess{}, err
-	}
-	refreshed, err := s.oauth.Refresh(ctx, refreshToken)
-	if err != nil {
-		_ = s.store.MarkAccountError(ctx, credential.Account.ID, err.Error())
 		return GatewayAccess{}, domain.ErrAccountUnavailable
-	}
-	newAccess, err := s.security.Encrypt(refreshed.AccessToken, []byte(scope+":access"))
-	if err != nil {
-		return GatewayAccess{}, err
-	}
-	newRefresh, err := s.security.Encrypt(refreshed.RefreshToken, []byte(scope+":refresh"))
-	if err != nil {
-		return GatewayAccess{}, err
-	}
-	if err := s.store.UpdateAccountTokens(ctx, credential.Account.ID, newAccess, newRefresh, refreshed.ExpiresAt); err != nil {
-		return GatewayAccess{}, err
 	}
 	if err := s.store.TouchAPIKey(ctx, credential.APIKeyID, s.now()); err != nil {
 		return GatewayAccess{}, err
 	}
-	return GatewayAccess{Credential: credential, AccessToken: refreshed.AccessToken, ProxyURL: proxyURL}, nil
+	return GatewayAccess{Credential: credential, AccessToken: accessToken, ProxyURL: proxyURL}, nil
 }
 
 func (s *Service) RecordGatewayUsage(ctx context.Context, access GatewayAccess, headers http.Header, requestID string) error {

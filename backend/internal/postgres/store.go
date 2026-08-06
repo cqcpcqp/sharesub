@@ -245,12 +245,52 @@ func (s *Store) UpdateAccountConfig(ctx context.Context, userID string, account 
 	return out, mapError(err)
 }
 
-func (s *Store) UpdateAccountTokens(ctx context.Context, id string, access, refresh []byte, expiresAt time.Time) error {
-	_, err := s.pool.Exec(ctx, `UPDATE openai_accounts SET access_token_ciphertext=$2,refresh_token_ciphertext=$3,token_expires_at=$4,status='active',last_error='',updated_at=now() WHERE id=$1`, id, access, refresh, expiresAt)
-	return mapError(err)
+func (s *Store) UpdateAccountTokensIfRefreshTokenUnchanged(ctx context.Context, id string, expectedRefresh, access, refresh []byte, expiresAt time.Time) (bool, error) {
+	result, err := s.pool.Exec(ctx, `UPDATE openai_accounts SET access_token_ciphertext=$3,refresh_token_ciphertext=$4,token_expires_at=$5,last_error='',updated_at=now() WHERE id=$1 AND refresh_token_ciphertext=$2 AND status='active'`, id, expectedRefresh, access, refresh, expiresAt)
+	if err != nil {
+		return false, mapError(err)
+	}
+	return result.RowsAffected() == 1, nil
 }
 
-func (s *Store) MarkAccountError(ctx context.Context, id, message string) error {
-	_, err := s.pool.Exec(ctx, `UPDATE openai_accounts SET status=$2,last_error=$3,updated_at=now() WHERE id=$1`, id, domain.StatusRefreshRequired, message)
+func (s *Store) ListExpiringAccounts(ctx context.Context, expiresBefore time.Time, limit int) ([]domain.Account, error) {
+	rows, err := s.pool.Query(ctx, `SELECT id,owner_user_id,name,notes,email,chatgpt_account_id,plan_type,access_token_ciphertext,refresh_token_ciphertext,proxy_url_ciphertext,max_concurrency,rpm_limit,fast_policy,token_expires_at,status,last_error,created_at FROM openai_accounts WHERE status='active' AND token_expires_at<$1 ORDER BY token_expires_at,id LIMIT $2`, expiresBefore, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	accounts := make([]domain.Account, 0)
+	for rows.Next() {
+		var account domain.Account
+		if err := rows.Scan(&account.ID, &account.OwnerUserID, &account.Name, &account.Notes, &account.Email, &account.ChatGPTAccountID, &account.PlanType, &account.AccessTokenCiphertext, &account.RefreshTokenCiphertext, &account.ProxyURLCiphertext, &account.MaxConcurrency, &account.RPMLimit, &account.FastPolicy, &account.TokenExpiresAt, &account.Status, &account.LastError, &account.CreatedAt); err != nil {
+			return nil, err
+		}
+		accounts = append(accounts, account)
+	}
+	return accounts, rows.Err()
+}
+
+func (s *Store) TryAcquireAccountRefreshLease(ctx context.Context, accountID, holderID string, expiresAt time.Time) (bool, error) {
+	var acquired string
+	err := s.pool.QueryRow(ctx, `INSERT INTO account_token_refresh_leases(account_id,holder_id,expires_at) VALUES($1,$2,$3) ON CONFLICT(account_id) DO UPDATE SET holder_id=EXCLUDED.holder_id,expires_at=EXCLUDED.expires_at WHERE account_token_refresh_leases.expires_at<=now() RETURNING holder_id`, accountID, holderID, expiresAt).Scan(&acquired)
+	if err == pgx.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, mapError(err)
+	}
+	return acquired == holderID, nil
+}
+
+func (s *Store) ReleaseAccountRefreshLease(ctx context.Context, accountID, holderID string) error {
+	_, err := s.pool.Exec(ctx, `DELETE FROM account_token_refresh_leases WHERE account_id=$1 AND holder_id=$2`, accountID, holderID)
 	return err
+}
+
+func (s *Store) MarkAccountErrorIfRefreshTokenUnchanged(ctx context.Context, id string, expectedRefresh []byte, message string) (bool, error) {
+	result, err := s.pool.Exec(ctx, `UPDATE openai_accounts SET status=$3,last_error=$4,updated_at=now() WHERE id=$1 AND refresh_token_ciphertext=$2 AND status='active'`, id, expectedRefresh, domain.StatusRefreshRequired, message)
+	if err != nil {
+		return false, mapError(err)
+	}
+	return result.RowsAffected() == 1, nil
 }

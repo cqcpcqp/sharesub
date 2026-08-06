@@ -79,6 +79,8 @@ OAuth 开始接口返回 `authorization_url` 和 `flow_id`。完成授权后，�
 
 账号列表与已绑定 Plan 详情中的 `account` 返回 `id`、`owner_user_id`、上述配置、OpenAI 邮箱、ChatGPT Account ID、套餐类型、Token 到期时间、状态、最近错误和创建时间；未绑定账号的 Plan 固定返回 `account: null` 和 `plan.account_id: ""`。OAuth access token、refresh token 以及任何密文字段永远不会进入 JSON 响应。只有账号所有者可以修改配置；Plan 的所有有效成员都能通过 Plan 详情查看该账号的完整配置。
 
+“Token 到期时间”是当前 OpenAI OAuth access token 的到期时间，不是账号套餐或 ShareSub API Key 的到期时间。API 服务默认每 5 分钟扫描一次，并提前 30 分钟使用 refresh token 自动换取新凭据；请求与额度探测路径在剩余不足 2 分钟时也会触发同一刷新流程。刷新使用数据库租约锁和凭据条件更新，避免多实例重复刷新或覆盖刚完成的重新授权。连续刷新失败后账号会进入 `refresh_required` 状态。
+
 ## 共享方案、公开大厅与邀请
 
 | 方法 | 路径 | 鉴权 | 请求体 | 用途 |

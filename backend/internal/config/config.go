@@ -27,6 +27,12 @@ type Config struct {
 	ReadNotificationRetention time.Duration
 	TerminalRecordRetention   time.Duration
 	GatewayMaxConcurrency     int
+	TokenRefreshEnabled       bool
+	TokenRefreshInterval      time.Duration
+	TokenRefreshBeforeExpiry  time.Duration
+	TokenRefreshBatchSize     int
+	TokenRefreshConcurrency   int
+	TokenRefreshMaxRetries    int
 }
 
 func Load() (Config, error) {
@@ -81,6 +87,30 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	tokenRefreshEnabled, err := boolEnv("SHARESUB_TOKEN_REFRESH_ENABLED", true)
+	if err != nil {
+		return Config{}, err
+	}
+	tokenRefreshInterval, err := positiveDurationEnv("SHARESUB_TOKEN_REFRESH_INTERVAL", 5*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+	tokenRefreshBeforeExpiry, err := positiveDurationEnv("SHARESUB_TOKEN_REFRESH_BEFORE_EXPIRY", 30*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+	tokenRefreshBatchSize, err := positiveIntEnv("SHARESUB_TOKEN_REFRESH_BATCH_SIZE", 200)
+	if err != nil {
+		return Config{}, err
+	}
+	tokenRefreshConcurrency, err := positiveIntEnv("SHARESUB_TOKEN_REFRESH_CONCURRENCY", 4)
+	if err != nil {
+		return Config{}, err
+	}
+	tokenRefreshMaxRetries, err := positiveIntEnv("SHARESUB_TOKEN_REFRESH_MAX_RETRIES", 3)
+	if err != nil {
+		return Config{}, err
+	}
 	return Config{
 		HTTPAddr:                  envOr("SHARESUB_HTTP_ADDR", "127.0.0.1:8080"),
 		DatabaseURL:               databaseURL,
@@ -97,7 +127,25 @@ func Load() (Config, error) {
 		ReadNotificationRetention: readNotificationRetention,
 		TerminalRecordRetention:   terminalRecordRetention,
 		GatewayMaxConcurrency:     gatewayMaxConcurrency,
+		TokenRefreshEnabled:       tokenRefreshEnabled,
+		TokenRefreshInterval:      tokenRefreshInterval,
+		TokenRefreshBeforeExpiry:  tokenRefreshBeforeExpiry,
+		TokenRefreshBatchSize:     tokenRefreshBatchSize,
+		TokenRefreshConcurrency:   tokenRefreshConcurrency,
+		TokenRefreshMaxRetries:    tokenRefreshMaxRetries,
 	}, nil
+}
+
+func boolEnv(name string, fallback bool) (bool, error) {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return fallback, nil
+	}
+	value, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, fmt.Errorf("%s must be a boolean", name)
+	}
+	return value, nil
 }
 
 func positiveIntEnv(name string, fallback int) (int, error) {

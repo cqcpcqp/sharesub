@@ -162,27 +162,16 @@ func (s *Service) preparePlanQuotaProbe(ctx context.Context, credential domain.P
 		}
 	}
 	if !credential.TokenExpiresAt.After(s.now().Add(2 * time.Minute)) {
-		refreshToken, err := s.security.Decrypt(credential.RefreshTokenCiphertext, []byte(scope+":refresh"))
+		accessToken, _, err = s.refreshAccountToken(ctx, domain.Account{
+			ID: credential.AccountID, OwnerUserID: credential.AccountOwnerUserID,
+			ChatGPTAccountID: credential.ChatGPTAccountID, Status: domain.StatusActive,
+			AccessTokenCiphertext:  credential.AccessTokenCiphertext,
+			RefreshTokenCiphertext: credential.RefreshTokenCiphertext,
+			TokenExpiresAt:         credential.TokenExpiresAt,
+		}, 2*time.Minute, true)
 		if err != nil {
-			return PlanQuotaProbe{}, err
-		}
-		refreshed, err := s.oauth.Refresh(ctx, refreshToken)
-		if err != nil {
-			_ = s.store.MarkAccountError(ctx, credential.AccountID, err.Error())
 			return PlanQuotaProbe{}, domain.ErrAccountUnavailable
 		}
-		access, err := s.security.Encrypt(refreshed.AccessToken, []byte(scope+":access"))
-		if err != nil {
-			return PlanQuotaProbe{}, err
-		}
-		refresh, err := s.security.Encrypt(refreshed.RefreshToken, []byte(scope+":refresh"))
-		if err != nil {
-			return PlanQuotaProbe{}, err
-		}
-		if err := s.store.UpdateAccountTokens(ctx, credential.AccountID, access, refresh, refreshed.ExpiresAt); err != nil {
-			return PlanQuotaProbe{}, err
-		}
-		accessToken = refreshed.AccessToken
 	}
 	return PlanQuotaProbe{AccountID: credential.AccountID, OwnerMemberID: credential.OwnerMemberID, AccessToken: accessToken, ChatGPTAccountID: credential.ChatGPTAccountID, ProxyURL: proxyURL}, nil
 }

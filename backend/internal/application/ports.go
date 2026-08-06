@@ -29,8 +29,11 @@ type Store interface {
 	AccountByID(context.Context, string) (domain.Account, error)
 	UpdateAccountConfig(context.Context, string, domain.Account) (domain.Account, error)
 	UpdateAccountAuthorization(context.Context, string, domain.Account, domain.AuditEvent) (domain.Account, error)
-	UpdateAccountTokens(context.Context, string, []byte, []byte, time.Time) error
-	MarkAccountError(context.Context, string, string) error
+	UpdateAccountTokensIfRefreshTokenUnchanged(context.Context, string, []byte, []byte, []byte, time.Time) (bool, error)
+	MarkAccountErrorIfRefreshTokenUnchanged(context.Context, string, []byte, string) (bool, error)
+	ListExpiringAccounts(context.Context, time.Time, int) ([]domain.Account, error)
+	TryAcquireAccountRefreshLease(context.Context, string, string, time.Time) (bool, error)
+	ReleaseAccountRefreshLease(context.Context, string, string) error
 	Dashboard(context.Context, string, time.Time, time.Time, time.Time) (domain.Dashboard, error)
 
 	CreatePlan(context.Context, domain.Plan, domain.Member, domain.AuditEvent) error

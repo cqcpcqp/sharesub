@@ -37,6 +37,7 @@ ShareSub 只处理 OpenAI Codex 账号共享。系统没有通用平台适配层
 - 用户密码使用 bcrypt 哈希。
 - 登录 Token、邀请 Token和用户 API Key 都是随机不透明值，数据库只保存加入 Pepper 后的 SHA-256 哈希。
 - OAuth access token 与 refresh token 使用 AES-256-GCM 加密保存。
+- OAuth access token 由后台任务提前刷新，请求路径负责临近到期兜底；数据库租约锁串行化同一账号的多实例刷新，写回时按原 refresh token 做条件更新，避免覆盖并发重新授权。
 - 账号独立代理使用 AES-256-GCM 加密保存；账号代理优先于系统全局代理，代理请求失败时不会回退直连。
 - OAuth 使用 PKCE；state 记录只能使用一次，并在 15 分钟后过期。
 - 接受邀请通过事务锁定邀请记录，保证同一链接只能成功领取一次。

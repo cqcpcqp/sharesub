@@ -90,6 +90,9 @@ func main() {
 		TerminalRecords: cfg.TerminalRecordRetention,
 	}
 	go runResourceCleanup(ctx, store, retention, cfg.CleanupInterval, logger)
+	if cfg.TokenRefreshEnabled {
+		go runTokenRefresh(ctx, app, cfg, logger)
+	}
 
 	go func() {
 		logger.Info("ShareSub API listening", "address", cfg.HTTPAddr)
@@ -103,6 +106,30 @@ func main() {
 	defer cancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		logger.Error("shutdown API", "error", err)
+	}
+}
+
+func runTokenRefresh(ctx context.Context, app *application.Service, cfg config.Config, logger *slog.Logger) {
+	refresh := func() {
+		result, err := app.RefreshExpiringAccountTokens(ctx, cfg.TokenRefreshBeforeExpiry, cfg.TokenRefreshBatchSize, cfg.TokenRefreshConcurrency, cfg.TokenRefreshMaxRetries)
+		if err != nil {
+			if ctx.Err() == nil {
+				logger.Error("refresh OpenAI account tokens", "error", err)
+			}
+			return
+		}
+		logger.Info("OpenAI account token refresh completed", "scanned", result.Scanned, "refreshed", result.Refreshed, "skipped", result.Skipped, "failed", result.Failed)
+	}
+	refresh()
+	ticker := time.NewTicker(cfg.TokenRefreshInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			refresh()
+		}
 	}
 }
 
