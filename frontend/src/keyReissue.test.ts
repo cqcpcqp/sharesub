@@ -3,7 +3,7 @@ import { availableKeyRoutes, canUpgradeAPIKey } from './keyReissue'
 import type { APIKey, Plan } from './types'
 
 const route = { plan_id: 'plan-active', plan_name: '共享 Plan', priority: 20, enabled: true }
-const plan = { id: 'plan-active' } as Plan
+const plan = { id: 'plan-active', account_id: 'account', status: 'active' } as Plan
 
 function apiKey(overrides: Partial<APIKey> = {}): APIKey {
   return {
@@ -34,5 +34,7 @@ describe('legacy API key upgrade availability', () => {
   it('rejects revoked keys and historical keys without an available plan', () => {
     expect(canUpgradeAPIKey(apiKey({ status: 'revoked' }), [plan])).toBe(false)
     expect(canUpgradeAPIKey(apiKey(), [])).toBe(false)
+    expect(canUpgradeAPIKey(apiKey(), [{ ...plan, account_id: '' }])).toBe(false)
+    expect(canUpgradeAPIKey(apiKey(), [{ ...plan, status: 'archived' }])).toBe(false)
   })
 })

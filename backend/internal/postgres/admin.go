@@ -162,11 +162,11 @@ func (s *Store) AdminUpdateAccountStatus(ctx context.Context, accountID, status 
 func (s *Store) AdminListPlans(ctx context.Context, metricsStart time.Time) ([]domain.AdminPlan, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT p.id,p.owner_user_id,p.account_id,p.name,p.status,p.visibility,p.public_slots,p.public_share_basis_points,p.allocation_mode,p.created_at,p.archived_at,
-			u.username,a.email,
+			u.username,COALESCE(a.email,''),
 			(SELECT count(*) FROM plan_members m WHERE m.plan_id=p.id AND m.status='active'),
 			(SELECT count(*) FROM gateway_request_metrics g WHERE g.plan_id=p.id AND g.created_at>=$1),
 			(SELECT COALESCE(sum(g.input_tokens+g.output_tokens),0) FROM gateway_request_metrics g WHERE g.plan_id=p.id AND g.created_at>=$1)
-		FROM shared_plans p JOIN users u ON u.id=p.owner_user_id JOIN openai_accounts a ON a.id=p.account_id
+		FROM shared_plans p JOIN users u ON u.id=p.owner_user_id LEFT JOIN openai_accounts a ON a.id=p.account_id
 		ORDER BY p.created_at DESC`, metricsStart)
 	if err != nil {
 		return nil, err
@@ -175,8 +175,12 @@ func (s *Store) AdminListPlans(ctx context.Context, metricsStart time.Time) ([]d
 	out := make([]domain.AdminPlan, 0)
 	for rows.Next() {
 		var item domain.AdminPlan
-		if err := rows.Scan(&item.ID, &item.OwnerUserID, &item.AccountID, &item.Name, &item.Status, &item.Visibility, &item.PublicSlots, &item.PublicShareBasisPoints, &item.AllocationMode, &item.CreatedAt, &item.ArchivedAt, &item.OwnerUsername, &item.AccountEmail, &item.MemberCount, &item.Requests24H, &item.TotalTokens24H); err != nil {
+		var accountID *string
+		if err := rows.Scan(&item.ID, &item.OwnerUserID, &accountID, &item.Name, &item.Status, &item.Visibility, &item.PublicSlots, &item.PublicShareBasisPoints, &item.AllocationMode, &item.CreatedAt, &item.ArchivedAt, &item.OwnerUsername, &item.AccountEmail, &item.MemberCount, &item.Requests24H, &item.TotalTokens24H); err != nil {
 			return nil, err
+		}
+		if accountID != nil {
+			item.AccountID = *accountID
 		}
 		out = append(out, item)
 	}

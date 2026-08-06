@@ -22,7 +22,7 @@ func (s *Store) CreateAPIKey(ctx context.Context, key domain.APIKey, routes []do
 	if err != nil {
 		return mapError(err)
 	}
-	if err := insertAPIKeyRoutes(ctx, tx, key.ID, key.UserID, routes); err != nil {
+	if err := insertAPIKeyRoutes(ctx, tx, key.ID, key.UserID, routes, nil); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -38,10 +38,28 @@ func (s *Store) UpdateAPIKey(ctx context.Context, userID string, key domain.APIK
 	if err != nil {
 		return domain.APIKey{}, mapError(err)
 	}
+	existingRoutePlanIDs := make(map[string]struct{})
+	rows, err := tx.Query(ctx, `SELECT plan_id FROM api_key_plans WHERE api_key_id=$1 FOR UPDATE`, key.ID)
+	if err != nil {
+		return domain.APIKey{}, err
+	}
+	for rows.Next() {
+		var planID string
+		if err := rows.Scan(&planID); err != nil {
+			rows.Close()
+			return domain.APIKey{}, err
+		}
+		existingRoutePlanIDs[planID] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return domain.APIKey{}, err
+	}
+	rows.Close()
 	if _, err := tx.Exec(ctx, `DELETE FROM api_key_plans WHERE api_key_id=$1`, key.ID); err != nil {
 		return domain.APIKey{}, err
 	}
-	if err := insertAPIKeyRoutes(ctx, tx, key.ID, userID, routes); err != nil {
+	if err := insertAPIKeyRoutes(ctx, tx, key.ID, userID, routes, existingRoutePlanIDs); err != nil {
 		return domain.APIKey{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -51,9 +69,10 @@ func (s *Store) UpdateAPIKey(ctx context.Context, userID string, key domain.APIK
 	return key, nil
 }
 
-func insertAPIKeyRoutes(ctx context.Context, tx pgx.Tx, keyID, userID string, routes []domain.APIKeyRoute) error {
+func insertAPIKeyRoutes(ctx context.Context, tx pgx.Tx, keyID, userID string, routes []domain.APIKeyRoute, existingRoutePlanIDs map[string]struct{}) error {
 	for _, route := range routes {
-		result, err := tx.Exec(ctx, `INSERT INTO api_key_plans(api_key_id,plan_id,priority,enabled) SELECT $1,p.id,$3,$4 FROM shared_plans p JOIN plan_members m ON m.plan_id=p.id WHERE p.id=$2 AND p.status='active' AND m.user_id=$5 AND m.status='active'`, keyID, route.PlanID, route.Priority, route.Enabled, userID)
+		_, existed := existingRoutePlanIDs[route.PlanID]
+		result, err := tx.Exec(ctx, `INSERT INTO api_key_plans(api_key_id,plan_id,priority,enabled) SELECT $1,p.id,$3,$4 FROM shared_plans p JOIN plan_members m ON m.plan_id=p.id WHERE p.id=$2 AND (p.status='active' OR $6) AND p.account_id IS NOT NULL AND m.user_id=$5 AND m.status='active'`, keyID, route.PlanID, route.Priority, route.Enabled, userID, existed)
 		if err != nil {
 			return mapError(err)
 		}

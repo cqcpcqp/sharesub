@@ -145,6 +145,52 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if configuredAccount.Name != "团队主账号" || configuredAccount.Notes != "仅用于 Codex" || configuredAccount.MaxConcurrency != 6 || configuredAccount.RPMLimit != 90 || string(configuredAccount.ProxyURLCiphertext) != "encrypted-proxy" {
 		t.Fatalf("updated account configuration = %+v", configuredAccount)
 	}
+	if _, err := pool.Exec(ctx, `INSERT INTO openai_accounts(id,owner_user_id,name,notes,email,chatgpt_account_id,plan_type,access_token_ciphertext,refresh_token_ciphertext,max_concurrency,rpm_limit,token_expires_at,status,created_at,updated_at) VALUES('later-account','owner','稍后绑定账号','','later@example.com','later-chatgpt','plus',$2,$3,0,0,$4,'active',$1,$1)`, now, []byte("access"), []byte("refresh"), now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	unboundPlan := domain.Plan{ID: "unbound-plan", OwnerUserID: "owner", Name: "先探索的 Plan", Status: domain.StatusActive, Visibility: domain.VisibilityPrivate, AllocationMode: domain.AllocationFixed, CreatedAt: now}
+	unboundOwner := domain.Member{ID: "unbound-owner-member", PlanID: unboundPlan.ID, UserID: "owner", Role: domain.RoleOwner, Status: domain.StatusActive, ShareBasisPoints: 2000, CreatedAt: now}
+	if err := store.CreatePlan(ctx, unboundPlan, unboundOwner, audit("create-unbound", "owner", unboundPlan.ID)); err != nil {
+		t.Fatal(err)
+	}
+	unboundDetail, err := store.PlanDetail(ctx, unboundPlan.ID, "owner", now.Truncate(24*time.Hour), now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unboundDetail.Plan.AccountID != "" || unboundDetail.Account != nil {
+		t.Fatalf("unbound detail = %+v", unboundDetail)
+	}
+	if _, err := store.UpdatePlanStatus(ctx, unboundPlan.ID, "owner", domain.StatusArchived, audit("archive-unbound", "owner", unboundPlan.ID)); err != nil {
+		t.Fatal(err)
+	}
+	restoredUnbound, err := store.UpdatePlanStatus(ctx, unboundPlan.ID, "owner", domain.StatusActive, audit("restore-unbound", "owner", unboundPlan.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restoredUnbound.AccountID != "" || restoredUnbound.Status != domain.StatusActive {
+		t.Fatalf("restored unbound Plan = %+v", restoredUnbound)
+	}
+	if _, err := store.UpdatePlanPublication(ctx, "owner", unboundPlan.ID, domain.VisibilityPublic, 1, 1000, audit("publish-unbound", "owner", unboundPlan.ID)); !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("publish unbound plan error = %v, want invalid input", err)
+	}
+	unboundKey := domain.APIKey{ID: "unbound-key", UserID: "owner", Name: "不可路由 Key", KeyPrefix: "sk-sharesub-unbound", KeyHash: []byte("unbound-hash"), KeyCiphertext: []byte("unbound-ciphertext"), Strategy: domain.RouteBalanced, Status: domain.StatusActive, CreatedAt: now}
+	if err := store.CreateAPIKey(ctx, unboundKey, []domain.APIKeyRoute{{PlanID: unboundPlan.ID, Priority: 100, Enabled: true}}); !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("create key for unbound plan error = %v, want forbidden", err)
+	}
+	boundPlan, err := store.RebindPlanAccount(ctx, unboundPlan.ID, "owner", "later-account", audit("bind-unbound", "owner", unboundPlan.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if boundPlan.AccountID != "later-account" {
+		t.Fatalf("bound plan account = %q", boundPlan.AccountID)
+	}
+	var bindingAction string
+	if err := pool.QueryRow(ctx, `SELECT action FROM audit_events WHERE id='bind-unbound'`).Scan(&bindingAction); err != nil {
+		t.Fatal(err)
+	}
+	if bindingAction != "plan.account_bound" {
+		t.Fatalf("first binding action = %q", bindingAction)
+	}
 
 	if err := store.CreateUser(ctx, domain.User{ID: "applicant", Username: "applicant", Email: "applicant@example.com", PasswordHash: "hash", Status: domain.StatusActive, CreatedAt: now}); err != nil {
 		t.Fatal(err)
@@ -478,12 +524,28 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if _, err := store.ReadAllNotifications(ctx, "second", now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
+	archivedRouteKey := domain.APIKey{ID: "archived-route-key", UserID: "second", Name: "归档路由 Key", KeyPrefix: "sk-sharesub-archived-route", KeyHash: []byte("archived-route-key-hash"), Strategy: domain.RoutePriority, Status: domain.StatusActive, CreatedAt: now}
+	archivedRoute := domain.APIKeyRoute{PlanID: sharedPlan.ID, Priority: 10, Enabled: true}
+	if err := store.CreateAPIKey(ctx, archivedRouteKey, []domain.APIKeyRoute{archivedRoute}); err != nil {
+		t.Fatal(err)
+	}
 
 	if _, err := store.UpdatePlanStatus(ctx, sharedPlan.ID, "owner", domain.StatusArchived, audit("archive-forbidden", "owner", sharedPlan.ID)); !errors.Is(err, domain.ErrForbidden) {
 		t.Fatalf("former owner archive error = %v, want forbidden", err)
 	}
 	if _, err := store.UpdatePlanStatus(ctx, sharedPlan.ID, "second", domain.StatusArchived, audit("archive-shared", "second", sharedPlan.ID)); err != nil {
 		t.Fatal(err)
+	}
+	updatedArchivedRouteKey, err := store.UpdateAPIKey(ctx, "second", domain.APIKey{ID: archivedRouteKey.ID, Name: "归档后改名", Strategy: domain.RouteBalanced}, []domain.APIKeyRoute{archivedRoute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updatedArchivedRouteKey.Name != "归档后改名" || len(updatedArchivedRouteKey.Routes) != 1 || updatedArchivedRouteKey.Routes[0].PlanID != sharedPlan.ID {
+		t.Fatalf("updated key with archived route = %+v", updatedArchivedRouteKey)
+	}
+	newArchivedKey := domain.APIKey{ID: "new-archived-key", UserID: "second", Name: "新增归档路由", KeyPrefix: "sk-sharesub-new-archived", KeyHash: []byte("new-archived-key-hash"), Strategy: domain.RoutePriority, Status: domain.StatusActive, CreatedAt: now}
+	if err := store.CreateAPIKey(ctx, newArchivedKey, []domain.APIKeyRoute{archivedRoute}); !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("create key for archived Plan error = %v, want forbidden", err)
 	}
 	if _, err := store.PlanQuotaCredential(ctx, sharedPlan.ID, "second"); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("archived Plan quota credential error = %v, want not found", err)

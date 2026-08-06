@@ -27,7 +27,7 @@ ShareSub 让有权使用同一 Codex 账号的成员，通过独立 API Key、�
 ## Operating Context
 
 - 房主通过 OpenAI OAuth 接入自己拥有或获授权使用的 Codex 账号，并为账号配置名称、备注、代理、并发和 RPM 限制。
-- 房主创建绑定单个 OpenAI 账号的 Plan，并在固定份额或共享使用两种额度方式中选择一种。
+- 房主可以先创建 Plan 并在固定份额或共享使用两种额度方式中选择一种，再在 Plan 内绑定已有 OpenAI 账号或接入新账号。
 - 私密协作通过七天内有效、只能领取一次的邀请链接建立；公开协作通过大厅申请和房主审批建立。
 - 成员创建自己的 `sk-sharesub-...` API Key，并可把一个 Key 绑定到多个已加入的 Plan，按优先级或可用额度均衡选路。
 - 成员使用 Codex 兼容入口发起请求，并通过个人仪表盘和 Plan 数据查看 Token、额度窗口、性能与成员用量。
@@ -36,7 +36,7 @@ ShareSub 让有权使用同一 Codex 账号的成员，通过独立 API Key、�
 ## Capabilities and Constraints
 
 - 仅支持 OpenAI Codex OAuth 账号，不支持 Anthropic、Gemini、Bedrock 或通用供应商抽象。
-- 一个 Plan 只绑定一个由房主拥有的 OpenAI 账号；Plan 可以是公开或私密。
+- 一个 Plan 最多绑定一个由房主拥有的 OpenAI 账号；未绑定账号时可以探索成员与设置，但不能公开发布、配置 API Key 路由或转发请求。Plan 可以是公开或私密。
 - Plan 创建时确定固定份额或共享使用模式，创建后不能更改。
 - 额度同时按照 Codex 的五小时和七天窗口执行；固定份额模式限制成员额度，共享模式只限制账号总额度。
 - 每个 API Key 归创建它的用户所有，可以绑定多个用户已加入的 Plan，并使用优先级或均衡策略选路。

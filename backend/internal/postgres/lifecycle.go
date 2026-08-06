@@ -126,7 +126,8 @@ func (s *Store) UpdatePlanStatus(ctx context.Context, planID, ownerID, status st
 		return domain.Plan{}, err
 	}
 	defer tx.Rollback(ctx)
-	var currentOwner, currentStatus, accountID string
+	var currentOwner, currentStatus string
+	var accountID *string
 	if err := tx.QueryRow(ctx, `SELECT owner_user_id,status,account_id FROM shared_plans WHERE id=$1 FOR UPDATE`, planID).Scan(&currentOwner, &currentStatus, &accountID); err != nil {
 		return domain.Plan{}, mapError(err)
 	}
@@ -142,13 +143,13 @@ func (s *Store) UpdatePlanStatus(ctx context.Context, planID, ownerID, status st
 	if status == domain.StatusActive && currentStatus != domain.StatusArchived {
 		return domain.Plan{}, domain.ErrConflict
 	}
-	if status == domain.StatusActive {
+	if status == domain.StatusActive && accountID != nil {
 		var lockedAccountID string
-		if err := tx.QueryRow(ctx, `SELECT id FROM openai_accounts WHERE id=$1 FOR UPDATE`, accountID).Scan(&lockedAccountID); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT id FROM openai_accounts WHERE id=$1 FOR UPDATE`, *accountID).Scan(&lockedAccountID); err != nil {
 			return domain.Plan{}, mapError(err)
 		}
 		var alreadyBound bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM shared_plans WHERE account_id=$1 AND id<>$2)`, accountID, planID).Scan(&alreadyBound); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM shared_plans WHERE account_id=$1 AND id<>$2)`, *accountID, planID).Scan(&alreadyBound); err != nil {
 			return domain.Plan{}, err
 		}
 		if alreadyBound {
@@ -259,16 +260,18 @@ func (s *Store) RebindPlanAccount(ctx context.Context, planID, ownerID, accountI
 		return domain.Plan{}, err
 	}
 	defer tx.Rollback(ctx)
-	var actualOwner, currentAccountID string
+	var actualOwner string
+	var currentAccountID *string
 	if err := tx.QueryRow(ctx, `SELECT owner_user_id,account_id FROM shared_plans WHERE id=$1 FOR UPDATE`, planID).Scan(&actualOwner, &currentAccountID); err != nil {
 		return domain.Plan{}, mapError(err)
 	}
 	if actualOwner != ownerID {
 		return domain.Plan{}, domain.ErrForbidden
 	}
-	if currentAccountID == accountID {
+	if currentAccountID != nil && *currentAccountID == accountID {
 		return domain.Plan{}, domain.ErrConflict
 	}
+	firstBinding := currentAccountID == nil
 	var accountOwner, accountStatus string
 	if err := tx.QueryRow(ctx, `SELECT owner_user_id,status FROM openai_accounts WHERE id=$1 FOR UPDATE`, accountID).Scan(&accountOwner, &accountStatus); err != nil {
 		return domain.Plan{}, mapError(err)
@@ -290,10 +293,17 @@ func (s *Store) RebindPlanAccount(ctx context.Context, planID, ownerID, accountI
 	if err != nil {
 		return domain.Plan{}, err
 	}
+	if firstBinding {
+		event.Action = "plan.account_bound"
+	}
 	if err := insertAuditEvent(ctx, tx, event); err != nil {
 		return domain.Plan{}, err
 	}
-	if err := notifyPlanMembers(ctx, tx, event.ID, planID, ownerID, "plan_account_rebound", "Plan 账号已更换", "房主更换了 Plan 绑定的 OpenAI 账号", event.CreatedAt); err != nil {
+	notificationType, title, body := "plan_account_rebound", "Plan 账号已更换", "房主更换了 Plan 绑定的 OpenAI 账号"
+	if firstBinding {
+		notificationType, title, body = "plan_account_bound", "Plan 账号已绑定", "房主为 Plan 绑定了 OpenAI 账号"
+	}
+	if err := notifyPlanMembers(ctx, tx, event.ID, planID, ownerID, notificationType, title, body, event.CreatedAt); err != nil {
 		return domain.Plan{}, err
 	}
 	return plan, tx.Commit(ctx)
@@ -461,6 +471,10 @@ func (s *Store) ReadAllNotifications(ctx context.Context, userID string, now tim
 
 func scanPlan(row pgx.Row) (domain.Plan, error) {
 	var plan domain.Plan
-	err := row.Scan(&plan.ID, &plan.OwnerUserID, &plan.AccountID, &plan.Name, &plan.Status, &plan.Visibility, &plan.PublicSlots, &plan.PublicShareBasisPoints, &plan.AllocationMode, &plan.CreatedAt, &plan.ArchivedAt)
+	var accountID *string
+	err := row.Scan(&plan.ID, &plan.OwnerUserID, &accountID, &plan.Name, &plan.Status, &plan.Visibility, &plan.PublicSlots, &plan.PublicShareBasisPoints, &plan.AllocationMode, &plan.CreatedAt, &plan.ArchivedAt)
+	if accountID != nil {
+		plan.AccountID = *accountID
+	}
 	return plan, mapError(err)
 }

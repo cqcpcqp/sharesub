@@ -181,6 +181,7 @@ import ThemeSwitcher from './components/ThemeSwitcher.vue'
 import UserAvatar from './components/UserAvatar.vue'
 import { darkThemeOverrides, lightThemeOverrides } from './theme'
 import { locationWithoutHash, parseNavigationIntent, type InviteIntent } from './navigationIntent'
+import { isPlanRoutable } from './planAvailability'
 import { isThemeMode, resolveTheme, type ThemeMode } from './themePreference'
 import { appRoutePath, parseAppRoute, type AppRoute, type PublicPageID, type ViewID } from './appRoutes'
 
@@ -253,7 +254,7 @@ const navItems = computed(() => user.value?.is_admin ? [...nav.slice(0, -1), adm
 const mobilePrimaryItems = computed(() => navItems.value.filter(item => ['dashboard', 'lobby', 'plans', 'keys'].includes(item.id)))
 const mobileSecondaryItems = computed(() => navItems.value.filter(item => !mobilePrimaryItems.value.includes(item)))
 const mobileMoreOpen = ref(false)
-const usablePlanIDs = computed(() => new Set(plans.value.map(plan => plan.id)))
+const usablePlanIDs = computed(() => new Set(plans.value.filter(isPlanRoutable).map(plan => plan.id)))
 const hasUsableKey = computed(() => keys.value.some(key => key.status === 'active' && key.routes.some(route => route.enabled && usablePlanIDs.value.has(route.plan_id))))
 const showOnboarding = computed(() => bootstrapped.value && (plans.value.length === 0 || !hasUsableKey.value))
 const notice = reactive<{ type: 'success' | 'error'; text: string }>({ type: 'success', text: '' })

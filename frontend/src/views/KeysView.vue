@@ -1,6 +1,6 @@
 <template>
   <section class="view-content">
-    <div class="collection-toolbar"><p><strong>{{ keys.length }}</strong><span>个访问密钥</span></p><NButton type="primary" :disabled="plans.length === 0" @click="showCreate = true"><template #icon><Plus :size="17" /></template>创建 API Key</NButton></div>
+    <div class="collection-toolbar"><p><strong>{{ keys.length }}</strong><span>个访问密钥</span></p><NButton type="primary" :disabled="routablePlans.length === 0" @click="showCreate = true"><template #icon><Plus :size="17" /></template>创建 API Key</NButton></div>
     <div v-if="keys.length" class="key-list">
       <article v-for="key in keys" :key="key.id" class="key-row">
         <header>
@@ -48,12 +48,12 @@
         </footer>
       </article>
     </div>
-    <EmptyState v-else title="还没有 API Key" description="创建属于你的 Key，并选择它可以使用的 Plan。" :icon="KeyRound" />
+    <EmptyState v-else title="还没有 API Key" :description="routablePlans.length ? '创建属于你的 Key，并选择它可以使用的 Plan。' : '先恢复一个已绑定账号的 Plan，或为状态正常的 Plan 绑定账号，再创建访问密钥。'" :icon="KeyRound" />
   </section>
 
   <ModalShell v-if="editing" title="编辑 API Key" subtitle="配置路由目标和选路策略" wide @close="closeEdit">
     <div class="key-form-grid"><label>名称<AppInput :value="nameDraft" clearable :maxlength="100" :input-props="{ 'aria-label': 'API Key 名称' }" placeholder="例如：个人 Codex" @update:value="updateNameDraft" /></label><label>路由策略<NSelect :value="strategyDraft" :options="strategyOptions" to="body" @update:value="updateStrategyDraft" /></label></div>
-    <div class="route-editor"><div class="section-heading"><div><h3>可用 Plans</h3><p>至少选择一个；数字越小，优先级越高</p></div></div><div class="route-option" v-for="plan in plans" :key="plan.id"><NCheckbox :checked="routeDrafts[plan.id].enabled" class="check-label" @update:checked="updateRouteEnabled(plan.id, $event)"><span><strong>{{ plan.name }}</strong><small>{{ plan.visibility === 'public' ? '公开' : '私密' }}</small></span></NCheckbox><label class="priority-input">优先级<NInputNumber :value="routeDrafts[plan.id].priority" size="small" :min="1" :max="10000" :disabled="!routeDrafts[plan.id].enabled" @update:value="updateRoutePriority(plan.id, $event)" /></label></div></div>
+    <div class="route-editor"><div class="section-heading"><div><h3>路由 Plans</h3><p>归档路由会暂停；数字越小，优先级越高</p></div></div><div class="route-option" v-for="plan in editablePlans" :key="plan.id"><NCheckbox :checked="routeDrafts[plan.id].enabled" class="check-label" @update:checked="updateRouteEnabled(plan.id, $event)"><span><strong>{{ plan.name }}</strong><small>{{ plan.status === 'archived' ? '已归档，恢复后自动生效' : plan.visibility === 'public' ? '公开' : '私密' }}</small></span></NCheckbox><label class="priority-input">优先级<NInputNumber :value="routeDrafts[plan.id].priority" size="small" :min="1" :max="10000" :disabled="!routeDrafts[plan.id].enabled" @update:value="updateRoutePriority(plan.id, $event)" /></label></div></div>
     <template #footer><NButton :disabled="saving" @click="closeEdit">取消</NButton><NButton type="primary" :loading="saving" :disabled="!canSave" @click="save"><template #icon><Save :size="17" /></template>保存配置</NButton></template>
   </ModalShell>
 
@@ -64,7 +64,7 @@
     <template #footer><NButton :disabled="upgrading" @click="closeUpgrade">取消</NButton><NButton type="primary" :loading="upgrading" @click="confirmUpgrade"><template #icon><RotateCw :size="17" /></template>生成并保存新密钥</NButton></template>
   </ModalShell>
 
-  <APIKeySetupWizard v-model:show="showCreate" :plans="plans" @created="emit('changed')" @message="forwardMessage" />
+  <APIKeySetupWizard v-model:show="showCreate" :plans="routablePlans" @created="emit('changed')" @message="forwardMessage" />
   <UseKeyModal v-if="usingKey" :show="true" :api-key="usingKey" @close="usingKey = null" @message="forwardMessage" />
 </template>
 
@@ -77,6 +77,7 @@ import type { APIKey, Plan, RouteStrategy } from '../types'
 import { buildCCSwitchImportDeepLink, gatewayBaseURL, openCCSwitchImport } from '../keyUsage'
 import { canSubmitKeyConfig, type KeyRouteDraft } from '../keyConfigValidation'
 import { availableKeyRoutes, canUpgradeAPIKey } from '../keyReissue'
+import { isPlanRoutable } from '../planAvailability'
 import EmptyState from '../components/EmptyState.vue'
 import AppInput from '../components/AppInput.vue'
 import APIKeySetupWizard from '../components/APIKeySetupWizard.vue'
@@ -96,21 +97,26 @@ const upgrading = ref(false)
 const nameDraft = ref('')
 const strategyDraft = ref<RouteStrategy>('balanced')
 const routeDrafts = reactive<Record<string, KeyRouteDraft>>({})
+const routablePlans = computed(() => props.plans.filter(isPlanRoutable))
+const editablePlans = computed(() => {
+  const existingPlanIDs = new Set(editing.value?.routes.map(route => route.plan_id) ?? [])
+  return props.plans.filter(plan => isPlanRoutable(plan) || existingPlanIDs.has(plan.id))
+})
 const strategyOptions = [
   { label: '剩余额度均衡', value: 'balanced' },
   { label: '优先级故障转移', value: 'priority' },
 ]
-const routeValues = computed(() => props.plans.map(plan => routeDrafts[plan.id]))
+const routeValues = computed(() => editablePlans.value.map(plan => routeDrafts[plan.id]))
 const canSave = computed(() => canSubmitKeyConfig(nameDraft.value, routeValues.value))
 
 function resetRoutes(key: APIKey) {
   for (const planID of Object.keys(routeDrafts)) delete routeDrafts[planID]
-  for (const plan of props.plans) {
+  for (const plan of editablePlans.value) {
     const route = key.routes.find(item => item.plan_id === plan.id)
     routeDrafts[plan.id] = { enabled: route?.enabled ?? false, priority: route?.priority ?? 100 }
   }
 }
-function openEdit(key: APIKey) { nameDraft.value = key.name; strategyDraft.value = key.strategy; resetRoutes(key); editing.value = key }
+function openEdit(key: APIKey) { editing.value = key; nameDraft.value = key.name; strategyDraft.value = key.strategy; resetRoutes(key) }
 function closeEdit() { if (!saving.value) editing.value = null }
 function updateNameDraft(value: string) { nameDraft.value = value }
 function updateStrategyDraft(value: RouteStrategy) { strategyDraft.value = value }
@@ -159,7 +165,7 @@ async function confirmUpgrade() {
 }
 async function save() {
   if (!editing.value || !canSave.value || saving.value) return
-  const routes = props.plans.filter(plan => routeDrafts[plan.id].enabled).map(plan => ({ plan_id: plan.id, plan_name: plan.name, priority: routeDrafts[plan.id].priority!, enabled: true }))
+  const routes = editablePlans.value.filter(plan => routeDrafts[plan.id].enabled).map(plan => ({ plan_id: plan.id, plan_name: plan.name, priority: routeDrafts[plan.id].priority!, enabled: true }))
   saving.value = true
   try {
     await api.updateKey(editing.value.id, { name: nameDraft.value.trim(), strategy: strategyDraft.value, routes })

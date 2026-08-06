@@ -21,15 +21,17 @@ func (s *Service) CreatePlan(ctx context.Context, userID, accountID, name, alloc
 	if allocationMode == domain.AllocationShared && ownerShareBPS != 0 {
 		return domain.PlanDetail{}, domain.ErrInvalidInput
 	}
-	account, err := s.store.AccountByID(ctx, accountID)
-	if err != nil {
-		return domain.PlanDetail{}, err
-	}
-	if account.OwnerUserID != userID {
-		return domain.PlanDetail{}, domain.ErrForbidden
-	}
-	if account.Status != domain.StatusActive {
-		return domain.PlanDetail{}, domain.ErrAccountUnavailable
+	if accountID != "" {
+		account, err := s.store.AccountByID(ctx, accountID)
+		if err != nil {
+			return domain.PlanDetail{}, err
+		}
+		if account.OwnerUserID != userID {
+			return domain.PlanDetail{}, domain.ErrForbidden
+		}
+		if account.Status != domain.StatusActive {
+			return domain.PlanDetail{}, domain.ErrAccountUnavailable
+		}
 	}
 	planID, err := security.NewID()
 	if err != nil {
@@ -41,7 +43,7 @@ func (s *Service) CreatePlan(ctx context.Context, userID, accountID, name, alloc
 	}
 	createdAt := s.now()
 	plan := domain.Plan{ID: planID, OwnerUserID: userID, AccountID: accountID, Name: name, Status: domain.StatusActive, Visibility: domain.VisibilityPrivate, AllocationMode: allocationMode, CreatedAt: createdAt}
-	owner := domain.Member{ID: memberID, PlanID: planID, UserID: userID, Email: account.Email, Role: domain.RoleOwner, Status: domain.StatusActive, ShareBasisPoints: ownerShareBPS, CreatedAt: createdAt}
+	owner := domain.Member{ID: memberID, PlanID: planID, UserID: userID, Role: domain.RoleOwner, Status: domain.StatusActive, ShareBasisPoints: ownerShareBPS, CreatedAt: createdAt}
 	event, err := s.newAuditEvent(userID, "plan.created", "plan", planID, map[string]any{"name": name, "account_id": accountID})
 	if err != nil {
 		return domain.PlanDetail{}, err
@@ -71,8 +73,10 @@ func (s *Service) PlanDetail(ctx context.Context, userID, planID, timezone strin
 	if err != nil {
 		return detail, err
 	}
-	if err := s.hydrateAccountProxy(&detail.Account); err != nil {
-		return detail, err
+	if detail.Account != nil {
+		if err := s.hydrateAccountProxy(detail.Account); err != nil {
+			return detail, err
+		}
 	}
 	return detail, nil
 }

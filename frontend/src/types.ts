@@ -309,7 +309,7 @@ export interface PlanInsights {
 
 export interface PlanDetail {
   plan: Plan
-  account: Account
+  account: Account | null
   members: Member[]
   invites: Invite[]
   applications: JoinApplication[]

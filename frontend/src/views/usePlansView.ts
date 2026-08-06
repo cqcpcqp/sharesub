@@ -24,6 +24,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
   const auditEvents = ref<AuditEvent[]>([])
   const auditLoading = ref(false)
   const showCreate = ref(false)
+  const showConnectAccount = ref(false)
   const showInviteComposer = ref(false)
   const inviteSecret = ref('')
   const showDeleteConfirmOne = ref(false)
@@ -53,13 +54,14 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
   const isOwner = computed(() => detail.value?.plan.owner_user_id === props.user.id)
   const isShared = computed(() => detail.value?.plan.allocation_mode === 'shared')
   const isArchived = computed(() => detail.value?.plan.status === 'archived')
+  const isAccountBound = computed(() => detail.value?.account !== null)
   const owner = computed(() => detail.value?.members.find(member => member.role === 'owner'))
   const currentMember = computed(() => detail.value?.members.find(member => member.user_id === props.user.id))
   const allocatedShare = computed(() => formatShareBasisPoints(detail.value?.members.reduce((sum, member) => sum + member.share_basis_points, 0) ?? 0))
   const approvedApplications = computed(() => detail.value?.applications.filter(item => item.status === 'approved').length ?? 0)
   const availablePublicSlots = computed(() => Math.max(0, (detail.value?.plan.public_slots ?? 0) - approvedApplications.value))
   const canRename = computed(() => Boolean(detail.value && renameDraft.value.trim() && renameDraft.value.trim() !== detail.value.plan.name))
-  const canSavePublication = computed(() => publication.visibility === 'private' || (Number.isInteger(publication.slots) && publication.slots! >= 1 && publication.slots! <= 100))
+  const canSavePublication = computed(() => publication.visibility === 'private' || (isAccountBound.value && Number.isInteger(publication.slots) && publication.slots! >= 1 && publication.slots! <= 100))
   const canConfirmDelete = computed(() => Boolean(detail.value && deleteNameDraft.value.trim() === detail.value.plan.name))
   const transferMemberOptions = computed(() => detail.value!.members
     .filter(member => member.role === 'member')
@@ -67,7 +69,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
   const rebindAccountOptions = computed(() => props.accounts
     .filter(account => account.owner_user_id === props.user.id
       && account.status === 'active'
-      && account.id !== detail.value!.account.id
+      && account.id !== detail.value!.account?.id
       && !props.plans.some(plan => plan.id !== detail.value!.plan.id && plan.account_id === account.id))
     .map(account => ({ label: `${account.email} · ${account.plan_type}`, value: account.id })))
 
@@ -80,6 +82,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
     'plan.deleted': '删除了 Plan',
     'plan.owner_transferred': '转让了所有权',
     'plan.account_rebound': '更换了 OpenAI 账号',
+    'plan.account_bound': '绑定了 OpenAI 账号',
     'application.created': '提交了加入申请',
     'application.approved': '批准了加入申请',
     'application.rejected': '拒绝了加入申请',
@@ -178,7 +181,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
       syncDetail(value)
       if (activeTab.value === 'activity') void loadAudit(id)
       if (performancePeriod.value !== '24h') void loadPerformance(performancePeriod.value)
-      if (value.plan.status !== 'archived') void refreshQuotaAutomatically(id, requestSequence)
+      if (value.account && value.plan.status !== 'archived') void refreshQuotaAutomatically(id, requestSequence)
     } catch (error) {
       if (requestSequence === planRequestSequence) notifyError(error)
     } finally {
@@ -255,7 +258,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
   function updateRebindAccount(value: string | null) { rebindAccountID.value = value }
   function updateTransferMember(value: string | null) { transferMemberID.value = value }
   function updateCreateName(value: string) { createForm.name = value }
-  function updateCreateAccount(value: string) { createForm.accountID = value }
+  function updateCreateAccount(value: string | null) { createForm.accountID = value ?? '' }
   function updateCreateAllocationMode(value: PlanAllocationMode) { createForm.allocationMode = value }
   function updateCreateShare(value: number) { createForm.share = value }
   function updateInviteShare(value: number) { inviteForm.share = value }
@@ -297,8 +300,9 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
       detail.value = value
       syncDetail(value)
       showCreate.value = false
+      if (!value.account) activeTab.value = 'account'
       emit('changed')
-      notifySuccess('Plan 已创建')
+      notifySuccess(value.account ? 'Plan 已创建' : 'Plan 已创建，接下来可绑定 OpenAI 账号')
     } catch (error) {
       notifyError(error)
     } finally {
@@ -496,13 +500,31 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
   async function rebindAccount() {
     if (!detail.value || !rebindAccountID.value) return
     const planID = detail.value.plan.id
+    const firstBinding = !detail.value.account
     actionLoading.value = 'rebind'
     try {
       await api.rebindPlanAccount(planID, rebindAccountID.value)
       await loadPlan(planID)
       emit('changed')
-      notifySuccess('Plan 已切换到新的 OpenAI 账号')
+      notifySuccess(firstBinding ? 'OpenAI 账号已绑定到 Plan' : 'Plan 已切换到新的 OpenAI 账号')
     } catch (error) {
+      notifyError(error)
+    } finally {
+      actionLoading.value = ''
+    }
+  }
+
+  async function handleConnectedAccount(account: Account) {
+    if (!detail.value) return
+    const planID = detail.value.plan.id
+    actionLoading.value = 'connect-account'
+    try {
+      await api.rebindPlanAccount(planID, account.id)
+      await loadPlan(planID)
+      emit('changed')
+      notifySuccess('OpenAI 账号已接入并绑定到 Plan')
+    } catch (error) {
+      emit('changed')
       notifyError(error)
     } finally {
       actionLoading.value = ''
@@ -573,9 +595,9 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
   return {
     detail, planLoading, quotaRefreshing, performanceLoading, performancePeriod, actionLoading, activeTab, auditEvents, auditLoading,
     availableAccounts, loadPlan, loadAudit, loadPerformance,
-    showCreate, showInviteComposer, inviteSecret, showDeleteConfirmOne, showDeleteConfirmTwo,
+    showCreate, showConnectAccount, showInviteComposer, inviteSecret, showDeleteConfirmOne, showDeleteConfirmTwo,
     deleteNameDraft, renameDraft, transferMemberID, rebindAccountID, createForm, inviteForm,
-    publication, shareDrafts, accountOptions, planOptions, isOwner, isShared, isArchived, owner,
+    publication, shareDrafts, accountOptions, planOptions, isOwner, isShared, isArchived, isAccountBound, owner,
     currentMember, allocatedShare, availablePublicSlots, canRename, canSavePublication,
     canConfirmDelete, transferMemberOptions, rebindAccountOptions, actionLabels, metadataLabels,
     setPublicationVisibility, updateRenameDraft, updateDeleteNameDraft, updatePublicationSlots,
@@ -583,7 +605,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
     updateCreateAccount, updateCreateAllocationMode, updateCreateShare, updateInviteShare,
     handleTabChange, openCreate, createPlan, refreshQuota, sendInvite, revokeInvite, savePublication,
     saveShare, removeMember, leavePlan, review, applicationReviewBusy, renamePlan, updatePlanStatus,
-    transferOwnership, rebindAccount, continueDelete, closeDeleteDialogs, deletePlan, copyInvite,
+    transferOwnership, rebindAccount, handleConnectedAccount, continueDelete, closeDeleteDialogs, deletePlan, copyInvite,
     formatDate, formatMetadata,
   }
 }

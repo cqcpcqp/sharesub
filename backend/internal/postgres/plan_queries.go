@@ -20,24 +20,30 @@ func (s *Store) CreatePlan(ctx context.Context, plan domain.Plan, owner domain.M
 		return err
 	}
 	defer tx.Rollback(ctx)
-	var accountOwner, accountStatus string
-	if err = tx.QueryRow(ctx, `SELECT owner_user_id,status FROM openai_accounts WHERE id=$1 FOR UPDATE`, plan.AccountID).Scan(&accountOwner, &accountStatus); err != nil {
-		return mapError(err)
+	if plan.AccountID != "" {
+		var accountOwner, accountStatus string
+		if err = tx.QueryRow(ctx, `SELECT owner_user_id,status FROM openai_accounts WHERE id=$1 FOR UPDATE`, plan.AccountID).Scan(&accountOwner, &accountStatus); err != nil {
+			return mapError(err)
+		}
+		if accountOwner != plan.OwnerUserID {
+			return domain.ErrForbidden
+		}
+		if accountStatus != domain.StatusActive {
+			return domain.ErrAccountUnavailable
+		}
+		var alreadyBound bool
+		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM shared_plans WHERE account_id=$1)`, plan.AccountID).Scan(&alreadyBound); err != nil {
+			return err
+		}
+		if alreadyBound {
+			return domain.ErrAccountAlreadyBound
+		}
 	}
-	if accountOwner != plan.OwnerUserID {
-		return domain.ErrForbidden
+	var accountID any
+	if plan.AccountID != "" {
+		accountID = plan.AccountID
 	}
-	if accountStatus != domain.StatusActive {
-		return domain.ErrAccountUnavailable
-	}
-	var alreadyBound bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM shared_plans WHERE account_id=$1)`, plan.AccountID).Scan(&alreadyBound); err != nil {
-		return err
-	}
-	if alreadyBound {
-		return domain.ErrAccountAlreadyBound
-	}
-	_, err = tx.Exec(ctx, `INSERT INTO shared_plans(id,owner_user_id,account_id,name,status,visibility,public_slots,public_share_basis_points,allocation_mode,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10)`, plan.ID, plan.OwnerUserID, plan.AccountID, plan.Name, plan.Status, plan.Visibility, plan.PublicSlots, plan.PublicShareBasisPoints, plan.AllocationMode, plan.CreatedAt)
+	_, err = tx.Exec(ctx, `INSERT INTO shared_plans(id,owner_user_id,account_id,name,status,visibility,public_slots,public_share_basis_points,allocation_mode,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10)`, plan.ID, plan.OwnerUserID, accountID, plan.Name, plan.Status, plan.Visibility, plan.PublicSlots, plan.PublicShareBasisPoints, plan.AllocationMode, plan.CreatedAt)
 	if err != nil {
 		return mapError(err)
 	}
@@ -59,8 +65,8 @@ func (s *Store) ListPlans(ctx context.Context, userID string) ([]domain.Plan, er
 	defer rows.Close()
 	out := make([]domain.Plan, 0)
 	for rows.Next() {
-		var p domain.Plan
-		if err := rows.Scan(&p.ID, &p.OwnerUserID, &p.AccountID, &p.Name, &p.Status, &p.Visibility, &p.PublicSlots, &p.PublicShareBasisPoints, &p.AllocationMode, &p.CreatedAt, &p.ArchivedAt); err != nil {
+		p, err := scanPlan(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -84,9 +90,17 @@ func (s *Store) PlanDetail(ctx context.Context, planID, userID string, todayStar
 			RecentUsage:    make([]domain.MemberUsageTrend, 0),
 		},
 	}
-	err := s.pool.QueryRow(ctx, `SELECT p.id,p.owner_user_id,p.account_id,p.name,p.status,p.visibility,p.public_slots,p.public_share_basis_points,p.allocation_mode,p.created_at,p.archived_at,a.id,a.owner_user_id,a.name,a.notes,a.email,a.chatgpt_account_id,a.plan_type,a.proxy_url_ciphertext,a.max_concurrency,a.rpm_limit,a.fast_policy,a.token_expires_at,a.status,a.last_error,a.created_at FROM shared_plans p JOIN plan_members viewer ON viewer.plan_id=p.id AND viewer.user_id=$2 AND viewer.status='active' JOIN openai_accounts a ON a.id=p.account_id WHERE p.id=$1`, planID, userID).Scan(&out.Plan.ID, &out.Plan.OwnerUserID, &out.Plan.AccountID, &out.Plan.Name, &out.Plan.Status, &out.Plan.Visibility, &out.Plan.PublicSlots, &out.Plan.PublicShareBasisPoints, &out.Plan.AllocationMode, &out.Plan.CreatedAt, &out.Plan.ArchivedAt, &out.Account.ID, &out.Account.OwnerUserID, &out.Account.Name, &out.Account.Notes, &out.Account.Email, &out.Account.ChatGPTAccountID, &out.Account.PlanType, &out.Account.ProxyURLCiphertext, &out.Account.MaxConcurrency, &out.Account.RPMLimit, &out.Account.FastPolicy, &out.Account.TokenExpiresAt, &out.Account.Status, &out.Account.LastError, &out.Account.CreatedAt)
+	plan, err := scanPlan(s.pool.QueryRow(ctx, `SELECT p.id,p.owner_user_id,p.account_id,p.name,p.status,p.visibility,p.public_slots,p.public_share_basis_points,p.allocation_mode,p.created_at,p.archived_at FROM shared_plans p JOIN plan_members viewer ON viewer.plan_id=p.id AND viewer.user_id=$2 AND viewer.status='active' WHERE p.id=$1`, planID, userID))
 	if err != nil {
 		return out, mapError(err)
+	}
+	out.Plan = plan
+	if out.Plan.AccountID != "" {
+		account, err := s.AccountByID(ctx, out.Plan.AccountID)
+		if err != nil {
+			return out, err
+		}
+		out.Account = &account
 	}
 	isOwner := out.Plan.OwnerUserID == userID
 	rows, err := s.pool.Query(ctx, `SELECT m.id,m.plan_id,m.user_id,u.username,u.email,u.avatar_updated_at,m.role,m.status,m.share_basis_points,m.created_at FROM plan_members m JOIN users u ON u.id=m.user_id WHERE m.plan_id=$1 AND m.status='active' ORDER BY CASE WHEN m.role='owner' THEN 0 ELSE 1 END,m.created_at`, planID)
@@ -119,11 +133,13 @@ func (s *Store) PlanDetail(ctx context.Context, planID, userID string, todayStar
 		}
 		out.Applications = applications
 	}
-	insights, err := s.planInsights(ctx, planID, userID, out.Plan.AccountID, out.Account.CreatedAt, out.Members, todayStart, now)
-	if err != nil {
-		return out, err
+	if out.Account != nil {
+		insights, err := s.planInsights(ctx, planID, userID, out.Plan.AccountID, out.Account.CreatedAt, out.Members, todayStart, now)
+		if err != nil {
+			return out, err
+		}
+		out.Insights = insights
 	}
-	out.Insights = insights
 	return out, nil
 }
 

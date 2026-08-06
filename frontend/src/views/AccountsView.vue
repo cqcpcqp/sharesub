@@ -2,7 +2,7 @@
   <section class="view-content">
     <div class="collection-toolbar">
       <p><strong>{{ accounts.length }}</strong><span>个已接入账号</span></p>
-      <NButton type="primary" :loading="oauthStarting" @click="startOAuth">
+      <NButton type="primary" @click="showConnect = true">
         <template #icon><Plus :size="17" /></template>
         接入账号
       </NButton>
@@ -68,45 +68,11 @@
       </article>
     </div>
     <div v-else class="data-surface">
-      <EmptyState title="还没有 OpenAI 账号" description="接入账号后才能创建共享 Plan。" :icon="Bot" />
+      <EmptyState title="还没有 OpenAI 账号" description="你可以先创建 Plan 探索协作设置，需要开始使用时再接入账号。" :icon="Bot" />
     </div>
   </section>
 
-  <ModalShell
-    v-if="oauth"
-    title="接入 OpenAI"
-    subtitle="授权并配置账号的网关策略"
-    :wide="true"
-    @close="closeOAuth"
-  >
-    <div class="oauth-step">
-      <span>1</span>
-      <div>
-        <strong>完成 OpenAI 授权</strong>
-        <small>授权完成后，将浏览器地址栏中的完整回调地址粘贴到下方。</small>
-      </div>
-      <NButton tag="a" type="primary" :href="oauth.authorization_url" target="_blank" rel="noreferrer">
-        <template #icon><ExternalLink :size="17" /></template>
-        打开授权
-      </NButton>
-    </div>
-    <label>
-      回调地址
-      <AppInput :value="callback" clearable placeholder="http://localhost:1455/auth/callback?..." @update:value="updateCallback" />
-    </label>
-    <div class="oauth-step-heading">
-      <span>2</span>
-      <div><strong>设置账号配置</strong><small>之后可随时在账号页修改。</small></div>
-    </div>
-    <AccountConfigFields v-model="createConfig" />
-    <template #footer>
-      <NButton @click="closeOAuth">取消</NButton>
-      <NButton type="primary" :loading="completing" :disabled="!callback.trim() || !createConfig.name.trim()" @click="completeOAuth">
-        <template #icon><Check :size="17" /></template>
-        完成接入
-      </NButton>
-    </template>
-  </ModalShell>
+  <OpenAIAccountConnectDialog v-model:show="showConnect" @connected="handleConnected" @message="forwardError" />
 
   <ModalShell
     v-if="reauthorizing && reauthorizeAccount"
@@ -162,68 +128,39 @@
 <script setup lang="ts">
 import { NAlert, NButton } from 'naive-ui'
 import { computed, ref } from 'vue'
-import { Bot, CalendarClock, Check, ExternalLink, Gauge, Network, Pencil, Plus, RotateCw, Save, TimerReset } from 'lucide-vue-next'
+import { Bot, CalendarClock, ExternalLink, Gauge, Network, Pencil, Plus, RotateCw, Save, TimerReset } from 'lucide-vue-next'
 import { api, parseOAuthCallback } from '../api'
 import type { Account, AccountConfigInput, Member, OAuthStart, Plan } from '../types'
 import AccountConfigFields from '../components/AccountConfigFields.vue'
 import AppInput from '../components/AppInput.vue'
 import EmptyState from '../components/EmptyState.vue'
 import ModalShell from '../components/ModalShell.vue'
+import OpenAIAccountConnectDialog from '../components/OpenAIAccountConnectDialog.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 
 const props = withDefaults(defineProps<{ accounts: Account[]; plans?: Plan[] }>(), { plans: () => [] })
 const accounts = computed(() => props.accounts)
 const emit = defineEmits<{ changed: []; message: [type: 'success' | 'error', text: string] }>()
-const oauth = ref<OAuthStart | null>(null)
-const callback = ref('')
+const showConnect = ref(false)
 const editing = ref<Account | null>(null)
 const reauthorizing = ref<OAuthStart | null>(null)
 const reauthorizeAccount = ref<Account | null>(null)
 const reauthorizeCallback = ref('')
 const reauthorizeStartingID = ref('')
 const reauthorizeCompleting = ref(false)
-const oauthStarting = ref(false)
-const completing = ref(false)
 const saving = ref(false)
-const createConfig = ref<AccountConfigInput>(emptyConfig())
 const editConfig = ref<AccountConfigInput>(emptyConfig())
 const policyMembers = ref<Member[]>([])
 const policyUserOptions = computed(() => policyMembers.value.map(member => ({ label: member.email ? `${member.username} · ${member.email}` : member.username, value: member.user_id })))
 
-function updateCallback(value: string) { callback.value = value }
 function updateReauthorizeCallback(value: string) { reauthorizeCallback.value = value }
 
-async function startOAuth() {
-  oauthStarting.value = true
-  try {
-    createConfig.value = emptyConfig()
-    oauth.value = await api.oauthStart()
-  } catch (error) {
-    notifyError(error)
-  } finally {
-    oauthStarting.value = false
-  }
+function handleConnected() {
+  emit('message', 'success', 'OpenAI 账号已接入')
+  emit('changed')
 }
 
-function closeOAuth() {
-  oauth.value = null
-  callback.value = ''
-}
-
-async function completeOAuth() {
-  completing.value = true
-  try {
-    const params = parseOAuthCallback(callback.value.trim())
-    await api.oauthComplete(params.state, params.code, { ...createConfig.value })
-    closeOAuth()
-    emit('message', 'success', 'OpenAI 账号已接入')
-    emit('changed')
-  } catch (error) {
-    notifyError(error)
-  } finally {
-    completing.value = false
-  }
-}
+function forwardError(_: 'error', text: string) { emit('message', 'error', text) }
 
 async function startReauthorize(account: Account) {
   reauthorizeStartingID.value = account.id

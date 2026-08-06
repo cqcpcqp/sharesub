@@ -367,7 +367,7 @@ type PlanInsights struct {
 
 type PlanDetail struct {
 	Plan         Plan              `json:"plan"`
-	Account      Account           `json:"account"`
+	Account      *Account          `json:"account"`
 	Members      []Member          `json:"members"`
 	Invites      []Invite          `json:"invites"`
 	Applications []JoinApplication `json:"applications"`

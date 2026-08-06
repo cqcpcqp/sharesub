@@ -8,7 +8,7 @@
     <div v-if="!path" class="onboarding-paths">
       <article class="onboarding-path">
         <span><Share2 :size="22" /></span>
-        <div><h2>发起共享</h2><p>接入你们共同购买的 OpenAI 账号，并建立共享 Plan。</p></div>
+        <div><h2>发起共享</h2><p>先建立共享 Plan，再在 Plan 内绑定你们共同使用的 OpenAI 账号。</p></div>
         <NButton type="primary" @click="path = 'owner'">开始设置</NButton>
       </article>
       <article class="onboarding-path">
@@ -46,10 +46,11 @@
 import { NButton } from 'naive-ui'
 import { computed, ref, watch } from 'vue'
 import { Bot, Check, Compass, KeyRound, Layers3, Share2, Sparkles, UserPlus } from 'lucide-vue-next'
+import { isPlanRoutable } from '../planAvailability'
 import type { Account, APIKey, Plan, User } from '../types'
 
 type OnboardingPath = 'owner' | 'member'
-type ViewID = 'lobby' | 'plans' | 'accounts'
+type ViewID = 'lobby' | 'plans'
 
 const props = defineProps<{ accounts: Account[]; plans: Plan[]; keys: APIKey[]; user: User }>()
 const emit = defineEmits<{ navigate: [view: ViewID]; invite: [planID: string]; setupKey: [planID: string] }>()
@@ -61,9 +62,11 @@ const inferredPath = computed<OnboardingPath | null>(() => {
 const selectedPath = ref<OnboardingPath | null>(null)
 const path = computed<OnboardingPath | null>({ get: () => inferredPath.value ?? selectedPath.value, set: value => { selectedPath.value = value } })
 const ownedPlan = computed(() => props.plans.find(plan => plan.owner_user_id === props.user.id))
-const preferredPlan = computed(() => ownedPlan.value ?? props.plans[0])
+const usablePlans = computed(() => props.plans.filter(isPlanRoutable))
+const hasArchivedBoundPlan = computed(() => props.plans.some(plan => plan.status === 'archived' && plan.account_id !== ''))
+const preferredPlan = computed(() => usablePlans.value.find(plan => plan.owner_user_id === props.user.id) ?? usablePlans.value[0])
 const inviteStepDone = ref(false)
-const usablePlanIDs = computed(() => new Set(props.plans.map(plan => plan.id)))
+const usablePlanIDs = computed(() => new Set(usablePlans.value.map(plan => plan.id)))
 const hasUsableKey = computed(() => props.keys.some(key => key.status === 'active' && key.routes.some(route => route.enabled && usablePlanIDs.value.has(route.plan_id))))
 const canSwitchPath = computed(() => props.accounts.length === 0 && props.plans.length === 0)
 
@@ -73,21 +76,24 @@ watch(ownedPlan, plan => {
 
 const steps = computed(() => path.value === 'owner'
   ? [
-      { label: '接入账号', detail: props.accounts.length ? 'OpenAI 账号已就绪' : '授权共同购买的账号', done: props.accounts.length > 0, icon: Bot },
       { label: '建立 Plan', detail: ownedPlan.value ? ownedPlan.value.name : '创建共享空间', done: Boolean(ownedPlan.value), icon: Layers3 },
+      { label: '绑定账号', detail: ownedPlan.value?.account_id ? 'OpenAI 账号已就绪' : '在 Plan 内接入或选择账号', done: Boolean(ownedPlan.value?.account_id), icon: Bot },
       { label: '邀请朋友', detail: inviteStepDone.value ? '邀请入口已就绪' : '生成安全邀请链接', done: inviteStepDone.value, icon: UserPlus },
-      { label: '配置密钥', detail: hasUsableKey.value ? 'Codex 已可访问' : '创建自己的访问密钥', done: hasUsableKey.value, icon: KeyRound },
+      { label: '配置密钥', detail: hasUsableKey.value ? 'Codex 已可访问' : usablePlans.value.length ? '创建自己的访问密钥' : hasArchivedBoundPlan.value ? '先恢复已归档 Plan' : '等待房主绑定账号', done: hasUsableKey.value, icon: KeyRound },
     ]
   : [
       { label: '加入 Plan', detail: props.plans.length ? `已加入 ${props.plans.length} 个 Plan` : '使用邀请链接或探索大厅', done: props.plans.length > 0, icon: UserPlus },
-      { label: '配置密钥', detail: hasUsableKey.value ? 'Codex 已可访问' : '创建自己的访问密钥', done: hasUsableKey.value, icon: KeyRound },
+      { label: '配置密钥', detail: hasUsableKey.value ? 'Codex 已可访问' : usablePlans.value.length ? '创建自己的访问密钥' : hasArchivedBoundPlan.value ? '等待房主恢复 Plan' : '等待房主绑定账号', done: hasUsableKey.value, icon: KeyRound },
     ])
 const currentStep = computed(() => Math.max(0, steps.value.findIndex(step => !step.done)))
 const nextAction = computed(() => {
-  if (path.value === 'owner' && props.accounts.length === 0) return { title: '接入 OpenAI 账号', description: '完成 OpenAI 授权并设置账号的网关策略。', primaryLabel: '接入账号', secondaryLabel: '', icon: Bot, action: 'accounts' as const }
   if (path.value === 'owner' && !ownedPlan.value) return { title: '创建共享 Plan', description: '选择共享使用或固定分配，并建立你们的共享空间。', primaryLabel: '创建 Plan', secondaryLabel: '', icon: Layers3, action: 'plans' as const }
+  if (path.value === 'owner' && ownedPlan.value && !ownedPlan.value.account_id) return { title: '为 Plan 绑定 OpenAI 账号', description: '在刚创建的 Plan 中选择已有账号，或完成 OpenAI 授权并直接绑定。', primaryLabel: '绑定账号', secondaryLabel: '', icon: Bot, action: 'plans' as const }
+  if (path.value === 'owner' && ownedPlan.value?.status === 'archived') return { title: '恢复共享 Plan', description: '这个 Plan 已归档；恢复后，原有 API Key 路由会重新生效。', primaryLabel: '查看 Plan', secondaryLabel: '', icon: Layers3, action: 'plans' as const }
   if (path.value === 'owner' && !inviteStepDone.value) return { title: '邀请你的朋友', description: '生成仅发给成员的邀请链接，对方登录后即可加入。', primaryLabel: '生成邀请链接', secondaryLabel: '稍后邀请', icon: UserPlus, action: 'invite' as const }
   if (path.value === 'member' && props.plans.length === 0) return { title: '加入一个 Plan', description: '邀请链接会在登录后自动接受，也可以从大厅申请公开席位。', primaryLabel: '探索大厅', secondaryLabel: '', icon: Compass, action: 'lobby' as const }
+  if (path.value === 'member' && usablePlans.value.length === 0 && hasArchivedBoundPlan.value) return { title: '等待房主恢复 Plan', description: '你已经加入 Plan；房主恢复后，原有 API Key 路由会重新生效。', primaryLabel: '查看 Plan', secondaryLabel: '', icon: Layers3, action: 'plans' as const }
+  if (path.value === 'member' && usablePlans.value.length === 0) return { title: '等待房主绑定账号', description: '你已经加入 Plan；房主绑定 OpenAI 账号后，就可以继续配置 API Key。', primaryLabel: '查看 Plan', secondaryLabel: '', icon: Layers3, action: 'plans' as const }
   return { title: '连接你的 Codex', description: '创建独立密钥，并自动绑定当前 Plan。', primaryLabel: '配置 API Key', secondaryLabel: '', icon: KeyRound, action: 'key' as const }
 })
 
@@ -95,7 +101,7 @@ function runPrimary() {
   if (nextAction.value.action === 'invite' && ownedPlan.value) {
     emit('invite', ownedPlan.value.id)
   } else if (nextAction.value.action === 'key' && preferredPlan.value) emit('setupKey', preferredPlan.value.id)
-  else if (nextAction.value.action === 'accounts' || nextAction.value.action === 'plans' || nextAction.value.action === 'lobby') emit('navigate', nextAction.value.action)
+  else if (nextAction.value.action === 'plans' || nextAction.value.action === 'lobby') emit('navigate', nextAction.value.action)
 }
 
 function runSecondary() {

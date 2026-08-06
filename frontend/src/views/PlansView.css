@@ -1,5 +1,89 @@
-.archived-alert {
+.archived-alert,
+.account-required-alert {
   margin-top: 18px;
+}
+
+.account-required-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.account-setup {
+  min-height: 300px;
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  align-content: center;
+  gap: 18px 16px;
+  padding: 38px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.account-setup-overview {
+  min-height: 360px;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.account-setup-icon {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--blue-soft);
+  color: var(--blue);
+}
+
+.account-setup h3 {
+  margin: 0;
+  color: var(--ink-strong);
+  font-size: 16px;
+}
+
+.account-setup p {
+  max-width: 620px;
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.account-setup-actions {
+  grid-column: 2;
+  display: grid;
+  gap: 13px;
+  padding-top: 5px;
+}
+
+.account-bind-existing {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 9px;
+}
+
+.account-connect-new {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding-top: 13px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.account-connect-new span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.optional-field {
+  margin-left: 4px;
+  color: var(--muted-light);
+  font-size: 10px;
+  font-weight: 600;
 }
 
 .members-tab,
@@ -166,6 +250,11 @@
 
 .setting-action-inline > .n-button {
   min-width: 88px;
+}
+
+.setting-connect-account {
+  grid-column: 1 / -1;
+  justify-self: end;
 }
 
 .setting-fields {
@@ -357,6 +446,23 @@
 }
 
 @media (max-width: 640px) {
+  .account-setup,
+  .account-setup-overview {
+    min-height: 0;
+    grid-template-columns: 1fr;
+    justify-items: start;
+    padding: 24px;
+  }
+
+  .account-setup-actions {
+    width: 100%;
+    grid-column: 1;
+  }
+
+  .account-setup-overview > .n-button {
+    width: 100%;
+  }
+
   .members-section .section-heading {
     align-items: stretch;
     flex-direction: column;
@@ -405,6 +511,15 @@
 }
 
 @media (max-width: 440px) {
+  .account-bind-existing {
+    grid-template-columns: 1fr;
+  }
+
+  .account-connect-new {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
   .setting-action-inline,
   .setting-fields {
     grid-template-columns: 1fr;

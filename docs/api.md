@@ -77,21 +77,21 @@ OAuth 开始接口返回 `authorization_url` 和 `flow_id`。完成授权后，�
 
 `fast_policy` 规则按顺序首条命中，指定成员规则优先于全局规则。每条规则包含 `service_tier`（`all`、`priority`、`flex`）、`action`（`pass`、`filter`、`force_priority`、`block`）、`user_ids`、`error_message`、`model_whitelist`、`fallback_action` 和 `fallback_error_message`。`model_whitelist` 支持精确模型名与末尾 `*` 通配符；未命中白名单时执行 fallback 动作。过滤或强制改写后的实际 service tier 同步用于请求成本统计。
 
-账号列表与 Plan 详情中的 `account` 返回 `id`、`owner_user_id`、上述配置、OpenAI 邮箱、ChatGPT Account ID、套餐类型、Token 到期时间、状态、最近错误和创建时间。OAuth access token、refresh token 以及任何密文字段永远不会进入 JSON 响应。只有账号所有者可以修改配置；Plan 的所有有效成员都能通过 Plan 详情查看该账号的完整配置。
+账号列表与已绑定 Plan 详情中的 `account` 返回 `id`、`owner_user_id`、上述配置、OpenAI 邮箱、ChatGPT Account ID、套餐类型、Token 到期时间、状态、最近错误和创建时间；未绑定账号的 Plan 固定返回 `account: null` 和 `plan.account_id: ""`。OAuth access token、refresh token 以及任何密文字段永远不会进入 JSON 响应。只有账号所有者可以修改配置；Plan 的所有有效成员都能通过 Plan 详情查看该账号的完整配置。
 
 ## 共享方案、公开大厅与邀请
 
 | 方法 | 路径 | 鉴权 | 请求体 | 用途 |
 |---|---|---|---|---|
 | `GET` | `/api/plans` | 登录 Token | 无 | 列出当前用户可见的方案 |
-| `POST` | `/api/plans` | 登录 Token | `account_id`, `name`, `allocation_mode`, `owner_share_basis_points` | 创建方案 |
+| `POST` | `/api/plans` | 登录 Token | `account_id`（可为空字符串）, `name`, `allocation_mode`, `owner_share_basis_points` | 创建方案；空账号可稍后绑定 |
 | `GET` | `/api/plans/{planID}` | 登录 Token | 无 | 获取当前成员可见的方案详情 |
 | `GET` | `/api/plans/{planID}/performance` | 登录 Token | `period`, `timezone` | 获取当前成员可见的性能、模型分布、Token 趋势及最近使用汇总；`period` 固定为 `today`、`30m`、`6h`、`12h` 或 `24h`；本日边界按 IANA 时区计算 |
 | `PATCH` | `/api/plans/{planID}` | 登录 Token | `name` | 房主重命名 Plan |
 | `PATCH` | `/api/plans/{planID}/status` | 登录 Token | `status` | 房主归档或恢复 Plan |
 | `DELETE` | `/api/plans/{planID}` | 登录 Token | 无 | 删除已经归档的 Plan |
 | `PATCH` | `/api/plans/{planID}/owner` | 登录 Token | `member_id` | 将房主身份转让给有效成员 |
-| `PATCH` | `/api/plans/{planID}/account` | 登录 Token | `account_id` | 改绑房主拥有的有效 OpenAI 账号 |
+| `PATCH` | `/api/plans/{planID}/account` | 登录 Token | `account_id` | 首次绑定或改绑房主拥有的有效 OpenAI 账号 |
 | `GET` | `/api/plans/{planID}/audit-events` | 登录 Token | 无 | 获取最近 100 条 Plan 活动记录 |
 | `POST` | `/api/plans/{planID}/quota/refresh` | 登录 Token | 无 | 房主主动查询并更新账号额度窗口 |
 | `GET` | `/api/public-plans` | 登录 Token | 无 | 获取大厅内全部公开 Plan |

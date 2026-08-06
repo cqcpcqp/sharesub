@@ -46,7 +46,7 @@
 
         <table v-else-if="activeTab === 'plans'" class="admin-table">
           <thead><tr><th>Plan</th><th>所有者</th><th>账号</th><th>状态</th><th>成员</th><th>24h 请求</th><th>24h Token</th><th>创建时间</th></tr></thead>
-          <tbody><tr v-for="item in filteredPlans" :key="item.id"><td><div class="admin-primary"><strong>{{ item.name }}</strong><small>{{ item.allocation_mode === 'shared' ? '共享额度' : '固定份额' }} · {{ item.visibility === 'public' ? '公开' : '私密' }}</small></div></td><td>{{ item.owner_username }}</td><td>{{ item.account_email }}</td><td><StatusBadge :value="item.status" /></td><td>{{ item.member_count }}</td><td>{{ formatNumber(item.requests_24h) }}</td><td>{{ formatTokens(item.total_tokens_24h) }}</td><td>{{ formatDate(item.created_at) }}</td></tr></tbody>
+          <tbody><tr v-for="item in filteredPlans" :key="item.id"><td><div class="admin-primary"><strong>{{ item.name }}</strong><small>{{ item.allocation_mode === 'shared' ? '共享额度' : '固定份额' }} · {{ item.visibility === 'public' ? '公开' : '私密' }}</small></div></td><td>{{ item.owner_username }}</td><td>{{ item.account_email || '未绑定' }}</td><td><StatusBadge :value="item.status" /></td><td>{{ item.member_count }}</td><td>{{ formatNumber(item.requests_24h) }}</td><td>{{ formatTokens(item.total_tokens_24h) }}</td><td>{{ formatDate(item.created_at) }}</td></tr></tbody>
         </table>
 
         <table v-else class="admin-table">

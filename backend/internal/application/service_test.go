@@ -13,11 +13,12 @@ import (
 
 type createPlanStore struct {
 	Store
-	account       domain.Account
-	detail        domain.PlanDetail
-	created       bool
-	createdPlan   domain.Plan
-	createdMember domain.Member
+	account        domain.Account
+	detail         domain.PlanDetail
+	created        bool
+	accountLookups int
+	createdPlan    domain.Plan
+	createdMember  domain.Member
 }
 
 type dashboardStore struct {
@@ -241,7 +242,7 @@ func TestPlanMemberSeesHydratedAccountConfiguration(t *testing.T) {
 	}
 	store := &planAccountStore{detail: domain.PlanDetail{
 		Plan: domain.Plan{ID: "plan", OwnerUserID: "owner"},
-		Account: domain.Account{
+		Account: &domain.Account{
 			ID: "account", OwnerUserID: "owner", Name: "团队主账号", Notes: "仅用于 Codex",
 			Email: "openai@example.com", ChatGPTAccountID: "chatgpt", PlanType: "plus",
 			ProxyURLCiphertext: ciphertext, MaxConcurrency: 6, RPMLimit: 90, Status: domain.StatusActive,
@@ -415,6 +416,7 @@ func TestDashboardRejectsUnknownTimezone(t *testing.T) {
 }
 
 func (s *createPlanStore) AccountByID(context.Context, string) (domain.Account, error) {
+	s.accountLookups++
 	return s.account, nil
 }
 
@@ -471,6 +473,25 @@ func TestCreateSharedPlanUsesZeroMemberShare(t *testing.T) {
 	}
 	if store.createdPlan.AllocationMode != domain.AllocationShared || store.createdMember.ShareBasisPoints != 0 {
 		t.Fatalf("created shared plan = %+v, member = %+v", store.createdPlan, store.createdMember)
+	}
+}
+
+func TestCreatePlanWithoutAccountSkipsAccountLookup(t *testing.T) {
+	store := &createPlanStore{detail: domain.PlanDetail{
+		Plan:    domain.Plan{ID: "plan-id", OwnerUserID: "owner-id", Name: "先探索的 Plan", Status: domain.StatusActive, AllocationMode: domain.AllocationFixed},
+		Members: []domain.Member{}, Invites: []domain.Invite{}, Applications: []domain.JoinApplication{},
+	}}
+	service := &Service{store: store, now: func() time.Time { return time.Unix(0, 0) }}
+
+	detail, err := service.CreatePlan(context.Background(), "owner-id", "", "先探索的 Plan", domain.AllocationFixed, 2000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.accountLookups != 0 {
+		t.Fatalf("account lookups = %d, want 0", store.accountLookups)
+	}
+	if !store.created || store.createdPlan.AccountID != "" || detail.Account != nil {
+		t.Fatalf("unbound plan = %+v, detail account = %+v", store.createdPlan, detail.Account)
 	}
 }
 

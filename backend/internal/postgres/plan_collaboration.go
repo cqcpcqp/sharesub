@@ -44,10 +44,9 @@ func (s *Store) UpdatePlanPublication(ctx context.Context, ownerID, planID, visi
 		return domain.Plan{}, err
 	}
 	defer tx.Rollback(ctx)
-	var plan domain.Plan
-	err = tx.QueryRow(ctx, `SELECT id,owner_user_id,account_id,name,status,visibility,public_slots,public_share_basis_points,allocation_mode,created_at,archived_at FROM shared_plans WHERE id=$1 FOR UPDATE`, planID).Scan(&plan.ID, &plan.OwnerUserID, &plan.AccountID, &plan.Name, &plan.Status, &plan.Visibility, &plan.PublicSlots, &plan.PublicShareBasisPoints, &plan.AllocationMode, &plan.CreatedAt, &plan.ArchivedAt)
+	plan, err := scanPlan(tx.QueryRow(ctx, `SELECT id,owner_user_id,account_id,name,status,visibility,public_slots,public_share_basis_points,allocation_mode,created_at,archived_at FROM shared_plans WHERE id=$1 FOR UPDATE`, planID))
 	if err != nil {
-		return domain.Plan{}, mapError(err)
+		return domain.Plan{}, err
 	}
 	if plan.OwnerUserID != ownerID {
 		return domain.Plan{}, domain.ErrForbidden
@@ -58,6 +57,8 @@ func (s *Store) UpdatePlanPublication(ctx context.Context, ownerID, planID, visi
 	if visibility == domain.VisibilityPrivate {
 		slots = 0
 		share = 0
+	} else if plan.AccountID == "" {
+		return domain.Plan{}, domain.ErrInvalidInput
 	} else if plan.AllocationMode == domain.AllocationShared {
 		if share != 0 {
 			return domain.Plan{}, domain.ErrInvalidInput
@@ -82,9 +83,9 @@ func (s *Store) UpdatePlanPublication(ctx context.Context, ownerID, planID, visi
 			return domain.Plan{}, domain.ErrShareExceeded
 		}
 	}
-	err = tx.QueryRow(ctx, `UPDATE shared_plans SET visibility=$3,public_slots=$4,public_share_basis_points=$5,updated_at=now() WHERE id=$1 AND owner_user_id=$2 RETURNING id,owner_user_id,account_id,name,status,visibility,public_slots,public_share_basis_points,allocation_mode,created_at,archived_at`, planID, ownerID, visibility, slots, share).Scan(&plan.ID, &plan.OwnerUserID, &plan.AccountID, &plan.Name, &plan.Status, &plan.Visibility, &plan.PublicSlots, &plan.PublicShareBasisPoints, &plan.AllocationMode, &plan.CreatedAt, &plan.ArchivedAt)
+	plan, err = scanPlan(tx.QueryRow(ctx, `UPDATE shared_plans SET visibility=$3,public_slots=$4,public_share_basis_points=$5,updated_at=now() WHERE id=$1 AND owner_user_id=$2 RETURNING id,owner_user_id,account_id,name,status,visibility,public_slots,public_share_basis_points,allocation_mode,created_at,archived_at`, planID, ownerID, visibility, slots, share))
 	if err != nil {
-		return domain.Plan{}, mapError(err)
+		return domain.Plan{}, err
 	}
 	if err := insertAuditEvent(ctx, tx, event); err != nil {
 		return domain.Plan{}, err

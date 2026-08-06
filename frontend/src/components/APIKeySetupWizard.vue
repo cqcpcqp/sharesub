@@ -18,7 +18,7 @@
       </div>
       <div class="route-editor">
         <div class="section-heading"><div><h3>选择 Plan</h3><p>密钥只会访问已勾选的共享空间</p></div></div>
-        <div v-for="plan in plans" :key="plan.id" class="route-option">
+        <div v-for="plan in usablePlans" :key="plan.id" class="route-option">
           <NCheckbox :checked="routeDrafts[plan.id].enabled" class="check-label" @update:checked="updateRouteEnabled(plan.id, $event)">
             <span><strong>{{ plan.name }}</strong><small>{{ plan.visibility === 'public' ? '公开 Plan' : '私密 Plan' }}</small></span>
           </NCheckbox>
@@ -65,6 +65,7 @@ import { Check, Copy, KeyRound, Upload } from 'lucide-vue-next'
 import { api } from '../api'
 import { buildCCSwitchImportDeepLink, codexConfigFiles, gatewayBaseURL, openCCSwitchImport } from '../keyUsage'
 import { canSubmitKeyConfig, type KeyRouteDraft } from '../keyConfigValidation'
+import { isPlanRoutable } from '../planAvailability'
 import type { Plan, RouteStrategy } from '../types'
 import AppInput from './AppInput.vue'
 import ModalShell from './ModalShell.vue'
@@ -83,8 +84,9 @@ const strategyOptions = [
   { label: '剩余额度均衡', value: 'balanced' },
   { label: '优先级故障转移', value: 'priority' },
 ]
-const selectedPlans = computed(() => props.plans.filter(plan => routeDrafts[plan.id]?.enabled))
-const routeValues = computed(() => props.plans.map(plan => routeDrafts[plan.id]))
+const usablePlans = computed(() => props.plans.filter(isPlanRoutable))
+const selectedPlans = computed(() => usablePlans.value.filter(plan => routeDrafts[plan.id]?.enabled))
+const routeValues = computed(() => usablePlans.value.map(plan => routeDrafts[plan.id]))
 const canCreate = computed(() => canSubmitKeyConfig(form.name, routeValues.value))
 const homepage = computed(() => window.location.origin.replace(/\/+$/, ''))
 const baseURL = computed(() => gatewayBaseURL(homepage.value))
@@ -93,7 +95,7 @@ const codexConfig = computed(() => codexFiles.value[0].content)
 const codexAuth = computed(() => codexFiles.value[1].content)
 
 watch(
-  () => [props.show, props.initialPlanId, props.plans.map(plan => plan.id).join(',')] as const,
+  () => [props.show, props.initialPlanId, props.plans.map(plan => `${plan.id}:${plan.status}:${plan.account_id}`).join(',')] as const,
   ([show]) => { if (show && !secret.value) reset() },
   { immediate: true },
 )
@@ -102,8 +104,9 @@ function reset() {
   form.name = '我的 Codex'
   form.strategy = 'balanced'
   for (const key of Object.keys(routeDrafts)) delete routeDrafts[key]
-  const defaultPlanID = props.initialPlanId || (props.plans.length === 1 ? props.plans[0].id : '')
-  for (const plan of props.plans) routeDrafts[plan.id] = { enabled: plan.id === defaultPlanID, priority: 100 }
+  const requestedPlan = usablePlans.value.find(plan => plan.id === props.initialPlanId)
+  const defaultPlanID = requestedPlan?.id || (usablePlans.value.length === 1 ? usablePlans.value[0].id : '')
+  for (const plan of usablePlans.value) routeDrafts[plan.id] = { enabled: plan.id === defaultPlanID, priority: 100 }
 }
 
 function updateName(value: string) { form.name = value }

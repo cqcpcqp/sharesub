@@ -134,6 +134,13 @@ const activeDetail: PlanDetail = {
   plan: activePlan,
   members: detail.members.map(member => ({ ...member, plan_id: activePlan.id })),
 }
+const unboundPlan: Plan = { ...activePlan, id: 'plan-unbound', name: '待配置 Plan', account_id: '' }
+const unboundDetail: PlanDetail = {
+  ...activeDetail,
+  plan: unboundPlan,
+  account: null,
+  members: activeDetail.members.map(member => ({ ...member, plan_id: unboundPlan.id })),
+}
 const memberPlan: Plan = { ...activePlan, id: 'plan-member-auto', owner_user_id: owner.id }
 const memberDetail: PlanDetail = {
   ...activeDetail,
@@ -165,6 +172,67 @@ afterEach(() => {
 })
 
 describe('form interactions', () => {
+  it('creates a Plan without requiring an OpenAI account', async () => {
+    const createPlan = vi.spyOn(api, 'createPlan').mockResolvedValue(unboundDetail)
+    const wrapper = mount(PlansView, {
+      attachTo: document.body,
+      props: { accounts: [], plans: [], user: owner, theme: 'light' },
+      global: { stubs: { teleport: true } },
+    })
+
+    const openCreate = findButton(wrapper, '创建 Plan')
+    expect(openCreate?.attributes('disabled')).toBeUndefined()
+    await openCreate!.trigger('click')
+    await wrapper.get('input[placeholder="给这个共享空间起个名字"]').setValue(unboundPlan.name)
+    const submit = findButton(wrapper, '创建')
+    expect(submit?.attributes('disabled')).toBeUndefined()
+    await submit!.trigger('click')
+    await flushPromises()
+
+    expect(createPlan).toHaveBeenCalledWith({
+      account_id: '',
+      name: unboundPlan.name,
+      allocation_mode: 'fixed',
+      owner_share_basis_points: 2000,
+    })
+    expect(wrapper.text()).toContain('绑定 OpenAI 账号')
+  })
+
+  it('does not refresh quota before the Plan has an account', async () => {
+    vi.spyOn(api, 'plan').mockResolvedValue(unboundDetail)
+    const refreshQuota = vi.spyOn(api, 'refreshPlanQuota')
+    const wrapper = mount(PlansView, {
+      attachTo: document.body,
+      props: { accounts: [], plans: [unboundPlan], user: owner, theme: 'light' },
+      global: { stubs: { teleport: true } },
+    })
+
+    await flushPromises()
+    expect(refreshQuota).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('待绑定账号')
+    await findButton(wrapper, '去绑定账号')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('接入新账号并绑定')
+  })
+
+  it('binds an available account from the created Plan', async () => {
+    const boundPlan = { ...unboundPlan, account_id: account.id }
+    const boundDetail: PlanDetail = { ...unboundDetail, plan: boundPlan, account }
+    vi.spyOn(api, 'plan').mockResolvedValueOnce(unboundDetail).mockResolvedValue(boundDetail)
+    const rebind = vi.spyOn(api, 'rebindPlanAccount').mockResolvedValue(boundPlan)
+    vi.spyOn(api, 'refreshPlanQuota').mockResolvedValue({ account_id: account.id, signals: [] })
+    const scope = effectScope()
+    const view = scope.run(() => usePlansView(reactive({ accounts: [account], plans: [unboundPlan], user: owner, initialPlanId: '', invitePlanId: '' }), vi.fn()))!
+    await flushPromises()
+
+    view.updateRebindAccount(account.id)
+    await view.rebindAccount()
+
+    expect(rebind).toHaveBeenCalledWith(unboundPlan.id, account.id)
+    expect(view.detail.value?.account).toEqual(account)
+    scope.stop()
+  })
+
   it('accepts the archived Plan name and enables permanent deletion', async () => {
     vi.spyOn(api, 'plan').mockResolvedValue(detail)
     const wrapper = mount(PlansView, {
@@ -406,6 +474,31 @@ describe('form interactions', () => {
     expect(findButton(keys, '保存配置')!.attributes('disabled')).toBeDefined()
     await editName.setValue('更新后的名称')
     expect(findButton(keys, '保存配置')!.attributes('disabled')).toBeUndefined()
+  })
+
+  it('does not create new routes for archived Plans but preserves an existing archived route while editing', async () => {
+    const archivedKey: APIKey = {
+      ...apiKey,
+      routes: [{ plan_id: archivedPlan.id, plan_name: archivedPlan.name, priority: 100, enabled: true }],
+    }
+    const updateKey = vi.spyOn(api, 'updateKey').mockResolvedValue(archivedKey)
+    const wrapper = mount(KeysView, {
+      attachTo: document.body,
+      props: { keys: [archivedKey], plans: [archivedPlan] },
+      global: { stubs: { teleport: true } },
+    })
+
+    expect(findButton(wrapper, '创建 API Key')!.attributes('disabled')).toBeDefined()
+    await wrapper.get('button[aria-label="编辑配置"]').trigger('click')
+    expect(wrapper.text()).toContain('已归档，恢复后自动生效')
+    await findButton(wrapper, '保存配置')!.trigger('click')
+    await flushPromises()
+
+    expect(updateKey).toHaveBeenCalledWith(archivedKey.id, {
+      name: archivedKey.name,
+      strategy: archivedKey.strategy,
+      routes: archivedKey.routes,
+    })
   })
 
   it('shows the same persisted API key every time the usage dialog is opened', async () => {
