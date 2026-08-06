@@ -252,7 +252,6 @@ run_deploy() {
     || die "新版本已启动，但公网健康检查返回非预期内容：$public_health"
 
   curl -fsS --connect-timeout 10 --max-time 30 -o /dev/null https://www.underelay.com/health
-  curl -fsS --connect-timeout 10 --max-time 30 -o /dev/null https://stats.underelay.com/
 
   info "清理过期发布镜像"
   prune_release_images
