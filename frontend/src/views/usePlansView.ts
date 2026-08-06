@@ -126,6 +126,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
   let performanceRequestSequence = 0
   let auditRequestSequence = 0
   let quotaResetCreditsRequestSequence = 0
+  const quotaResettingAccountIDs = new Set<string>()
   let consumedInitialPlanID = ''
   let consumedInvitePlanID = ''
 
@@ -256,6 +257,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
     publication.share = value.plan.allocation_mode === 'shared' ? 0 : value.plan.visibility === 'private' ? 10 : Math.round(value.plan.public_share_basis_points / 100)
     renameDraft.value = value.plan.name
     descriptionDraft.value = value.plan.description
+    quotaResetting.value = Boolean(value.account && quotaResettingAccountIDs.has(value.account.id))
     transferMemberID.value = null
     rebindAccountID.value = null
   }
@@ -383,9 +385,10 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
       || !detail.value?.account
       || quotaResetCredits.value === null
       || quotaResetCredits.value.available_count === 0
-      || quotaResetting.value) return
+      || quotaResettingAccountIDs.has(detail.value.account.id)) return
     const planID = detail.value.plan.id
     const accountID = detail.value.account.id
+    quotaResettingAccountIDs.add(accountID)
     quotaResetting.value = true
     try {
       const result = await api.resetPlanQuota(planID)
@@ -402,7 +405,8 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
       if (detail.value?.plan.id === planID && detail.value.account?.id === accountID) quotaResetCredits.value = null
       notifyErrorWithContext('重置请求未能确认结果，请先重新查询剩余次数', error)
     } finally {
-      quotaResetting.value = false
+      quotaResettingAccountIDs.delete(accountID)
+      if (detail.value?.account?.id === accountID) quotaResetting.value = false
     }
   }
 

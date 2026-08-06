@@ -58,7 +58,7 @@ func (g *Gateway) QueryQuotaResetCredits(ctx context.Context, accessToken, chatg
 			credits = append(credits, domain.QuotaResetCredit{ExpiresAt: credit.ExpiresAt})
 		}
 	}
-	return domain.QuotaResetCredits{AvailableCount: payload.AvailableCount, Credits: credits, FetchedAt: g.now()}, nil
+	return domain.QuotaResetCredits{AvailableCount: len(credits), Credits: credits, FetchedAt: g.now()}, nil
 }
 
 func (g *Gateway) ConsumeQuotaResetCredit(ctx context.Context, accessToken, chatgptAccountID, proxyURL string) (domain.QuotaResetResult, error) {

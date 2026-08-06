@@ -32,7 +32,7 @@ func TestQueryQuotaResetCreditsUsesWhamContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if credits.AvailableCount != 2 || len(credits.Credits) != 1 || !credits.Credits[0].ExpiresAt.Equal(expiresAt) {
+	if credits.AvailableCount != 1 || len(credits.Credits) != 1 || !credits.Credits[0].ExpiresAt.Equal(expiresAt) {
 		t.Fatalf("credits = %+v", credits)
 	}
 }

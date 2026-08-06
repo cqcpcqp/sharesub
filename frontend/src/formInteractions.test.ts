@@ -446,6 +446,52 @@ describe('form interactions', () => {
     scope.stop()
   })
 
+  it('keeps quota reset locks isolated while switching between Plans', async () => {
+    const accountA = { ...account, id: 'account-reset-a' }
+    const accountB = { ...account, id: 'account-reset-b' }
+    const planA = { ...activePlan, id: 'plan-reset-a', account_id: accountA.id }
+    const planB = { ...activePlan, id: 'plan-reset-b', account_id: accountB.id }
+    const details: Record<string, PlanDetail> = {
+      [planA.id]: { ...activeDetail, plan: planA, account: accountA },
+      [planB.id]: { ...activeDetail, plan: planB, account: accountB },
+    }
+    vi.spyOn(api, 'plan').mockImplementation(async id => structuredClone(details[id]))
+    vi.spyOn(api, 'refreshPlanQuota').mockResolvedValue({ account_id: account.id, signals: [] })
+    vi.spyOn(api, 'planQuotaResetCredits').mockResolvedValue({
+      available_count: 1,
+      credits: [{ expires_at: '2026-08-12T05:09:00Z' }],
+      fetched_at: '2026-08-06T10:00:00Z',
+    })
+    let finishResetA!: (result: Awaited<ReturnType<typeof api.resetPlanQuota>>) => void
+    let finishResetB!: (result: Awaited<ReturnType<typeof api.resetPlanQuota>>) => void
+    const resetA = new Promise<Awaited<ReturnType<typeof api.resetPlanQuota>>>(resolve => { finishResetA = resolve })
+    const resetB = new Promise<Awaited<ReturnType<typeof api.resetPlanQuota>>>(resolve => { finishResetB = resolve })
+    const reset = vi.spyOn(api, 'resetPlanQuota').mockImplementation(id => id === planA.id ? resetA : resetB)
+    const emit = vi.fn()
+    const scope = effectScope()
+    const view = scope.run(() => usePlansView(reactive({ accounts: [accountA, accountB], plans: [planA, planB], user: owner, initialPlanId: '', invitePlanId: '' }), emit))!
+    await flushPromises()
+
+    await view.queryQuotaResetCredits()
+    const pendingA = view.resetQuota()
+    await view.loadPlan(planB.id)
+    await view.queryQuotaResetCredits()
+    const pendingB = view.resetQuota()
+    expect(reset).toHaveBeenCalledTimes(2)
+    expect(view.quotaResetting.value).toBe(true)
+
+    finishResetA({ code: 'ok', credit: null, windows_reset: 2, quota_refreshed: false, signals: [] })
+    await pendingA
+    expect(view.quotaResetting.value).toBe(true)
+    await view.resetQuota()
+    expect(reset).toHaveBeenCalledTimes(2)
+
+    finishResetB({ code: 'ok', credit: null, windows_reset: 2, quota_refreshed: false, signals: [] })
+    await pendingB
+    expect(view.quotaResetting.value).toBe(false)
+    scope.stop()
+  })
+
   it('keeps the selected performance period data after automatic quota refresh', async () => {
     const plan = { ...activePlan, id: 'plan-performance-refresh' }
     const planDetail = { ...activeDetail, plan }
