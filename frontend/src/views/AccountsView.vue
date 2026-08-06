@@ -10,8 +10,14 @@
 
     <div v-if="accounts.length" class="account-grid">
       <article v-for="account in accounts" :key="account.id" class="account-card">
-        <header>
-          <span class="account-logo"><Bot :size="22" /></span>
+        <header class="account-card-header">
+          <div class="account-identity">
+            <h3>{{ account.name }}</h3>
+            <div class="account-meta">
+              <span class="account-email">{{ account.email }}</span>
+              <span class="account-plan-type">{{ account.plan_type }}</span>
+            </div>
+          </div>
           <div class="row-actions">
             <StatusBadge :value="account.status" />
             <NButton
@@ -35,11 +41,7 @@
             </NButton>
           </div>
         </header>
-        <div class="account-identity">
-          <strong>{{ account.name }}</strong>
-          <span>{{ account.email }} · {{ account.plan_type }}</span>
-          <p v-if="account.notes">{{ account.notes }}</p>
-        </div>
+        <p v-if="account.notes" class="account-notes">{{ account.notes }}</p>
         <dl>
           <div>
             <dt><Gauge :size="14" />最大并发</dt>
@@ -54,10 +56,6 @@
             <dd>{{ account.proxy_url || '继承系统代理' }}</dd>
           </div>
           <div>
-            <dt><CalendarClock :size="14" />OAuth Token 到期</dt>
-            <dd>{{ formatDate(account.token_expires_at) }}</dd>
-          </div>
-          <div class="account-subscription-expiry">
             <dt><CalendarRange :size="14" />订阅有效期至</dt>
             <dd>{{ account.subscription_expires_at ? formatDate(account.subscription_expires_at) : '暂无订阅有效期' }}</dd>
           </div>
@@ -65,10 +63,6 @@
         <NAlert v-if="account.last_error" type="warning" :show-icon="true" class="account-error">
           {{ account.last_error }}
         </NAlert>
-        <footer>
-          <span>ShareSub ID</span>
-          <code>{{ shortID(account.id) }}</code>
-        </footer>
       </article>
     </div>
     <div v-else class="data-surface">
@@ -132,7 +126,7 @@
 <script setup lang="ts">
 import { NAlert, NButton } from 'naive-ui'
 import { computed, ref } from 'vue'
-import { Bot, CalendarClock, CalendarRange, ExternalLink, Gauge, Network, Pencil, Plus, RotateCw, Save, TimerReset } from 'lucide-vue-next'
+import { Bot, CalendarRange, ExternalLink, Gauge, Network, Pencil, Plus, RotateCw, Save, TimerReset } from 'lucide-vue-next'
 import { api, parseOAuthCallback } from '../api'
 import type { Account, AccountConfigInput, Member, OAuthStart, Plan } from '../types'
 import AccountConfigFields from '../components/AccountConfigFields.vue'
@@ -248,7 +242,6 @@ function notifyError(value: unknown) {
   emit('message', 'error', value instanceof Error ? value.message : String(value))
 }
 
-function shortID(value: string) { return value.slice(0, 10) }
 function formatDate(value: string) { return new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) }
 function limitLabel(value: number, suffix: string) { return value === 0 ? '不限制' : `${value} ${suffix}` }
 </script>

@@ -3,8 +3,7 @@
     <div class="filter-row"><div class="search-box"><AppInput :value="query" size="small" clearable :input-props="{ 'aria-label': '搜索 Plan 或房主' }" placeholder="搜索 Plan 或房主" @update:value="updateQuery"><template #prefix><Search :size="16" /></template></AppInput></div><div class="lobby-summary"><NTag round size="small"><strong>{{ plans.length }}</strong> 个公开 Plan</NTag><NTag round size="small" type="success"><strong>{{ availableCount }}</strong> 个有空位</NTag></div></div>
     <div v-if="filteredPlans.length" class="lobby-grid">
       <article v-for="item in filteredPlans" :key="item.plan.id" class="plan-card">
-        <header><div class="plan-icon"><Layers3 :size="20" /></div><StatusBadge :value="item.available_slots > 0 ? 'public' : 'disabled'" /></header>
-        <div class="plan-card-main"><h3>{{ item.plan.name }}</h3><p v-if="item.plan.description" class="plan-card-description">{{ item.plan.description }}</p><div class="plan-owner"><UserAvatar :size="34" :username="item.owner_username" :src="item.owner_avatar_url" /><p><strong>{{ item.owner_username }}</strong><small>{{ item.plan_type }} 账号</small></p></div></div>
+        <div class="plan-card-main"><h3>{{ item.plan.name }}</h3><p v-if="item.plan.description" class="plan-card-description">{{ item.plan.description }}</p><div class="plan-owner"><UserAvatar :size="34" :username="item.owner_username" :src="item.owner_avatar_url" /><p><strong>{{ item.owner_username }}</strong><small>{{ item.plan_type }} 账号</small></p></div><div class="plan-subscription"><CalendarRange :size="14" /><span>订阅有效期至</span><strong>{{ item.subscription_expires_at ? formatSubscriptionDate(item.subscription_expires_at) : '暂无订阅有效期' }}</strong></div></div>
         <div class="seat-meter"><div><span>席位使用情况</span><strong>{{ item.available_slots }} 个空位</strong></div><NProgress type="line" :percentage="seatUsage(item)" :show-indicator="false" :height="7" color="var(--card-accent)" rail-color="#e8eae6" /></div>
         <div class="plan-stats"><span><strong>{{ item.plan.allocation_mode === 'shared' ? '共享' : formatShareBasisPoints(item.plan.public_share_basis_points) }}</strong><small>{{ item.plan.allocation_mode === 'shared' ? '额度方式' : '每席份额' }}</small></span><span><strong>{{ item.plan.public_slots }}</strong><small>公开席位</small></span><span><strong>{{ item.member_count }}</strong><small>当前成员</small></span></div>
         <footer>
@@ -39,7 +38,7 @@
 <script setup lang="ts">
 import { NButton, NProgress, NTag } from 'naive-ui'
 import { computed, ref } from 'vue'
-import { Compass, Crown, Layers3, RotateCcw, Search, Send, ShieldCheck } from 'lucide-vue-next'
+import { CalendarRange, Compass, Crown, RotateCcw, Search, Send, ShieldCheck } from 'lucide-vue-next'
 import { api } from '../api'
 import { formatShareBasisPoints } from '../planAllocation'
 import { canApplyToPublicPlan } from '../publicPlanApplication'
@@ -77,4 +76,5 @@ async function apply() {
   }
 }
 function seatUsage(item: PublicPlan) { return ((item.plan.public_slots - item.available_slots) / item.plan.public_slots) * 100 }
+function formatSubscriptionDate(value: string) { return new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium' }).format(new Date(value)) }
 </script>

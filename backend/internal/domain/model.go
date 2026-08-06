@@ -225,13 +225,14 @@ type JoinApplication struct {
 }
 
 type PublicPlan struct {
-	Plan              Plan   `json:"plan"`
-	OwnerUsername     string `json:"owner_username"`
-	OwnerAvatarURL    string `json:"owner_avatar_url"`
-	PlanType          string `json:"plan_type"`
-	MemberCount       int    `json:"member_count"`
-	AvailableSlots    int    `json:"available_slots"`
-	ApplicationStatus string `json:"application_status"`
+	Plan                  Plan       `json:"plan"`
+	OwnerUsername         string     `json:"owner_username"`
+	OwnerAvatarURL        string     `json:"owner_avatar_url"`
+	PlanType              string     `json:"plan_type"`
+	SubscriptionExpiresAt *time.Time `json:"subscription_expires_at"`
+	MemberCount           int        `json:"member_count"`
+	AvailableSlots        int        `json:"available_slots"`
+	ApplicationStatus     string     `json:"application_status"`
 }
 
 type QuotaWindow struct {

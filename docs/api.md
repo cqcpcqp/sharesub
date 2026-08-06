@@ -72,10 +72,12 @@ OAuth 开始接口返回 `authorization_url` 和 `flow_id`。完成授权后，�
 | `proxy_url` | 空字符串，或 `http://`、`https://`、`socks5://` URL | 该账号的独立出站代理 |
 | `max_concurrency` | `0..100` | 最大并发请求数，`0` 表示不限制 |
 | `rpm_limit` | `0..10000` | 每分钟请求上限，`0` 表示不限制 |
-| `fast_policy` | 规则数组，最多 50 条 | 当前账号的 OpenAI Fast/Flex 策略；空数组表示原样透传 |
+| `fast_policy` | 规则数组，最多 50 条 | 当前账号的 OpenAI Fast/Flex 策略；空数组表示不干预请求选择的处理模式 |
 | `status` | `active`、`disabled`、`refresh_required` | 调度状态；OAuth 接入时固定保存为 `active` |
 
 `fast_policy` 规则按顺序首条命中，指定成员规则优先于全局规则。每条规则包含 `service_tier`（`all`、`priority`、`flex`）、`action`（`pass`、`filter`、`force_priority`、`block`）、`user_ids`、`error_message`、`model_whitelist`、`fallback_action` 和 `fallback_error_message`。`model_whitelist` 支持精确模型名与末尾 `*` 通配符；未命中白名单时执行 fallback 动作。过滤或强制改写后的实际 service tier 同步用于请求成本统计。
+
+请求未携带 `service_tier` 时，ShareSub 不会补充该字段；未配置规则时，`priority` 和 `flex` 按请求选择转发，`fast` 作为 Fast 模式的等价别名规范化为 `priority`，其他值保持不变。ShareSub 负责识别、过滤、改写或拦截该字段，实际 Fast/Flex 推理、额度消耗和模型可用性由 OpenAI 上游决定。
 
 账号列表与已绑定 Plan 详情中的 `account` 返回 `id`、`owner_user_id`、上述配置、OpenAI 邮箱、ChatGPT Account ID、套餐类型、付费订阅有效期 `subscription_expires_at`、OAuth Token 到期时间、状态、最近错误和创建时间。`subscription_expires_at` 的固定类型为 RFC 3339 时间字符串或 `null`；当前没有取得订阅有效期时返回 `null`。未绑定账号的 Plan 固定返回 `account: null` 和 `plan.account_id: ""`。OAuth access token、refresh token 以及任何密文字段永远不会进入 JSON 响应。只有账号所有者可以修改配置；Plan 的所有有效成员都能通过 Plan 详情查看该账号的完整配置。
 
@@ -98,7 +100,7 @@ OAuth 开始接口返回 `authorization_url` 和 `flow_id`。完成授权后，�
 | `POST` | `/api/plans/{planID}/quota/refresh` | 登录 Token | 无 | 房主主动查询并更新账号额度窗口 |
 | `GET` | `/api/plans/{planID}/quota/reset-credits` | 登录 Token | 无 | 有效成员查询 Codex 额度重置机会及到期时间 |
 | `POST` | `/api/plans/{planID}/quota/reset` | 登录 Token | 无 | 房主消耗一次 Codex 额度重置机会并同步最新窗口 |
-| `GET` | `/api/public-plans` | 登录 Token | 无 | 获取大厅内全部公开 Plan |
+| `GET` | `/api/public-plans` | 登录 Token | 无 | 获取大厅内全部公开 Plan，包含所属账号的套餐类型和订阅有效期 `subscription_expires_at` |
 | `PATCH` | `/api/plans/{planID}/publication` | 登录 Token | `visibility`, `public_slots`, `public_share_basis_points` | 房主发布或取消公开 Plan |
 | `POST` | `/api/public-plans/{planID}/applications` | 登录 Token | `message` | 申请公开 Plan 席位 |
 | `PATCH` | `/api/join-applications/{applicationID}` | 登录 Token | `decision` | 房主批准或拒绝申请 |

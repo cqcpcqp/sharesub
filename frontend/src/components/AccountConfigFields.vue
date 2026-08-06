@@ -19,8 +19,16 @@
     </section>
 
     <section class="account-form-section fast-policy-section">
-      <header><span><Zap :size="17" /></span><div><strong>OpenAI Fast/Flex 策略</strong><small>按顺序匹配请求体 service_tier；仅对当前账号生效</small></div></header>
-      <div v-if="modelValue.fast_policy.length === 0" class="fast-policy-empty">尚未配置规则，priority（fast）和 flex 请求将原样透传。</div>
+      <header><span><Zap :size="17" /></span><div><strong>OpenAI Fast/Flex 策略</strong><small>控制成员请求中的处理模式；仅对当前账号生效</small></div></header>
+      <div class="service-tier-guide">
+        <p>规则只匹配请求中明确携带的 Fast/priority 或 Flex，不会自动开启任何模式。</p>
+        <dl>
+          <div><dt>未指定 tier</dt><dd>ShareSub 不添加或改写 service_tier，由 OpenAI 按默认模式处理。</dd></div>
+          <div><dt>Fast（priority）</dt><dd>提高响应速度；使用 ChatGPT 登录时会以更高倍率消耗 Codex 额度，具体倍率取决于模型。</dd></div>
+          <div><dt>Flex</dt><dd>响应更慢且可能暂时无可用资源，适合低优先级或异步任务；可用性取决于 OpenAI 和模型。</dd></div>
+        </dl>
+      </div>
+      <div v-if="modelValue.fast_policy.length === 0" class="fast-policy-empty">未配置规则：Fast/priority 与 Flex 按请求原选择转发；未携带 service_tier 时交由 OpenAI 默认处理。</div>
       <article v-for="(rule, index) in modelValue.fast_policy" :key="index" class="fast-policy-rule">
         <header><strong>规则 #{{ index + 1 }}</strong><NButton quaternary type="error" size="tiny" aria-label="删除规则" @click="removeRule(index)"><template #icon><Trash2 :size="15" /></template></NButton></header>
         <div class="fast-policy-grid">
@@ -59,13 +67,13 @@ const statusOptions = [
 
 const tierOptions = [
   { label: '全部 tier', value: 'all' },
-  { label: 'priority（fast）', value: 'priority' },
-  { label: 'flex', value: 'flex' },
+  { label: 'Fast（priority）', value: 'priority' },
+  { label: 'Flex', value: 'flex' },
 ]
 const actionOptions = [
   { label: '透传（保留 service_tier）', value: 'pass' },
   { label: '过滤（移除 service_tier）', value: 'filter' },
-  { label: '强制设置 priority（fast）', value: 'force_priority' },
+  { label: '强制设置 Fast（priority）', value: 'force_priority' },
   { label: '拦截（拒绝请求）', value: 'block' },
 ]
 

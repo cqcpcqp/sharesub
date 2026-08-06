@@ -12,7 +12,7 @@ import (
 func (s *Store) ListPublicPlans(ctx context.Context, userID string) ([]domain.PublicPlan, error) {
 	rows, err := s.pool.Query(ctx, `
 			SELECT p.id,p.owner_user_id,p.account_id,p.name,p.description,p.status,p.visibility,p.public_slots,p.public_share_basis_points,p.allocation_mode,p.created_at,p.archived_at,
-				u.username,u.avatar_updated_at,a.plan_type,
+			u.username,u.avatar_updated_at,a.plan_type,a.subscription_expires_at,
 				(SELECT count(*) FROM plan_members m WHERE m.plan_id=p.id AND m.status='active'),
 				GREATEST(p.public_slots-(SELECT count(*) FROM plan_join_applications j JOIN plan_members jm ON jm.id=j.member_id AND jm.status='active' WHERE j.plan_id=p.id AND j.status='approved'),0),
 			COALESCE((SELECT j.status FROM plan_join_applications j WHERE j.plan_id=p.id AND j.user_id=$1 ORDER BY j.created_at DESC LIMIT 1),'')
@@ -29,7 +29,7 @@ func (s *Store) ListPublicPlans(ctx context.Context, userID string) ([]domain.Pu
 	for rows.Next() {
 		var item domain.PublicPlan
 		var avatarUpdatedAt *time.Time
-		if err := rows.Scan(&item.Plan.ID, &item.Plan.OwnerUserID, &item.Plan.AccountID, &item.Plan.Name, &item.Plan.Description, &item.Plan.Status, &item.Plan.Visibility, &item.Plan.PublicSlots, &item.Plan.PublicShareBasisPoints, &item.Plan.AllocationMode, &item.Plan.CreatedAt, &item.Plan.ArchivedAt, &item.OwnerUsername, &avatarUpdatedAt, &item.PlanType, &item.MemberCount, &item.AvailableSlots, &item.ApplicationStatus); err != nil {
+		if err := rows.Scan(&item.Plan.ID, &item.Plan.OwnerUserID, &item.Plan.AccountID, &item.Plan.Name, &item.Plan.Description, &item.Plan.Status, &item.Plan.Visibility, &item.Plan.PublicSlots, &item.Plan.PublicShareBasisPoints, &item.Plan.AllocationMode, &item.Plan.CreatedAt, &item.Plan.ArchivedAt, &item.OwnerUsername, &avatarUpdatedAt, &item.PlanType, &item.SubscriptionExpiresAt, &item.MemberCount, &item.AvailableSlots, &item.ApplicationStatus); err != nil {
 			return nil, err
 		}
 		item.OwnerAvatarURL = userAvatarURL(item.Plan.OwnerUserID, avatarUpdatedAt)

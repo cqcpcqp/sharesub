@@ -115,6 +115,7 @@ const publicPlan: PublicPlan = {
   owner_username: '另一位房主',
   owner_avatar_url: '',
   plan_type: 'plus',
+  subscription_expires_at: '2026-09-03T00:00:00Z',
   member_count: 1,
   available_slots: 1,
   application_status: '',
@@ -584,6 +585,11 @@ describe('form interactions', () => {
       props: { plans: [publicPlan], user: owner },
       global: { stubs: { teleport: true } },
     })
+    const card = wrapper.get('.plan-card')
+    expect(card.find('.plan-icon').exists()).toBe(false)
+    expect(card.find('.status-badge').exists()).toBe(false)
+    expect(card.get('.plan-subscription').text()).toContain('订阅有效期至')
+    expect(card.get('.plan-subscription').text()).toContain('2026')
     const search = wrapper.get('input[placeholder="搜索 Plan 或房主"]')
     await search.setValue('共享')
     expect(search.element).toHaveProperty('value', '共享')
@@ -612,10 +618,16 @@ describe('form interactions', () => {
     expect(callback.element).toHaveProperty('value', '')
   })
 
-  it('shows the OpenAI subscription expiry separately from the OAuth token expiry', () => {
+  it('shows the OpenAI subscription expiry without exposing the OAuth token expiry', () => {
     const wrapper = mount(AccountsView, { props: { accounts: [account] } })
     expect(wrapper.text()).toContain('订阅有效期至')
-    expect(wrapper.text()).toContain('OAuth Token 到期')
+    expect(wrapper.text()).not.toContain('OAuth Token 到期')
+    expect(wrapper.text()).not.toContain('ShareSub ID')
+    expect(wrapper.find('.account-logo').exists()).toBe(false)
+    expect(wrapper.get('.account-identity h3').text()).toBe('共享账号')
+    expect(wrapper.get('.account-email').text()).toBe('openai@example.com')
+    expect(wrapper.get('.account-plan-type').text()).toBe('plus')
+    expect(wrapper.text()).not.toContain('OPENAI@EXAMPLE.COM')
     expect(wrapper.text()).toContain('2026')
   })
 

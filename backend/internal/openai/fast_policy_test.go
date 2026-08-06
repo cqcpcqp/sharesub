@@ -70,3 +70,35 @@ func TestApplyFastPolicyDoesNotRestoreCompactServiceTier(t *testing.T) {
 		t.Fatalf("compact policy result: body=%s metadata=%+v", updated, metadata)
 	}
 }
+
+func TestApplyFastPolicyDefaultBehaviorWithoutRules(t *testing.T) {
+	tests := []struct {
+		name            string
+		body            string
+		metadataTier    string
+		expectedTier    string
+		expectedPresent bool
+	}{
+		{name: "omitted", body: `{"model":"gpt-5.4"}`},
+		{name: "priority", body: `{"model":"gpt-5.4","service_tier":"priority"}`, metadataTier: "priority", expectedTier: "priority", expectedPresent: true},
+		{name: "fast alias", body: `{"model":"gpt-5.4","service_tier":"fast"}`, metadataTier: "fast", expectedTier: "priority", expectedPresent: true},
+		{name: "flex", body: `{"model":"gpt-5.4","service_tier":"flex"}`, metadataTier: "flex", expectedTier: "flex", expectedPresent: true},
+		{name: "auto", body: `{"model":"gpt-5.4","service_tier":"auto"}`, metadataTier: "auto", expectedTier: "auto", expectedPresent: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			body, metadata, err := ApplyFastPolicy([]byte(test.body), RequestBilling{Model: "gpt-5.4", ServiceTier: test.metadataTier}, nil, "member")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var payload map[string]any
+			if err := json.Unmarshal(body, &payload); err != nil {
+				t.Fatal(err)
+			}
+			actualTier, present := payload["service_tier"]
+			if present != test.expectedPresent || (present && actualTier != test.expectedTier) || metadata.ServiceTier != test.expectedTier {
+				t.Fatalf("payload tier=%#v present=%v metadata tier=%q", actualTier, present, metadata.ServiceTier)
+			}
+		})
+	}
+}

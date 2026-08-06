@@ -182,6 +182,7 @@ export interface PublicPlan {
   owner_username: string
   owner_avatar_url: string
   plan_type: string
+  subscription_expires_at: string | null
   member_count: number
   available_slots: number
   application_status: '' | 'pending' | 'approved' | 'rejected'

@@ -80,6 +80,10 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if err := store.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
+	subscriptionExpiresAt := now.Add(30 * 24 * time.Hour)
+	if _, err := pool.Exec(ctx, `UPDATE openai_accounts SET subscription_expires_at=$1 WHERE id='account'`, subscriptionExpiresAt); err != nil {
+		t.Fatal(err)
+	}
 
 	var username, migratedPlanID, allocationMode string
 	if err := pool.QueryRow(ctx, `SELECT username FROM users WHERE id='owner'`).Scan(&username); err != nil {
@@ -205,7 +209,7 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(publicPlans) != 1 || publicPlans[0].OwnerAvatarURL != updatedOwner.AvatarURL {
+	if len(publicPlans) != 1 || publicPlans[0].OwnerAvatarURL != updatedOwner.AvatarURL || publicPlans[0].SubscriptionExpiresAt == nil || !publicPlans[0].SubscriptionExpiresAt.Equal(subscriptionExpiresAt) {
 		t.Fatalf("public plan owner avatar = %+v", publicPlans)
 	}
 	application, err := store.CreateJoinApplication(ctx, domain.JoinApplication{ID: "application", PlanID: "plan", UserID: "applicant", Status: "pending", CreatedAt: now}, audit("apply-plan", "applicant", "plan"))

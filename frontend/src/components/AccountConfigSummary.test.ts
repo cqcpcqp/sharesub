@@ -1,9 +1,12 @@
 // @vitest-environment happy-dom
 
 import { mount } from '@vue/test-utils'
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import type { Account, Member } from '../types'
 import AccountConfigSummary from './AccountConfigSummary.vue'
+
+const featureStyles = readFileSync('src/featureStyles.css', 'utf8')
 
 const account: Account = {
   id: 'account', owner_user_id: 'owner', name: '团队账号', notes: '', email: 'openai@example.com',
@@ -24,19 +27,28 @@ describe('AccountConfigSummary', () => {
   it('shows Fast/Flex policy details with resolved member identity', () => {
     const wrapper = mount(AccountConfigSummary, { props: { account, members: [member] } })
     expect(wrapper.text()).toContain('OpenAI Fast/Flex 策略')
-    expect(wrapper.text()).toContain('priority（fast）')
+    expect(wrapper.text()).toContain('Fast（priority）')
     expect(wrapper.text()).toContain('过滤 service_tier')
     expect(wrapper.text()).toContain('alice · alice@example.com')
     expect(wrapper.text()).toContain('gpt-5.5*')
     expect(wrapper.text()).toContain('订阅有效期至')
     expect(wrapper.text()).toContain('2026')
-    expect(wrapper.text()).toContain('OAuth Token 到期')
+    expect(wrapper.text()).not.toContain('OAuth Token 到期')
+    expect(wrapper.text()).not.toContain('ShareSub ID')
+    expect(wrapper.text()).not.toContain('Account ID')
+    expect(wrapper.get('.fast-policy-summary-action').text()).toBe('过滤 service_tier')
+  })
+
+  it('keeps rule number styles scoped away from the action tag', () => {
+    expect(featureStyles).not.toContain('.fast-policy-summary-rule > header > div > span')
+    expect(featureStyles).toContain('.fast-policy-summary-action.n-tag { flex: 0 0 auto;')
   })
 
   it('shows the passthrough state when no rules are configured', () => {
     const wrapper = mount(AccountConfigSummary, { props: { account: { ...account, fast_policy: [] }, members: [] } })
     expect(wrapper.text()).toContain('未配置策略')
-    expect(wrapper.text()).toContain('原样透传')
+    expect(wrapper.text()).toContain('按请求原选择转发')
+    expect(wrapper.text()).toContain('OpenAI 默认处理')
   })
 
   it('shows when the account has no recorded subscription expiry', () => {
