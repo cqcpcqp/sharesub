@@ -153,7 +153,20 @@ func (s *Store) ResolveGatewayRoutes(ctx context.Context, hash []byte, now time.
 			m.id,m.plan_id,m.user_id,u.username,u.email,m.role,m.status,m.share_basis_points,m.created_at,
 			p.id,p.owner_user_id,p.account_id,p.name,p.status,p.visibility,p.public_slots,p.public_share_basis_points,p.allocation_mode,p.created_at,
 			a.id,a.owner_user_id,a.name,a.notes,a.email,a.chatgpt_account_id,a.plan_type,a.subscription_expires_at,a.access_token_ciphertext,a.refresh_token_ciphertext,a.proxy_url_ciphertext,a.max_concurrency,a.rpm_limit,a.fast_policy,a.token_expires_at,a.status,a.last_error,a.created_at,
-			COALESCE((SELECT max(q.used_micros) FROM member_quota_windows q WHERE q.member_id=m.id AND q.account_id=a.id AND q.reset_at>$2),0),
+			COALESCE((
+				SELECT max(CASE WHEN costs.total_cost_micros=0 THEN 0::bigint
+					ELSE floor(costs.member_cost_micros::numeric*q.used_micros/costs.total_cost_micros)::bigint END)
+				FROM account_quota_snapshots q
+				CROSS JOIN LATERAL (
+					SELECT
+						COALESCE(sum(g.estimated_cost_micros) FILTER (WHERE g.member_id=m.id),0)::bigint AS member_cost_micros,
+						COALESCE(sum(g.estimated_cost_micros),0)::bigint AS total_cost_micros
+					FROM gateway_request_metrics g
+					WHERE g.plan_id=p.id AND g.account_id=a.id
+						AND g.created_at>=q.window_start AND g.created_at<q.reset_at
+				) costs
+				WHERE q.account_id=a.id AND q.reset_at>$2
+			),0),
 			COALESCE((SELECT max(q.used_micros) FROM account_quota_snapshots q WHERE q.account_id=a.id AND q.reset_at>$2),0)
 		FROM api_keys k
 		JOIN api_key_plans r ON r.api_key_id=k.id AND r.enabled=true
@@ -193,7 +206,23 @@ func (s *Store) MemberQuotaExhausted(ctx context.Context, memberID, accountID st
 	}
 	var exhausted bool
 	limit := int64(shareBPS) * 10_000
-	err := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM member_quota_windows WHERE member_id=$1 AND account_id=$2 AND reset_at>$3 AND used_micros >= $4)`, memberID, accountID, now, limit).Scan(&exhausted)
+	err := s.pool.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1
+			FROM plan_members m
+			JOIN shared_plans p ON p.id=m.plan_id AND p.account_id=$2
+			JOIN account_quota_snapshots q ON q.account_id=$2 AND q.reset_at>$3
+			CROSS JOIN LATERAL (
+				SELECT
+					COALESCE(sum(g.estimated_cost_micros) FILTER (WHERE g.member_id=m.id),0)::bigint AS member_cost_micros,
+					COALESCE(sum(g.estimated_cost_micros),0)::bigint AS total_cost_micros
+				FROM gateway_request_metrics g
+				WHERE g.plan_id=p.id AND g.account_id=q.account_id
+					AND g.created_at>=q.window_start AND g.created_at<q.reset_at
+			) costs
+			WHERE m.id=$1 AND costs.total_cost_micros>0
+				AND floor(costs.member_cost_micros::numeric*q.used_micros/costs.total_cost_micros)>=$4
+		)`, memberID, accountID, now, limit).Scan(&exhausted)
 	return exhausted, err
 }
 

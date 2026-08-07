@@ -57,7 +57,7 @@ describe('PlanInsights performance period', () => {
     expect(rankingSelect.props('value')).toBe('today')
   })
 
-  it('explains member cost shares and displays separate 5h and 7d percentages', () => {
+  it('explains estimated member quota and displays separate 5h and 7d usage', () => {
     const wrapper = mount(PlanInsights, {
       props: {
         insights: {
@@ -67,12 +67,12 @@ describe('PlanInsights performance period', () => {
           ],
           member_quotas: [
             { member_id: 'member-a', windows: [
-              { window_type: '5h', used_micros: 80_000_000, account_used_micros: 20_000_000, reset_at: '2026-08-04T15:00:00Z' },
-              { window_type: '7d', used_micros: 60_000_000, account_used_micros: 33_000_000, reset_at: '2026-08-08T00:00:00Z' },
+              { window_type: '5h', used_micros: 16_000_000, account_used_micros: 20_000_000, reset_at: '2026-08-04T15:00:00Z' },
+              { window_type: '7d', used_micros: 19_800_000, account_used_micros: 33_000_000, reset_at: '2026-08-08T00:00:00Z' },
             ] },
             { member_id: 'member-b', windows: [
-              { window_type: '5h', used_micros: 20_000_000, account_used_micros: 20_000_000, reset_at: '2026-08-04T15:00:00Z' },
-              { window_type: '7d', used_micros: 40_000_000, account_used_micros: 33_000_000, reset_at: '2026-08-08T00:00:00Z' },
+              { window_type: '5h', used_micros: 4_000_000, account_used_micros: 20_000_000, reset_at: '2026-08-04T15:00:00Z' },
+              { window_type: '7d', used_micros: 13_200_000, account_used_micros: 33_000_000, reset_at: '2026-08-08T00:00:00Z' },
             ] },
           ],
           performance: { request_count: 0, success_count: 0, average_ttft_ms: 0, p95_ttft_ms: 0, average_duration_ms: 0, p95_duration_ms: 0 },
@@ -91,13 +91,13 @@ describe('PlanInsights performance period', () => {
       global: { stubs: { MemberCostShareChart: true } },
     })
 
-    expect(wrapper.get('button[aria-label="查看成员用量占比口径"]').attributes('aria-label')).toBe('查看成员用量占比口径')
+    expect(wrapper.get('button[aria-label="查看成员估算额度口径"]').attributes('aria-label')).toBe('查看成员估算额度口径')
     expect(wrapper.findAll('.member-share-window')).toHaveLength(2)
     const memberWindows = wrapper.findAll('.member-windows').map(item => item.text())
-    expect(memberWindows[0]).toContain('5h80.0%')
-    expect(memberWindows[0]).toContain('7d60.0%')
-    expect(memberWindows[1]).toContain('5h20.0%')
-    expect(memberWindows[1]).toContain('7d40.0%')
+    expect(memberWindows[0]).toContain('5h16.0%')
+    expect(memberWindows[0]).toContain('7d19.8%')
+    expect(memberWindows[1]).toContain('5h4.0%')
+    expect(memberWindows[1]).toContain('7d13.2%')
   })
 
   it('shows total tokens before the token breakdown in every quota card', () => {

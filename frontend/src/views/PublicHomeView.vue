@@ -52,7 +52,7 @@
       </section>
 
       <section class="public-section public-audiences">
-        <article><span><Crown :size="21" /></span><small>对于房主</small><h2>共享访问，不失去控制</h2><ul><li>固定份额或共享使用两种模式</li><li>公开席位、私密邀请和申请审批</li><li>并发、RPM、成员与额度统一管理</li></ul></article>
+        <article><span><Crown :size="21" /></span><small>对于房主</small><h2>共享访问，不失去控制</h2><ul><li>固定份额或共享使用两种模式</li><li>公开招募、私密邀请和申请审批</li><li>并发、RPM、成员与额度统一管理</li></ul></article>
         <article><span><UsersRound :size="21" /></span><small>对于成员</small><h2>独立使用，消耗清晰可见</h2><ul><li>每个人创建并管理自己的 API Key</li><li>多个 Plan 可配置优先级或均衡选路</li><li>查看个人用量、性能与可用额度</li></ul></article>
       </section>
 
@@ -95,7 +95,7 @@ const demoMembers = [
 const workflow = [
   { icon: LockKeyhole, title: '接入账号', description: '房主通过 OpenAI OAuth 接入自己有权使用的 Codex 账号。' },
   { icon: Layers3, title: '创建 Plan', description: '选择固定份额或共享使用，并设定清晰的共享边界。' },
-  { icon: UserRoundPlus, title: '邀请成员', description: '私密发送一次性邀请，或公开席位并审批申请。' },
+  { icon: UserRoundPlus, title: '邀请成员', description: '私密发送一次性邀请，或开放招募名额并审批申请。' },
   { icon: KeyRound, title: '独立使用', description: '成员创建自己的 API Key，查看各自用量与性能。' },
 ]
 const trustItems = [
@@ -108,7 +108,7 @@ const faq = [
   { question: 'ShareSub 是 OpenAI 官方产品吗？', answer: '不是。ShareSub 是独立开发的共享管理平台，与 OpenAI 无隶属、授权或代理关系。' },
   { question: '平台会保存我的对话内容吗？', answer: '不会。系统记录额度归属与性能指标，但不把请求或响应正文写入数据库或性能记录。' },
   { question: '任何 OpenAI 账号都可以接入吗？', answer: '你只能接入自己拥有或已获得明确授权使用的账号，并需要遵守 OpenAI 条款及 ShareSub 使用规范。' },
-  { question: '公开 Plan 是直接加入吗？', answer: '不是。用户申请公开席位后，仍需由 Plan 房主批准或拒绝。' },
+  { question: '公开 Plan 是直接加入吗？', answer: '不是。用户申请公开招募名额后，仍需由 Plan 房主批准或拒绝。' },
   { question: '成员之间会共用同一个 API Key 吗？', answer: '不会。API Key 归创建它的用户所有，每位成员独立创建、配置和撤销自己的 Key。' },
 ]
 </script>

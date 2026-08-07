@@ -410,7 +410,7 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 			memberShares[memberQuota.MemberID] = memberQuota.Windows[0].UsedMicros
 		}
 	}
-	if memberShares["owner-member"] != 87_179_487 || memberShares["applicant-member"] != 12_820_513 {
+	if memberShares["owner-member"] != 87_179_487 || memberShares["applicant-member"] != 12_820_512 {
 		t.Fatalf("member 5h cost shares = %+v", memberShares)
 	}
 	if len(usageDetail.Insights.ModelUsage) != 2 || usageDetail.Insights.ModelUsage[0].Model != "gpt-5.6-terra" || usageDetail.Insights.ModelUsage[1].EstimatedCostMicros != 125 {
@@ -715,5 +715,99 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	resetAdmin, err := store.ResetAdminPassword(ctx, bootstrapUser.Email, "reset-hash")
 	if err != nil || resetAdmin.Role != domain.RoleAdmin || !resetAdmin.MustChangePassword || resetAdmin.PasswordHash != "reset-hash" {
 		t.Fatalf("reset bootstrap admin = %+v, error = %v", resetAdmin, err)
+	}
+}
+
+func TestFixedQuotaUsesCostWeightedAccountUsage(t *testing.T) {
+	databaseURL := os.Getenv("SHARESUB_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("SHARESUB_TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	admin, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+
+	schema := fmt.Sprintf("sharesub_quota_test_%d", time.Now().UnixNano())
+	identifier := pgx.Identifier{schema}.Sanitize()
+	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+identifier); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if _, err := admin.Exec(ctx, "DROP SCHEMA "+identifier+" CASCADE"); err != nil {
+			t.Errorf("drop test schema: %v", err)
+		}
+	}()
+
+	config, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.ConnConfig.RuntimeParams["search_path"] = schema
+	pool, err := pgxpool.NewWithConfig(ctx, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	store := &Store{pool: pool}
+	if err := store.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Date(2026, 8, 7, 12, 0, 0, 0, time.UTC)
+	batch := &pgx.Batch{}
+	batch.Queue(`INSERT INTO users(id,username,email,password_hash,status,created_at,updated_at) VALUES('quota-owner','quota-owner','quota-owner@example.com','hash','active',$1,$1)`, now)
+	batch.Queue(`INSERT INTO users(id,username,email,password_hash,status,created_at,updated_at) VALUES('quota-member','quota-member','quota-member@example.com','hash','active',$1,$1)`, now)
+	batch.Queue(`INSERT INTO openai_accounts(id,owner_user_id,name,email,chatgpt_account_id,plan_type,access_token_ciphertext,refresh_token_ciphertext,token_expires_at,status,created_at,updated_at) VALUES('quota-account','quota-owner','额度测试账号','quota@example.com','quota-chatgpt','plus',$2,$3,$4,'active',$1,$1)`, now, []byte("access"), []byte("refresh"), now.Add(time.Hour))
+	batch.Queue(`INSERT INTO shared_plans(id,owner_user_id,account_id,name,status,visibility,allocation_mode,created_at,updated_at) VALUES('quota-plan','quota-owner','quota-account','固定额度测试','active','private','fixed',$1,$1)`, now)
+	batch.Queue(`INSERT INTO plan_members(id,plan_id,user_id,role,status,share_basis_points,created_at,updated_at) VALUES('quota-owner-member','quota-plan','quota-owner','owner','active',3000,$1,$1)`, now)
+	batch.Queue(`INSERT INTO plan_members(id,plan_id,user_id,role,status,share_basis_points,created_at,updated_at) VALUES('quota-member-member','quota-plan','quota-member','member','active',1100,$1,$1)`, now)
+	batch.Queue(`INSERT INTO api_keys(id,user_id,name,key_prefix,key_hash,key_ciphertext,strategy,status,created_at,updated_at) VALUES('quota-key','quota-owner','额度测试 Key','sk-sharesub-quota',$2,$3,'balanced','active',$1,$1)`, now, []byte("quota-hash"), []byte("ciphertext"))
+	batch.Queue(`INSERT INTO api_key_plans(api_key_id,plan_id,priority,enabled) VALUES('quota-key','quota-plan',1,true)`)
+	batch.Queue(`INSERT INTO account_quota_snapshots(account_id,window_type,window_start,reset_at,used_micros,updated_at) VALUES('quota-account','5h',$1,$2,40000000,$3)`, now.Add(-time.Hour), now.Add(4*time.Hour), now)
+	if err := pool.SendBatch(ctx, batch).Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, metric := range []domain.GatewayMetric{
+		{RequestID: "quota-owner-request", APIKeyID: "quota-key", PlanID: "quota-plan", AccountID: "quota-account", MemberID: "quota-owner-member", Model: "gpt-5.6-sol", RequestedModel: "gpt-5.6-sol", UpstreamModel: "gpt-5.6-sol", BillingModel: "gpt-5.6-sol", StatusCode: http.StatusOK, AccountCostMicros: 300, CreatedAt: now},
+		{RequestID: "quota-member-request", APIKeyID: "quota-key", PlanID: "quota-plan", AccountID: "quota-account", MemberID: "quota-member-member", Model: "gpt-5.6-sol", RequestedModel: "gpt-5.6-sol", UpstreamModel: "gpt-5.6-sol", BillingModel: "gpt-5.6-sol", StatusCode: http.StatusOK, AccountCostMicros: 100, CreatedAt: now},
+	} {
+		if err := store.RecordGatewayMetric(ctx, metric); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if exhausted, err := store.MemberQuotaExhausted(ctx, "quota-owner-member", "quota-account", 3000, now); err != nil || !exhausted {
+		t.Fatalf("owner fixed quota exhausted = %v, %v", exhausted, err)
+	}
+	if exhausted, err := store.MemberQuotaExhausted(ctx, "quota-member-member", "quota-account", 1100, now); err != nil || exhausted {
+		t.Fatalf("member fixed quota exhausted = %v, %v", exhausted, err)
+	}
+
+	routes, err := store.ResolveGatewayRoutes(ctx, []byte("quota-hash"), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes.Candidates) != 1 || routes.Candidates[0].UsageMicros != 30_000_000 {
+		t.Fatalf("fixed route estimated quota usage = %+v", routes.Candidates)
+	}
+
+	detail, err := store.PlanDetail(ctx, "quota-plan", "quota-owner", now.Truncate(24*time.Hour), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberUsage := make(map[string]int64)
+	for _, memberQuota := range detail.Insights.MemberQuotas {
+		for _, window := range memberQuota.Windows {
+			if window.WindowType == domain.Window5H {
+				memberUsage[memberQuota.MemberID] = window.UsedMicros
+			}
+		}
+	}
+	if memberUsage["quota-owner-member"] != 30_000_000 || memberUsage["quota-member-member"] != 10_000_000 {
+		t.Fatalf("displayed fixed quota usage = %+v", memberUsage)
 	}
 }

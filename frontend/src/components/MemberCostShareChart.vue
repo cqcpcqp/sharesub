@@ -3,7 +3,7 @@
     <Doughnut :data="chartData" :options="chartOptions" />
     <div class="chart-center" aria-hidden="true">
       <strong>{{ windowType }}</strong>
-      <small>成本占比</small>
+      <small>估算额度</small>
     </div>
   </div>
 </template>
@@ -36,7 +36,7 @@ const tooltipColors = computed(() => props.theme === 'dark'
   : { background: '#ffffff', title: '#222327', border: 'rgba(109,112,120,.2)' })
 const surfaceColor = computed(() => props.theme === 'dark' ? '#202123' : '#ffffff')
 
-const ariaLabel = computed(() => `${props.windowLabel}成员账号费用占比：${props.shares
+const ariaLabel = computed(() => `${props.windowLabel}成员估算额度：${props.shares
   .filter(item => item.value > 0)
   .map(item => `${item.label} ${percentFormatter.format(item.value / 1_000_000)}%`)
   .join('，')}`)

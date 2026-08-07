@@ -40,13 +40,13 @@
           <thead><tr><th>OpenAI 账号</th><th>所有者</th><th>套餐</th><th>状态</th><th>绑定 Plan</th><th>操作</th></tr></thead>
           <tbody><tr v-for="item in filteredAccounts" :key="item.id">
             <td><div class="admin-primary"><strong>{{ item.name }}</strong><small>{{ item.email }}</small></div></td><td><div class="admin-primary"><strong>{{ item.owner_username }}</strong><small>{{ item.owner_email }}</small></div></td><td>{{ item.plan_type }}</td><td><StatusBadge :value="item.status" /></td><td>{{ item.plan_name || '未绑定' }}</td>
-            <td><NPopconfirm :positive-text="item.status === 'active' ? '禁用账号' : '启用账号'" negative-text="取消" @positive-click="toggleAccount(item)"><template #trigger><NButton size="tiny" secondary :type="item.status === 'active' ? 'error' : 'primary'" :loading="actionID === item.id">{{ item.status === 'active' ? '禁用' : '启用' }}</NButton></template>{{ item.status === 'active' ? '禁用后网关将停止向该账号调度请求。' : '启用后账号将重新参与网关调度。' }}</NPopconfirm></td>
+            <td><div class="admin-row-actions"><NButton size="tiny" secondary @click="openAccountEdit(item)"><template #icon><Pencil :size="13" /></template>编辑</NButton><NPopconfirm :positive-text="item.status === 'active' ? '禁用账号' : '启用账号'" negative-text="取消" @positive-click="toggleAccount(item)"><template #trigger><NButton size="tiny" secondary :type="item.status === 'active' ? 'error' : 'primary'" :loading="actionID === item.id">{{ item.status === 'active' ? '禁用' : '启用' }}</NButton></template>{{ item.status === 'active' ? '禁用后网关将停止向该账号调度请求。' : '启用后账号将重新参与网关调度。' }}</NPopconfirm></div></td>
           </tr></tbody>
         </table>
 
         <table v-else-if="activeTab === 'plans'" class="admin-table">
-          <thead><tr><th>Plan</th><th>所有者</th><th>账号</th><th>状态</th><th>成员</th><th>24h 请求</th><th>24h Token</th><th>创建时间</th></tr></thead>
-          <tbody><tr v-for="item in filteredPlans" :key="item.id"><td><div class="admin-primary"><strong>{{ item.name }}</strong><small>{{ item.allocation_mode === 'shared' ? '共享额度' : '固定份额' }} · {{ item.visibility === 'public' ? '公开' : '私密' }}</small></div></td><td>{{ item.owner_username }}</td><td>{{ item.account_email || '未绑定' }}</td><td><StatusBadge :value="item.status" /></td><td>{{ item.member_count }}</td><td>{{ formatNumber(item.requests_24h) }}</td><td>{{ formatTokens(item.total_tokens_24h) }}</td><td>{{ formatDate(item.created_at) }}</td></tr></tbody>
+          <thead><tr><th>Plan</th><th>所有者</th><th>账号</th><th>状态</th><th>成员</th><th>24h 请求</th><th>24h Token</th><th>创建时间</th><th>操作</th></tr></thead>
+          <tbody><tr v-for="item in filteredPlans" :key="item.id"><td><div class="admin-primary"><strong>{{ item.name }}</strong><small>{{ item.allocation_mode === 'shared' ? '共享额度' : '固定份额' }} · {{ item.visibility === 'public' ? '公开' : '私密' }}</small></div></td><td>{{ item.owner_username }}</td><td>{{ item.account_email || '未绑定' }}</td><td><StatusBadge :value="item.status" /></td><td>{{ item.member_count }}</td><td>{{ formatNumber(item.requests_24h) }}</td><td>{{ formatTokens(item.total_tokens_24h) }}</td><td>{{ formatDate(item.created_at) }}</td><td><NButton size="tiny" secondary @click="openPlanEdit(item)"><template #icon><Settings2 :size="13" /></template>管理</NButton></td></tr></tbody>
         </table>
 
         <table v-else class="admin-table">
@@ -57,15 +57,50 @@
       <NEmpty v-if="!loading && currentCount === 0" description="没有匹配的记录" />
     </div>
   </section>
+
+  <ModalShell v-if="editingAccount" title="编辑 OpenAI 账号" :subtitle="`${editingAccount.owner_username} · ${editingAccount.email}`" :wide="true" @close="editingAccount = null">
+    <AccountConfigFields v-model="accountConfig" :show-status="true" />
+    <template #footer><NButton @click="editingAccount = null">取消</NButton><NButton type="primary" :loading="saving" :disabled="!accountConfig.name.trim()" @click="saveAccountEdit"><template #icon><Save :size="15" /></template>保存账号</NButton></template>
+  </ModalShell>
+
+  <ModalShell v-if="editingPlan" title="管理 Plan" :subtitle="`${editingPlan.owner_username} · ${editingPlan.id}`" :wide="true" @close="editingPlan = null">
+    <div class="admin-plan-form">
+      <section>
+        <header><div><strong>基本信息</strong><small>管理员操作会记录在 Plan 活动日志中</small></div></header>
+        <div class="admin-form-grid">
+          <label>Plan 名称<AppInput :value="planForm.name" clearable :maxlength="100" @update:value="planForm.name = $event" /></label>
+          <label>运行状态<NSelect v-model:value="planForm.status" :options="planStatusOptions" to="body" /></label>
+          <label class="admin-form-full">描述<AppInput :value="planForm.description" type="textarea" clearable :autosize="{ minRows: 3, maxRows: 6 }" :maxlength="2000" show-count @update:value="planForm.description = $event" /></label>
+        </div>
+      </section>
+      <section>
+        <header><div><strong>绑定账号</strong><small>只显示房主拥有、可用且未被其他 Plan 占用的账号</small></div></header>
+        <label>OpenAI 账号<NSelect v-model:value="planForm.account_id" filterable :options="planAccountOptions" placeholder="选择房主的 OpenAI 账号" to="body" /></label>
+        <NAlert v-if="planAccountOptions.length === 0" type="warning" :show-icon="true">该房主当前没有可绑定的有效账号，请先到“账号”页检查账号状态和占用情况。</NAlert>
+      </section>
+      <section>
+        <header><div><strong>公开招募</strong><small>归档状态下不能修改公开设置</small></div></header>
+        <div class="admin-form-grid">
+          <label>可见性<NSelect v-model:value="planForm.visibility" :options="visibilityOptions" :disabled="planForm.status !== 'active'" to="body" /></label>
+          <label v-if="planForm.visibility === 'public'">公开席位<NInputNumber v-model:value="planForm.public_slots" :min="1" :max="100" :precision="0" :disabled="planForm.status !== 'active'" /></label>
+          <label v-if="planForm.visibility === 'public' && editingPlan.allocation_mode === 'fixed'">每席份额<NInputNumber v-model:value="planForm.public_share_basis_points" :min="0" :max="10000" :precision="0" :disabled="planForm.status !== 'active'"><template #suffix>bps</template></NInputNumber><small>按万分比存储，10000 = 100%</small></label>
+        </div>
+      </section>
+    </div>
+    <template #footer><NButton @click="editingPlan = null">取消</NButton><NButton type="primary" :loading="saving" :disabled="!planForm.name.trim()" @click="savePlanEdit"><template #icon><Save :size="15" /></template>保存 Plan</NButton></template>
+  </ModalShell>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { NButton, NEmpty, NInput, NPopconfirm, NSpin, NTab, NTabs } from 'naive-ui'
-import { Activity, Bot, Coins, KeyRound, Layers3, RefreshCw, Search, UsersRound } from 'lucide-vue-next'
+import { NAlert, NButton, NEmpty, NInput, NInputNumber, NPopconfirm, NSelect, NSpin, NTab, NTabs } from 'naive-ui'
+import { Activity, Bot, Coins, KeyRound, Layers3, Pencil, RefreshCw, Save, Search, Settings2, UsersRound } from 'lucide-vue-next'
 import { api } from '../api'
-import type { AdminAPIKey, AdminAccount, AdminOverview, AdminPlan, AdminUser, User } from '../types'
+import type { AccountConfigInput, AdminAPIKey, AdminAccount, AdminOverview, AdminPlan, AdminUser, User } from '../types'
 import { formatPercent, formatTokens } from '../dashboardFormat'
+import AccountConfigFields from '../components/AccountConfigFields.vue'
+import AppInput from '../components/AppInput.vue'
+import ModalShell from '../components/ModalShell.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 
 const props = defineProps<{ currentUser: User }>()
@@ -79,6 +114,19 @@ const activeTab = ref<'users' | 'accounts' | 'plans' | 'keys'>('users')
 const query = ref('')
 const loading = ref(false)
 const actionID = ref('')
+const saving = ref(false)
+const editingAccount = ref<AdminAccount | null>(null)
+const accountConfig = ref<AccountConfigInput>(emptyAccountConfig())
+const editingPlan = ref<AdminPlan | null>(null)
+const planForm = ref({ name: '', description: '', status: 'active' as 'active' | 'archived', account_id: '', visibility: 'private' as 'private' | 'public', public_slots: 1, public_share_basis_points: 0 })
+const planStatusOptions = [{ label: '正常', value: 'active' }, { label: '已归档', value: 'archived' }]
+const visibilityOptions = [{ label: '私密', value: 'private' }, { label: '公开', value: 'public' }]
+const planAccountOptions = computed(() => {
+  if (!editingPlan.value) return []
+  return accounts.value
+    .filter(account => account.owner_user_id === editingPlan.value!.owner_user_id && account.status === 'active' && (!account.plan_id || account.plan_id === editingPlan.value!.id))
+    .map(account => ({ label: `${account.name} · ${account.email}`, value: account.id }))
+})
 const normalizedQuery = computed(() => query.value.trim().toLowerCase())
 const matches = (...values: string[]) => !normalizedQuery.value || values.some(value => value.toLowerCase().includes(normalizedQuery.value))
 const filteredUsers = computed(() => users.value.filter(item => matches(item.username, item.email, item.id)))
@@ -112,6 +160,50 @@ async function toggleAccount(item: AdminAccount) {
   catch (error) { emit('message', 'error', error instanceof Error ? error.message : String(error)) }
   finally { actionID.value = '' }
 }
+function emptyAccountConfig(): AccountConfigInput { return { name: '', notes: '', proxy_url: '', max_concurrency: 0, rpm_limit: 0, fast_policy: [], status: 'active' } }
+function openAccountEdit(item: AdminAccount) {
+  editingAccount.value = item
+  accountConfig.value = {
+    name: item.name, notes: item.notes, proxy_url: item.proxy_url, max_concurrency: item.max_concurrency, rpm_limit: item.rpm_limit, status: item.status,
+    fast_policy: item.fast_policy.map(rule => ({ ...rule, user_ids: [...rule.user_ids], model_whitelist: [...rule.model_whitelist] })),
+  }
+}
+async function saveAccountEdit() {
+  if (!editingAccount.value) return
+  saving.value = true
+  try {
+    await api.adminUpdateAccount(editingAccount.value.id, { ...accountConfig.value })
+    editingAccount.value = null
+    await loadAll()
+    emit('message', 'success', 'OpenAI 账号配置已更新')
+  } catch (error) { emit('message', 'error', error instanceof Error ? error.message : String(error)) }
+  finally { saving.value = false }
+}
+function openPlanEdit(item: AdminPlan) {
+  editingPlan.value = item
+  planForm.value = { name: item.name, description: item.description, status: item.status as 'active' | 'archived', account_id: item.account_id, visibility: item.visibility, public_slots: item.public_slots || 1, public_share_basis_points: item.public_share_basis_points }
+}
+async function savePlanEdit() {
+  const original = editingPlan.value
+  if (!original) return
+  saving.value = true
+  try {
+    const form = planForm.value
+    if (form.name.trim() !== original.name) await api.adminUpdatePlan(original.id, { name: form.name })
+    if (form.description.trim() !== original.description) await api.adminUpdatePlan(original.id, { description: form.description })
+    if (form.account_id && form.account_id !== original.account_id) await api.adminRebindPlanAccount(original.id, form.account_id)
+    if (original.status === 'archived' && form.status === 'active') await api.adminUpdatePlanStatus(original.id, 'active')
+    const publicationChanged = form.visibility !== original.visibility || (form.visibility === 'public' && (form.public_slots !== original.public_slots || form.public_share_basis_points !== original.public_share_basis_points))
+    if (publicationChanged && form.status === 'active') await api.adminUpdatePlanPublication(original.id, form.visibility, form.visibility === 'public' ? form.public_slots : 0, form.visibility === 'public' && original.allocation_mode === 'fixed' ? form.public_share_basis_points : 0)
+    if (original.status === 'active' && form.status === 'archived') await api.adminUpdatePlanStatus(original.id, 'archived')
+    editingPlan.value = null
+    await loadAll()
+    emit('message', 'success', 'Plan 配置已更新')
+  } catch (error) {
+    await loadAll()
+    emit('message', 'error', error instanceof Error ? error.message : String(error))
+  } finally { saving.value = false }
+}
 async function revokeKey(item: AdminAPIKey) {
   actionID.value = item.id
   try { await api.adminRevokeKey(item.id); item.status = 'revoked'; overview.value = await api.adminOverview(); emit('message', 'success', 'API Key 已吊销') }
@@ -142,8 +234,17 @@ onMounted(loadAll)
 .admin-primary strong { color: var(--ink-strong); font-size: 11px; }
 .admin-primary small { max-width: 240px; overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; }
 .admin-primary em { margin-left: 6px; padding: 2px 5px; border-radius: 4px; background: var(--primary-soft); color: var(--primary); font-size: 11px; font-style: normal; }
+.admin-row-actions { display: flex; gap: 6px; }
+.admin-plan-form { display: grid; gap: 14px; }
+.admin-plan-form section { display: grid; gap: 14px; padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-soft); }
+.admin-plan-form section > header strong { display: block; color: var(--ink-strong); font-size: 12px; }
+.admin-plan-form section > header small { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; }
+.admin-plan-form label { display: grid; gap: 7px; color: var(--ink); font-size: 11px; font-weight: 700; }
+.admin-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.admin-form-full { grid-column: 1 / -1; }
+.admin-plan-form label > small { color: var(--muted); font-weight: 450; }
 .admin-loading { min-height: 240px; display: grid; place-items: center; }
 :deep(.n-empty) { padding: 48px 20px; }
 @media (max-width: 1200px) { .admin-overview-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-@media (max-width: 720px) { .admin-overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .admin-resource-toolbar { grid-template-columns: 1fr; } }
+@media (max-width: 720px) { .admin-overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .admin-resource-toolbar,.admin-form-grid { grid-template-columns: 1fr; } .admin-form-full { grid-column: auto; } }
 </style>

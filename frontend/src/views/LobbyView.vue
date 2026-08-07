@@ -34,19 +34,19 @@
 
           <section class="public-plan-allocation-section">
             <h3>共享方式</h3>
-            <p>{{ detailTarget.plan.allocation_mode === 'shared' ? '成员共同使用账号额度，不设置个人份额上限。' : detailTarget.plan.public_share_basis_points === 0 ? '每个公开席位为 0%：加入后可以查看 Plan，但不能通过该 Plan 发起请求。' : `每个公开席位获得 ${formatShareBasisPoints(detailTarget.plan.public_share_basis_points)} 的固定份额。` }}</p>
+            <p>{{ detailTarget.plan.allocation_mode === 'shared' ? '成员共同使用账号额度，不设置个人份额上限。' : detailTarget.plan.public_share_basis_points === 0 ? '公开加入后的份额为 0%：可以查看 Plan，但不能通过该 Plan 发起请求。' : `每位通过大厅加入的成员获得 ${formatShareBasisPoints(detailTarget.plan.public_share_basis_points)} 的固定份额。` }}</p>
             <div class="public-plan-detail-stats">
               <div><span>分配方式</span><strong>{{ detailTarget.plan.allocation_mode === 'shared' ? '共享额度' : '固定份额' }}</strong></div>
-              <div><span>每席份额</span><strong>{{ detailTarget.plan.allocation_mode === 'shared' ? '不单独限制' : formatPublicShare(detailTarget.plan.public_share_basis_points) }}</strong></div>
+              <div><span>每人份额</span><strong>{{ detailTarget.plan.allocation_mode === 'shared' ? '不单独限制' : formatPublicShare(detailTarget.plan.public_share_basis_points) }}</strong></div>
               <div><span>当前成员</span><strong>{{ detailTarget.member_count }} 人</strong></div>
             </div>
           </section>
         </article>
 
         <aside class="public-plan-detail-side">
-          <div class="public-plan-seat-heading"><div><span>公开席位</span><strong>{{ detailTarget.available_slots }} / {{ detailTarget.plan.public_slots }} 可申请</strong></div><UsersRound :size="21" /></div>
+          <div class="public-plan-seat-heading"><div><span>公开招募名额</span><strong>{{ detailTarget.available_slots }} / {{ detailTarget.plan.public_slots }} 可申请</strong></div><UsersRound :size="21" /></div>
           <NProgress type="line" :percentage="seatUsage(detailTarget)" :show-indicator="false" :height="8" color="var(--teal)" rail-color="var(--line-soft)" />
-          <p>{{ detailTarget.available_slots > 0 ? '提交申请后，需等待房主批准才能加入。' : '当前公开席位已满，暂时无法提交申请。' }}</p>
+          <p>{{ detailTarget.available_slots > 0 ? '提交申请后，需等待房主批准才能加入。' : '当前公开招募名额已满，暂时无法提交申请。' }}</p>
           <div class="public-plan-detail-action">
             <span v-if="detailTarget.plan.owner_user_id === user.id" class="owner-label"><Crown :size="15" />这是我的 Plan</span>
             <NButton
@@ -72,7 +72,7 @@
         <article v-for="item in filteredPlans" :key="item.plan.id" class="plan-card">
           <div class="plan-card-main"><h3>{{ item.plan.name }}</h3><p v-if="item.plan.description" class="plan-card-description">{{ item.plan.description }}</p><div class="plan-owner"><UserAvatar :size="34" :username="item.owner_username" :src="item.owner_avatar_url" /><p><strong>{{ item.owner_username }}</strong><small>{{ item.plan.account_id ? `${item.plan_type} 账号` : '筹备中 · 尚未绑定账号' }}</small></p></div><div class="plan-subscription"><CalendarRange :size="14" /><span>{{ item.plan.account_id ? '订阅有效期至' : '服务状态' }}</span><strong>{{ item.plan.account_id ? (item.subscription_expires_at ? formatSubscriptionDate(item.subscription_expires_at) : '暂无订阅有效期') : '等待房主接入账号' }}</strong></div></div>
           <div class="seat-meter"><div><span>席位使用情况</span><strong>{{ item.available_slots }} 个空位</strong></div><NProgress type="line" :percentage="seatUsage(item)" :show-indicator="false" :height="7" color="var(--card-accent)" rail-color="var(--line-soft)" /></div>
-          <div class="plan-stats"><span><strong>{{ item.plan.allocation_mode === 'shared' ? '共享' : formatPublicShare(item.plan.public_share_basis_points) }}</strong><small>{{ item.plan.allocation_mode === 'shared' ? '额度方式' : '每席份额' }}</small></span><span><strong>{{ item.plan.public_slots }}</strong><small>公开席位</small></span><span><strong>{{ item.member_count }}</strong><small>当前成员</small></span></div>
+          <div class="plan-stats"><span><strong>{{ item.plan.allocation_mode === 'shared' ? '共享' : formatPublicShare(item.plan.public_share_basis_points) }}</strong><small>{{ item.plan.allocation_mode === 'shared' ? '额度方式' : '每人份额' }}</small></span><span><strong>{{ item.plan.public_slots }}</strong><small>招募名额</small></span><span><strong>{{ item.member_count }}</strong><small>当前成员</small></span></div>
           <footer>
             <NButton secondary class="plan-detail-link" @click="openDetail(item)">查看详情<template #icon><ArrowRight :size="16" /></template></NButton>
             <span v-if="item.plan.owner_user_id === user.id" class="owner-label"><Crown :size="15" />我的 Plan</span>

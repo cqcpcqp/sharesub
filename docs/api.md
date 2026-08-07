@@ -174,8 +174,13 @@ Plan 详情的 `insights.window_usage` 按当前 OpenAI 账号实际返回的 5h
 | `GET` | `/api/admin/users` | 管理员 Token | 无 | 列出用户及资源数量 |
 | `PATCH` | `/api/admin/users/{userID}/status` | 管理员 Token | `status` | 禁用或恢复用户；管理员不能禁用自己 |
 | `GET` | `/api/admin/accounts` | 管理员 Token | 无 | 列出全部 OpenAI 账号及绑定关系 |
+| `PATCH` | `/api/admin/accounts/{accountID}` | 管理员 Token | 账号配置字段 | 修改任意 OpenAI 账号的名称、备注、代理、调度限制、Fast/Flex 策略和状态 |
 | `PATCH` | `/api/admin/accounts/{accountID}/status` | 管理员 Token | `status` | 启用或禁用 OpenAI 账号 |
 | `GET` | `/api/admin/plans` | 管理员 Token | 无 | 列出全部 Plan 及最近 24 小时用量 |
+| `PATCH` | `/api/admin/plans/{planID}` | 管理员 Token | `name` 或 `description`（只传一个） | 修改任意 Plan 的名称或描述 |
+| `PATCH` | `/api/admin/plans/{planID}/status` | 管理员 Token | `status` | 归档或恢复任意 Plan |
+| `PATCH` | `/api/admin/plans/{planID}/account` | 管理员 Token | `account_id` | 为任意 Plan 绑定或改绑其房主拥有的有效 OpenAI 账号 |
+| `PATCH` | `/api/admin/plans/{planID}/publication` | 管理员 Token | `visibility`, `public_slots`, `public_share_basis_points` | 修改任意有效 Plan 的公开设置 |
 | `GET` | `/api/admin/keys` | 管理员 Token | 无 | 列出全部 API Key 元数据 |
 | `DELETE` | `/api/admin/keys/{keyID}` | 管理员 Token | 无 | 吊销 API Key |
 
@@ -210,7 +215,7 @@ Plan 详情的 `insights.window_usage` 按当前 OpenAI 账号实际返回的 5h
 
 网关请求体上限为 32 MiB。`priority` 按数字从小到大选路，并在请求发出前跳过不可用路由；`balanced` 在固定分配模式按当前成员消耗占个人份额的比例选择，在共享模式按账号总额度使用比例选择。Responses 上游明确返回 `429` 或 `529` 时最多切换 3 个账号；models manifest 在连接失败或上游返回 `401`、`429`、`5xx` 时最多切换 3 个账号。
 
-固定分配模式的候选成员份额为 0，或在 5 小时或 7 天窗口中达到个人份额后不可用；共享模式不限制个人用量，但账号任一有效窗口达到 100% 后不可用。所有候选都不可用时返回 `429 quota_exhausted`；没有有效路由时返回 `503 no_route_available`。只有完整额度响应头会更新额度快照；额度头缺失不会篡改或拦截上游成功响应。指标记录状态码、TTFT、总耗时、终止事件中的 Input/Output/Cached/Image Token、图片数量与关联成员，不记录请求或响应内容。图片按 sub2api 默认档位计费：1K、2K、4K 每张分别为 134000、201000、268000 micro-USD，优先采用上游输出尺寸，尺寸缺失时按 2K。
+固定分配模式分别汇总成员在账号 5 小时和 7 天窗口内的 `estimated_cost_micros`，并用“账号窗口当前已用额度 × 成员费用 ÷ 窗口内全部成员费用”估算成员已用额度。候选成员份额为 0，或任一窗口的估算已用额度达到个人份额后不可用；共享模式不限制个人用量，但账号任一有效窗口达到 100% 后不可用。所有候选都不可用时返回 `429 quota_exhausted`；没有有效路由时返回 `503 no_route_available`。只有完整额度响应头会更新额度快照；额度头缺失不会篡改或拦截上游成功响应。指标记录状态码、TTFT、总耗时、终止事件中的 Input/Output/Cached/Image Token、图片数量与关联成员，不记录请求或响应内容。图片按 sub2api 默认档位计费：1K、2K、4K 每张分别为 134000、201000、268000 micro-USD，优先采用上游输出尺寸，尺寸缺失时按 2K。
 
 ## 常见错误码
 

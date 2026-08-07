@@ -120,7 +120,7 @@ func (s *Store) AdminUpdateUserStatus(ctx context.Context, userID, status string
 
 func (s *Store) AdminListAccounts(ctx context.Context) ([]domain.AdminAccount, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT a.id,a.owner_user_id,a.name,a.notes,a.email,a.chatgpt_account_id,a.plan_type,a.subscription_expires_at,a.max_concurrency,a.rpm_limit,a.fast_policy,a.token_expires_at,a.status,a.last_error,a.created_at,
+		SELECT a.id,a.owner_user_id,a.name,a.notes,a.email,a.chatgpt_account_id,a.plan_type,a.subscription_expires_at,a.proxy_url_ciphertext,a.max_concurrency,a.rpm_limit,a.fast_policy,a.token_expires_at,a.status,a.last_error,a.created_at,
 			u.username,u.email,COALESCE(p.id,''),COALESCE(p.name,'')
 		FROM openai_accounts a JOIN users u ON u.id=a.owner_user_id LEFT JOIN shared_plans p ON p.account_id=a.id
 		ORDER BY a.created_at DESC`)
@@ -131,7 +131,7 @@ func (s *Store) AdminListAccounts(ctx context.Context) ([]domain.AdminAccount, e
 	out := make([]domain.AdminAccount, 0)
 	for rows.Next() {
 		var item domain.AdminAccount
-		if err := rows.Scan(&item.ID, &item.OwnerUserID, &item.Name, &item.Notes, &item.Email, &item.ChatGPTAccountID, &item.PlanType, &item.SubscriptionExpiresAt, &item.MaxConcurrency, &item.RPMLimit, &item.FastPolicy, &item.TokenExpiresAt, &item.Status, &item.LastError, &item.CreatedAt, &item.OwnerUsername, &item.OwnerEmail, &item.PlanID, &item.PlanName); err != nil {
+		if err := rows.Scan(&item.ID, &item.OwnerUserID, &item.Name, &item.Notes, &item.Email, &item.ChatGPTAccountID, &item.PlanType, &item.SubscriptionExpiresAt, &item.ProxyURLCiphertext, &item.MaxConcurrency, &item.RPMLimit, &item.FastPolicy, &item.TokenExpiresAt, &item.Status, &item.LastError, &item.CreatedAt, &item.OwnerUsername, &item.OwnerEmail, &item.PlanID, &item.PlanName); err != nil {
 			return nil, err
 		}
 		out = append(out, item)

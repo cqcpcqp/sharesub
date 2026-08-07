@@ -200,7 +200,12 @@
                             </div>
                           </div>
                         </td>
-                        <td><NTag size="small" :bordered="false" :type="member.role === 'owner' ? 'success' : 'default'">{{ member.role === 'owner' ? '房主' : '成员' }}</NTag></td>
+                        <td>
+                          <div class="member-role-tags">
+                            <NTag size="small" :bordered="false" :type="member.role === 'owner' ? 'success' : 'default'">{{ member.role === 'owner' ? '房主' : '成员' }}</NTag>
+                            <NTag v-if="!isShared && member.share_basis_points === 0" size="small" :bordered="false" type="warning">仅查看</NTag>
+                          </div>
+                        </td>
                         <td>
                           <SharePicker
                             v-if="isOwner && !isShared"
@@ -212,8 +217,21 @@
                         </td>
                         <td v-if="isOwner">
                           <div class="member-actions">
+                            <NPopconfirm
+                              v-if="isSettingMemberToViewOnly(member)"
+                              positive-text="设为仅查看"
+                              negative-text="取消"
+                              @positive-click="saveShare(member)"
+                            >
+                              <template #trigger>
+                                <NButton secondary class="icon-button" title="保存份额" aria-label="保存份额" :loading="actionLoading === `share-${member.id}`">
+                                  <template #icon><Save :size="17" /></template>
+                                </NButton>
+                              </template>
+                              设为 0% 后，{{ member.username }} 仍是 Plan 成员并可查看 Plan；{{ isPublicRecruitMember(member.id) ? '仍会占用 1 个公开招募名额。' : '不会再通过此 Plan 发起请求。' }}
+                            </NPopconfirm>
                             <NButton
-                              v-if="!isShared"
+                              v-else-if="!isShared"
                               secondary
                               class="icon-button"
                               title="保存份额"
@@ -241,7 +259,7 @@
                                   <template #icon><UserMinus :size="17" /></template>
                                 </NButton>
                               </template>
-                              移除 {{ member.username }} 后，其 API Key 将停止使用这个 Plan。
+                              移除 {{ member.username }} 后，其 API Key 将停止使用这个 Plan{{ isPublicRecruitMember(member.id) ? '，并释放 1 个公开招募名额' : '' }}。
                             </NPopconfirm>
                           </div>
                         </td>
@@ -253,7 +271,7 @@
 
               <section v-if="isOwner && detail.applications.length" class="applications-section">
                 <div class="section-heading">
-                  <div><h3>加入申请</h3><p>公开席位剩余 {{ availablePublicSlots }} 个</p></div>
+                  <div><h3>加入申请</h3><p>公开招募名额剩余 {{ availablePublicSlots }} 个</p></div>
                 </div>
                 <div class="application-list">
                   <div v-for="application in detail.applications" :key="application.id" class="application-row">
@@ -383,13 +401,13 @@
                 <section v-if="!isArchived" class="settings-group">
                   <header class="settings-group-heading">
                     <div><span>发现</span><h3>公开加入</h3></div>
-                    <p>控制 Plan 是否展示在探索大厅，以及公开席位数量。</p>
+                    <p>控制 Plan 是否展示在探索大厅，以及可通过大厅加入的人数。</p>
                   </header>
 
                   <form class="setting-row publication-control" @submit.prevent="savePublication">
                     <div class="setting-identity">
                       <span class="setting-icon setting-icon-teal"><Store :size="18" /></span>
-                      <div><h4>探索大厅</h4><p>{{ isShared ? '允许其他用户申请共享席位' : '允许其他用户申请固定席位' }}</p></div>
+                      <div><h4>探索大厅</h4><p>{{ isShared ? '允许其他用户申请加入并共享额度' : '允许其他用户申请加入并获得固定份额' }}</p></div>
                     </div>
                     <div class="setting-action">
                       <div class="publication-toggle">
@@ -397,8 +415,12 @@
                         <NSwitch :value="publication.visibility === 'public'" @update:value="setPublicationVisibility" />
                       </div>
                       <div v-if="publication.visibility === 'public'" class="setting-fields" :class="{ single: isShared }">
-                        <label>公开席位<NInputNumber :value="publication.slots" :min="1" :max="100" :precision="0" @update:value="updatePublicationSlots" /></label>
-                        <label v-if="!isShared">每席份额<SharePicker :model-value="publication.share" :max="maxPublicSeatSharePercent" aria-label="大厅每席份额" @update:model-value="updatePublicationShare" /></label>
+                        <label>公开招募名额<NInputNumber :value="publication.slots" :min="1" :max="100" :precision="0" @update:value="updatePublicationSlots" /></label>
+                        <label v-if="!isShared">每人份额<SharePicker :model-value="publication.share" :max="maxPublicSeatSharePercent" aria-label="大厅每人份额" @update:model-value="updatePublicationShare" /></label>
+                      </div>
+                      <div v-if="publication.visibility === 'public' && Number.isInteger(publication.slots)" class="publication-seat-status" aria-live="polite">
+                        <span>已通过大厅加入 {{ approvedPublicMembers }} / {{ publication.slots }} 人 · 剩余 {{ publicationAvailablePublicSlots }} 个名额</span>
+                        <small v-if="publicationAvailablePublicSlots === 0">公开招募名额已满。0% 成员仍占用名额；移除成员或增加名额后可继续接受大厅申请。</small>
                       </div>
                       <div
                         v-if="publication.visibility === 'public' && !isShared && Number.isInteger(publication.slots)"
@@ -406,9 +428,9 @@
                         :class="{ invalid: publicationCapacityExceeded }"
                         aria-live="polite"
                       >
-                        <span>成员 {{ formatShareBasisPoints(publicationReservedShares.members) }} · 待领取邀请 {{ formatShareBasisPoints(publicationReservedShares.pendingInvites) }} · 本次席位 {{ formatShareBasisPoints(publicationReservedShares.publicSlots) }}</span>
+                        <span>成员 {{ formatShareBasisPoints(publicationReservedShares.members) }} · 待领取邀请 {{ formatShareBasisPoints(publicationReservedShares.pendingInvites) }} · 公开招募预留 {{ formatShareBasisPoints(publicationReservedShares.publicSlots) }}</span>
                         <strong>合计 {{ formatShareBasisPoints(publicationReservedShares.total) }} / 100%</strong>
-                        <small v-if="publicationCapacityExceeded">当前组合超过总额度，请减少公开席位或将每席份额降至 {{ maxPublicSeatSharePercent }}% 以内。</small>
+                        <small v-if="publicationCapacityExceeded">当前组合超过总额度，请减少公开招募名额或将每人份额降至 {{ maxPublicSeatSharePercent }}% 以内。</small>
                       </div>
                       <NButton attr-type="submit" secondary class="setting-submit" :disabled="!canSavePublication" :loading="actionLoading === 'publication'">
                         <template #icon><Save :size="16" /></template>
@@ -540,12 +562,12 @@
         <span><Link2 :size="19" /></span>
         <div>
           <strong>{{ isShared ? '共享使用' : '固定分配' }}</strong>
-          <small>{{ isShared ? '新成员与其他成员共同使用账号总额度' : '为新成员预留固定份额；0% 仅允许查看 Plan' }}</small>
+          <small>{{ isShared ? '新成员与其他成员共同使用账号总额度；私密邀请不占用公开招募名额' : '为新成员预留固定份额；0% 仅允许查看 Plan；私密邀请不占用公开招募名额' }}</small>
         </div>
       </div>
       <div v-if="!isShared" class="invite-capacity">
         <div><span>本次最多可分配</span><strong>{{ remainingInviteSharePercent }}%</strong></div>
-        <p>当前已占用 {{ formatShareBasisPoints(reservedShares.total) }}，其中待领取邀请 {{ formatShareBasisPoints(reservedShares.pendingInvites) }}、公开席位预留 {{ formatShareBasisPoints(reservedShares.publicSlots) }}。</p>
+        <p>当前已占用 {{ formatShareBasisPoints(reservedShares.total) }}，其中待领取邀请 {{ formatShareBasisPoints(reservedShares.pendingInvites) }}、公开招募预留 {{ formatShareBasisPoints(reservedShares.publicSlots) }}。</p>
         <small v-if="remainingInviteSharePercent === 0">额度已全部预留，仍可创建 0% 的仅查看邀请。</small>
       </div>
       <label v-if="!isShared">新成员份额<SharePicker :model-value="inviteForm.share" :max="remainingInviteSharePercent" aria-label="受邀成员份额" @update:model-value="updateInviteShare" /></label>
@@ -673,13 +695,13 @@ const {
   showCreate, showConnectAccount, showInviteComposer, inviteSecret, showDeleteConfirmOne, showDeleteConfirmTwo,
   deleteNameDraft, renameDraft, descriptionDraft, transferMemberID, rebindAccountID, createForm, inviteForm,
   publication, shareDrafts, accountOptions, planOptions, isOwner, isShared, isArchived, isAccountBound, owner,
-  currentMember, allocatedShare, reservedShares, remainingInviteSharePercent, canCreateInvite, availablePublicSlots,
+  currentMember, allocatedShare, reservedShares, remainingInviteSharePercent, canCreateInvite, approvedPublicMembers, availablePublicSlots, publicationAvailablePublicSlots,
   publicationReservedShares, maxPublicSeatSharePercent, publicationCapacityExceeded,
   canRename, canUpdateDescription, canSavePublication,
   canConfirmDelete, transferMemberOptions, rebindAccountOptions, actionLabels, metadataLabels,
   setPublicationVisibility, updateRenameDraft, updateDescriptionDraft, updateDeleteNameDraft, updatePublicationSlots,
   updatePublicationShare, updateRebindAccount, updateTransferMember, updateCreateName,
-  updateCreateAccount, updateCreateAllocationMode, updateCreateShare, updateInviteShare,
+  updateCreateAccount, updateCreateAllocationMode, updateCreateShare, updateInviteShare, isSettingMemberToViewOnly, isPublicRecruitMember,
   handleTabChange, openCreate, createPlan, refreshQuota, queryQuotaResetCredits, resetQuota, sendInvite, revokeInvite, savePublication,
   saveShare, removeMember, leavePlan, review, applicationReviewBusy, renamePlan, updatePlanDescription, updatePlanStatus,
   transferOwnership, rebindAccount, handleConnectedAccount, continueDelete, closeDeleteDialogs, deletePlan, copyInvite,

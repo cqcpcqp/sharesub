@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { allocationModeLabel, allocationShareBasisPoints, formatShareBasisPoints, planPublicationShareBasisPoints, planReservedShareBasisPoints } from './planAllocation'
+import { allocationModeLabel, allocationShareBasisPoints, formatShareBasisPoints, planApprovedPublicMemberCount, planAvailablePublicSlotCount, planPublicationShareBasisPoints, planReservedShareBasisPoints } from './planAllocation'
 import type { PlanDetail } from './types'
 
 describe('plan allocation', () => {
@@ -63,6 +63,28 @@ describe('plan allocation', () => {
       publicSlots: 7500,
       total: 7600,
       remaining: 2400,
+    })
+  })
+
+  it('keeps a zero-share public member in the recruitment headcount while releasing quota', () => {
+    const detail = {
+      plan: { public_slots: 2, public_share_basis_points: 2500 },
+      members: [
+        { id: 'owner', status: 'active', share_basis_points: 5000 },
+        { id: 'public-viewer', status: 'active', share_basis_points: 0 },
+      ],
+      invites: [],
+      applications: [{ status: 'approved', member_id: 'public-viewer' }],
+    } as unknown as PlanDetail
+
+    expect(planApprovedPublicMemberCount(detail)).toBe(1)
+    expect(planAvailablePublicSlotCount(detail)).toBe(1)
+    expect(planReservedShareBasisPoints(detail)).toEqual({
+      members: 5000,
+      pendingInvites: 0,
+      publicSlots: 2500,
+      total: 7500,
+      remaining: 2500,
     })
   })
 })

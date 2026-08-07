@@ -3,7 +3,7 @@
     <header class="insights-heading">
       <div>
         <h3>额度与性能</h3>
-        <p>账号窗口、成员成本占比与{{ performancePeriodLabel }}网关表现</p>
+        <p>账号窗口、成员估算额度与{{ performancePeriodLabel }}网关表现</p>
       </div>
       <NSelect
         class="performance-period-select"
@@ -163,14 +163,14 @@
         <header class="panel-heading">
           <div>
             <div class="panel-title-row">
-              <h4>成员用量占比</h4>
+              <h4>成员估算额度</h4>
               <NTooltip placement="top" trigger="hover">
                 <template #trigger>
-                  <button type="button" class="metric-help" aria-label="查看成员用量占比口径">
+                  <button type="button" class="metric-help" aria-label="查看成员估算额度口径">
                     <CircleHelp :size="14" />
                   </button>
                 </template>
-                <span class="metric-help-copy">分别统计当前 5h 和 7d 账号窗口内，经 ShareSub 转发的请求账号费用。成员占比等于该成员账号费用除以全体当前成员账号费用；不再按 OpenAI 额度百分比增量归因。</span>
+                <span class="metric-help-copy">分别按当前 5h 和 7d 窗口计算：账号当前已用额度 × 成员账号费用 ÷ 全部成员账号费用。固定分配模式使用该结果判断成员额度。</span>
               </NTooltip>
             </div>
           </div>

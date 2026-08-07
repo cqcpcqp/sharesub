@@ -429,7 +429,7 @@ describe('form interactions', () => {
     view.updatePublicationShare(25)
     await view.savePublication()
 
-    expect(emit).toHaveBeenCalledWith('message', 'error', '分配份额已超过 100%，请刷新 Plan 后减少成员、邀请或公开席位额度')
+    expect(emit).toHaveBeenCalledWith('message', 'error', '分配份额已超过 100%，请刷新 Plan 后减少成员、邀请或公开招募预留额度')
     scope.stop()
   })
 

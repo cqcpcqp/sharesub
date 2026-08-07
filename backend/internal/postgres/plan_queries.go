@@ -175,36 +175,22 @@ func (s *Store) planInsights(ctx context.Context, planID, userID, accountID stri
 	rows.Close()
 
 	rows, err = s.pool.Query(ctx, `
-		WITH member_costs AS (
-			SELECT m.id AS member_id,q.window_type,q.used_micros AS account_used_micros,q.reset_at,
-				COALESCE(sum(g.estimated_cost_micros),0)::bigint AS member_cost_micros
-			FROM account_quota_snapshots q
-			JOIN plan_members m ON m.plan_id=$1 AND m.status='active'
-			LEFT JOIN gateway_request_metrics g ON g.plan_id=m.plan_id AND g.account_id=q.account_id AND g.member_id=m.id
+		SELECT m.id,q.window_type,
+			CASE WHEN costs.total_cost_micros=0 THEN 0::bigint
+				ELSE floor(costs.member_cost_micros::numeric*q.used_micros/costs.total_cost_micros)::bigint END,
+			q.used_micros,q.reset_at
+		FROM account_quota_snapshots q
+		JOIN plan_members m ON m.plan_id=$1 AND m.status='active'
+		CROSS JOIN LATERAL (
+			SELECT
+				COALESCE(sum(g.estimated_cost_micros) FILTER (WHERE g.member_id=m.id),0)::bigint AS member_cost_micros,
+				COALESCE(sum(g.estimated_cost_micros),0)::bigint AS total_cost_micros
+			FROM gateway_request_metrics g
+			WHERE g.plan_id=$1 AND g.account_id=q.account_id
 				AND g.created_at>=q.window_start AND g.created_at<q.reset_at
-			WHERE q.account_id=$2 AND q.reset_at>now()
-			GROUP BY m.id,q.window_type,q.used_micros,q.reset_at
-		), cost_totals AS (
-			SELECT member_costs.*,sum(member_cost_micros) OVER (PARTITION BY window_type) AS total_cost_micros
-			FROM member_costs
-		), base_shares AS (
-			SELECT cost_totals.*,
-				CASE WHEN total_cost_micros=0 THEN 0::bigint
-					ELSE floor(member_cost_micros::numeric*100000000/total_cost_micros)::bigint END AS used_micros,
-				CASE WHEN total_cost_micros=0 THEN 0::numeric
-					ELSE mod(member_cost_micros::numeric*100000000,total_cost_micros::numeric) END AS share_remainder
-			FROM cost_totals
-		), ranked_shares AS (
-			SELECT base_shares.*,
-				sum(used_micros) OVER (PARTITION BY window_type) AS distributed_micros,
-				row_number() OVER (PARTITION BY window_type ORDER BY share_remainder DESC,member_id) AS remainder_rank
-			FROM base_shares
-		)
-		SELECT member_id,window_type,
-			used_micros+CASE WHEN total_cost_micros>0 AND remainder_rank<=100000000-distributed_micros THEN 1 ELSE 0 END,
-			account_used_micros,reset_at
-		FROM ranked_shares
-		ORDER BY member_id,window_type`, planID, accountID)
+		) costs
+		WHERE q.account_id=$2 AND q.reset_at>now()
+		ORDER BY m.id,q.window_type`, planID, accountID)
 	if err != nil {
 		return out, err
 	}

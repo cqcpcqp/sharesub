@@ -1,6 +1,6 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { APIRequestError, api } from '../api'
-import { allocationShareBasisPoints, formatShareBasisPoints, maxPlanShareBasisPoints, planPublicationShareBasisPoints, planReservedShareBasisPoints } from '../planAllocation'
+import { allocationShareBasisPoints, formatShareBasisPoints, maxPlanShareBasisPoints, planApprovedPublicMemberCount, planAvailablePublicSlotCount, planPublicationShareBasisPoints, planReservedShareBasisPoints } from '../planAllocation'
 import type { Account, AuditEvent, Member, PerformancePeriod, Plan, PlanAllocationMode, PlanDetail, QuotaResetCredits, User } from '../types'
 
 const automaticQuotaRefreshes = new Map<string, number>()
@@ -71,12 +71,12 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
     && inviteForm.share >= 0
     && inviteForm.share <= remainingInviteSharePercent.value
   ))))
-  const approvedApplications = computed(() => {
-    if (!detail.value) return 0
-    const activeMemberIDs = new Set(detail.value.members.filter(member => member.status === 'active').map(member => member.id))
-    return detail.value.applications.filter(item => item.status === 'approved' && activeMemberIDs.has(item.member_id!)).length
+  const approvedPublicMembers = computed(() => detail.value ? planApprovedPublicMemberCount(detail.value) : 0)
+  const availablePublicSlots = computed(() => detail.value ? planAvailablePublicSlotCount(detail.value) : 0)
+  const publicationAvailablePublicSlots = computed(() => {
+    if (!detail.value || publication.visibility !== 'public' || !Number.isInteger(publication.slots)) return 0
+    return planAvailablePublicSlotCount(detail.value, publication.slots!)
   })
-  const availablePublicSlots = computed(() => Math.max(0, (detail.value?.plan.public_slots ?? 0) - approvedApplications.value))
   const publicationReservedShares = computed(() => {
     if (!detail.value) return { members: 0, pendingInvites: 0, publicSlots: 0, total: 0, remaining: 0 }
     const slots = publication.visibility === 'public' && Number.isInteger(publication.slots) ? publication.slots! : 0
@@ -87,7 +87,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
   })
   const maxPublicSeatSharePercent = computed(() => {
     if (!detail.value || isShared.value || publication.visibility !== 'public' || !Number.isInteger(publication.slots)) return 100
-    const seatsToReserve = Math.max(0, publication.slots! - approvedApplications.value)
+    const seatsToReserve = Math.max(0, publication.slots! - approvedPublicMembers.value)
     if (seatsToReserve === 0) return 100
     const committed = publicationReservedShares.value.members + publicationReservedShares.value.pendingInvites
     return Math.max(0, Math.min(100, Math.floor((maxPlanShareBasisPoints - committed) / seatsToReserve / 100)))
@@ -99,7 +99,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
     Number.isInteger(publication.slots)
     && publication.slots! >= 1
     && publication.slots! <= 100
-    && publication.slots! >= approvedApplications.value
+    && publication.slots! >= approvedPublicMembers.value
     && !publicationCapacityExceeded.value
   ))))
   const canConfirmDelete = computed(() => Boolean(detail.value && deleteNameDraft.value.trim() === detail.value.plan.name))
@@ -143,8 +143,8 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
     member_id: '成员 ID',
     email: '邮箱',
     visibility: '可见性',
-    public_slots: '公开席位',
-    public_share_basis_points: '每席份额',
+    public_slots: '公开招募名额',
+    public_share_basis_points: '每人份额',
     share_basis_points: '成员份额',
   }
 
@@ -316,6 +316,14 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
   function updateCreateAllocationMode(value: PlanAllocationMode) { createForm.allocationMode = value }
   function updateCreateShare(value: number) { createForm.share = value }
   function updateInviteShare(value: number) { inviteForm.share = value }
+  function isSettingMemberToViewOnly(member: Member) {
+    return !isShared.value && member.share_basis_points > 0 && shareDrafts[member.id] === 0
+  }
+  function isPublicRecruitMember(memberID: string) {
+    return Boolean(detail.value?.applications.some(application =>
+      application.status === 'approved' && application.member_id === memberID,
+    ))
+  }
 
   function handleTabChange(name: string | number) {
     if (name === 'activity' && detail.value) void loadAudit(detail.value.plan.id)
@@ -732,7 +740,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
       ? value.code === 'account_already_bound'
         ? '这个 OpenAI 账号已绑定其他 Plan，请先删除或更换其中一个 Plan'
         : value.code === 'share_exceeded'
-          ? '分配份额已超过 100%，请刷新 Plan 后减少成员、邀请或公开席位额度'
+          ? '分配份额已超过 100%，请刷新 Plan 后减少成员、邀请或公开招募预留额度'
           : value.message
       : value instanceof Error ? value.message : String(value)
     emit('message', 'error', message)
@@ -750,13 +758,13 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
     showCreate, showConnectAccount, showInviteComposer, inviteSecret, showDeleteConfirmOne, showDeleteConfirmTwo,
     deleteNameDraft, renameDraft, descriptionDraft, transferMemberID, rebindAccountID, createForm, inviteForm,
     publication, shareDrafts, accountOptions, planOptions, isOwner, isShared, isArchived, isAccountBound, owner,
-    currentMember, allocatedShare, reservedShares, remainingInviteSharePercent, canCreateInvite, availablePublicSlots,
+    currentMember, allocatedShare, reservedShares, remainingInviteSharePercent, canCreateInvite, approvedPublicMembers, availablePublicSlots, publicationAvailablePublicSlots,
     publicationReservedShares, maxPublicSeatSharePercent, publicationCapacityExceeded,
     canRename, canUpdateDescription, canSavePublication,
     canConfirmDelete, transferMemberOptions, rebindAccountOptions, actionLabels, metadataLabels,
     setPublicationVisibility, updateRenameDraft, updateDescriptionDraft, updateDeleteNameDraft, updatePublicationSlots,
     updatePublicationShare, updateRebindAccount, updateTransferMember, updateCreateName,
-    updateCreateAccount, updateCreateAllocationMode, updateCreateShare, updateInviteShare,
+    updateCreateAccount, updateCreateAllocationMode, updateCreateShare, updateInviteShare, isSettingMemberToViewOnly, isPublicRecruitMember,
     handleTabChange, openCreate, createPlan, refreshQuota, queryQuotaResetCredits, resetQuota, sendInvite, revokeInvite, savePublication,
     saveShare, removeMember, leavePlan, review, applicationReviewBusy, renamePlan, updatePlanDescription, updatePlanStatus,
     transferOwnership, rebindAccount, handleConnectedAccount, continueDelete, closeDeleteDialogs, deletePlan, copyInvite,

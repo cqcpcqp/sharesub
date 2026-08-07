@@ -12,6 +12,13 @@ import (
 type adminStore struct {
 	Store
 	users               []domain.AdminUser
+	accounts            []domain.AdminAccount
+	plans               []domain.AdminPlan
+	account             domain.Account
+	updatedAccount      domain.Account
+	planOwnerID         string
+	planAccountID       string
+	planEvent           domain.AuditEvent
 	updatedUserID       string
 	updatedStatus       string
 	metricsStarted      time.Time
@@ -31,6 +38,29 @@ func (s *adminStore) AdminUpdateUserStatus(_ context.Context, userID, status str
 func (s *adminStore) AdminOverview(_ context.Context, metricsStart time.Time) (domain.AdminOverview, error) {
 	s.metricsStarted = metricsStart
 	return domain.AdminOverview{UserCount: 3}, nil
+}
+func (s *adminStore) AdminListAccounts(context.Context) ([]domain.AdminAccount, error) {
+	return s.accounts, nil
+}
+func (s *adminStore) AccountByID(context.Context, string) (domain.Account, error) {
+	return s.account, nil
+}
+func (s *adminStore) UpdateAccountConfig(_ context.Context, _ string, account domain.Account) (domain.Account, error) {
+	s.updatedAccount = account
+	for index := range s.accounts {
+		if s.accounts[index].ID == account.ID {
+			s.accounts[index].Account = account
+			return account, nil
+		}
+	}
+	return account, nil
+}
+func (s *adminStore) AdminListPlans(context.Context, time.Time) ([]domain.AdminPlan, error) {
+	return s.plans, nil
+}
+func (s *adminStore) RebindPlanAccount(_ context.Context, planID, ownerID, accountID string, event domain.AuditEvent) (domain.Plan, error) {
+	s.planOwnerID, s.planAccountID, s.planEvent = ownerID, accountID, event
+	return domain.Plan{ID: planID, OwnerUserID: ownerID, AccountID: accountID}, nil
 }
 func (s *adminStore) EnsureBootstrapAdmin(_ context.Context, user domain.User) (bool, error) {
 	s.bootstrapUser = user
@@ -77,6 +107,31 @@ func TestAdminUserStatusValidation(t *testing.T) {
 	updated, err := service.AdminUpdateUserStatus(context.Background(), admin, "member", domain.StatusDisabled)
 	if err != nil || updated.Status != domain.StatusDisabled || store.updatedUserID != "member" || store.updatedStatus != domain.StatusDisabled {
 		t.Fatalf("updated = %+v, store = %+v, error = %v", updated, store, err)
+	}
+}
+
+func TestAdminCanUpdateAnotherUsersAccountConfig(t *testing.T) {
+	account := domain.Account{ID: "account", OwnerUserID: "owner", Name: "旧名称", ChatGPTAccountID: "chatgpt", Status: domain.StatusActive}
+	store := &adminStore{account: account, accounts: []domain.AdminAccount{{Account: account, OwnerUsername: "房主"}}}
+	service := NewService(store, nil, nil, 0, "", "")
+	admin := service.decorateUser(domain.User{ID: "admin", Role: domain.RoleAdmin})
+	updated, err := service.AdminUpdateAccountConfig(context.Background(), admin, account.ID, AccountConfigInput{Name: "运维名称", Notes: "管理员备注", Status: domain.StatusDisabled})
+	if err != nil || updated.Name != "运维名称" || store.updatedAccount.OwnerUserID != "owner" || store.updatedAccount.Status != domain.StatusDisabled {
+		t.Fatalf("updated = %+v, stored = %+v, error = %v", updated, store.updatedAccount, err)
+	}
+	member := service.decorateUser(domain.User{ID: "member", Role: domain.RoleUser})
+	if _, err := service.AdminUpdateAccountConfig(context.Background(), member, account.ID, AccountConfigInput{Name: "拒绝", Status: domain.StatusActive}); err != domain.ErrForbidden {
+		t.Fatalf("member account update error = %v", err)
+	}
+}
+
+func TestAdminCanBindPlanOwnersAvailableAccount(t *testing.T) {
+	store := &adminStore{plans: []domain.AdminPlan{{Plan: domain.Plan{ID: "plan", OwnerUserID: "owner"}}}}
+	service := NewService(store, nil, nil, 0, "", "")
+	admin := service.decorateUser(domain.User{ID: "admin", Role: domain.RoleAdmin})
+	updated, err := service.AdminRebindPlanAccount(context.Background(), admin, "plan", "account")
+	if err != nil || updated.AccountID != "account" || store.planOwnerID != "owner" || store.planAccountID != "account" || store.planEvent.ActorUserID != admin.ID {
+		t.Fatalf("updated = %+v, owner = %q, account = %q, event = %+v, error = %v", updated, store.planOwnerID, store.planAccountID, store.planEvent, err)
 	}
 }
 

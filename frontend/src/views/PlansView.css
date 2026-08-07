@@ -99,6 +99,13 @@
   gap: 7px;
 }
 
+.member-role-tags {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .invite-list {
   margin-top: 12px;
   border-top: 1px solid var(--line);
@@ -271,7 +278,8 @@
   justify-self: end;
 }
 
-.publication-capacity {
+.publication-capacity,
+.publication-seat-status {
   display: grid;
   gap: 4px;
   padding: 10px 11px;
@@ -281,10 +289,17 @@
 }
 
 .publication-capacity span,
-.publication-capacity small {
+.publication-capacity small,
+.publication-seat-status span,
+.publication-seat-status small {
   color: var(--info-ink);
   font-size: 11px;
   line-height: 1.5;
+}
+
+.publication-seat-status small {
+  color: var(--amber);
+  font-weight: 650;
 }
 
 .publication-capacity strong {
