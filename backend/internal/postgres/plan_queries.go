@@ -9,7 +9,7 @@ import (
 )
 
 func (s *Store) CreatePlan(ctx context.Context, plan domain.Plan, owner domain.Member, event domain.AuditEvent) error {
-	if plan.AllocationMode == domain.AllocationFixed && (owner.ShareBasisPoints < 1 || owner.ShareBasisPoints > domain.MaxShareBPS) {
+	if plan.AllocationMode == domain.AllocationFixed && (owner.ShareBasisPoints < 0 || owner.ShareBasisPoints > domain.MaxShareBPS) {
 		return domain.ErrInvalidInput
 	}
 	if plan.AllocationMode == domain.AllocationShared && owner.ShareBasisPoints != 0 {

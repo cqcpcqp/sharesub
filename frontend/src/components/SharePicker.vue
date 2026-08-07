@@ -19,7 +19,7 @@
       >
         <span class="share-trigger-copy">
           <strong>{{ currentValue }}%</strong>
-          <small v-if="!compact && currentFraction">{{ currentFraction }}</small>
+          <small v-if="currentFraction && (!compact || currentValue === 0)">{{ currentFraction }}</small>
         </span>
         <template #icon><ChevronDown :size="15" /></template>
       </NButton>
@@ -27,13 +27,13 @@
 
     <div class="share-picker-panel">
       <header>
-        <div><strong>选择份额</strong><small>整数百分比</small></div>
+        <div><strong>选择份额</strong><small>{{ currentValue === 0 ? '仅查看 Plan，不能使用额度' : '整数百分比' }}</small></div>
         <output>{{ currentValue }}%</output>
       </header>
       <NSlider
         :value="currentValue"
-        :min="1"
-        :max="100"
+        :min="0"
+        :max="boundedMax"
         :step="1"
         :format-tooltip="formatTooltip"
         aria-label="份额百分比"
@@ -65,17 +65,21 @@ const props = withDefaults(defineProps<{
   modelValue: number
   compact?: boolean
   disabled?: boolean
+  max?: number
   ariaLabel?: string
 }>(), {
   compact: false,
   disabled: false,
+  max: 100,
   ariaLabel: '选择份额',
 })
 
 const emit = defineEmits<{ 'update:modelValue': [value: number] }>()
 const show = ref(false)
 const currentValue = computed(() => Math.round(props.modelValue))
-const presets = [
+const boundedMax = computed(() => Math.max(0, Math.min(100, Math.floor(props.max))))
+const allPresets = [
+  { value: 0, label: '仅查看' },
   { value: 10, label: '1/10' },
   { value: 20, label: '1/5' },
   { value: 25, label: '1/4' },
@@ -85,7 +89,8 @@ const presets = [
   { value: 75, label: '3/4' },
   { value: 100, label: '全部' },
 ]
-const currentFraction = computed(() => presets.find(preset => preset.value === currentValue.value)?.label ?? '')
+const presets = computed(() => allPresets.filter(preset => preset.value <= boundedMax.value))
+const currentFraction = computed(() => allPresets.find(preset => preset.value === currentValue.value)?.label ?? '')
 
 function updateFromSlider(value: number | number[]) {
   if (typeof value === 'number') emit('update:modelValue', value)
@@ -171,7 +176,7 @@ function formatTooltip(value: number) {
 
 .share-presets {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 5px;
 }
 

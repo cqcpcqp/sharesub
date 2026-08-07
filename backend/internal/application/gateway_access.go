@@ -136,7 +136,11 @@ func (s *Service) ResolveGatewayAccess(ctx context.Context, apiKey string, exclu
 			return GatewayAccess{}, err
 		}
 		if !exhausted && credential.Plan.AllocationMode != domain.AllocationShared {
-			exhausted, err = s.store.MemberQuotaExhausted(ctx, credential.Member.ID, credential.Account.ID, credential.Member.ShareBasisPoints, s.now())
+			if credential.Member.ShareBasisPoints == 0 {
+				exhausted = true
+			} else {
+				exhausted, err = s.store.MemberQuotaExhausted(ctx, credential.Member.ID, credential.Account.ID, credential.Member.ShareBasisPoints, s.now())
+			}
 		}
 		if err != nil {
 			return GatewayAccess{}, err

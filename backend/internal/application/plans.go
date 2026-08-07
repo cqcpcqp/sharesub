@@ -15,7 +15,7 @@ func (s *Service) CreatePlan(ctx context.Context, userID, accountID, name, alloc
 	if name == "" || len(name) > 100 || !validAllocationMode(allocationMode) {
 		return domain.PlanDetail{}, domain.ErrInvalidInput
 	}
-	if allocationMode == domain.AllocationFixed && (ownerShareBPS < 1 || ownerShareBPS > domain.MaxShareBPS) {
+	if allocationMode == domain.AllocationFixed && (ownerShareBPS < 0 || ownerShareBPS > domain.MaxShareBPS) {
 		return domain.PlanDetail{}, domain.ErrInvalidInput
 	}
 	if allocationMode == domain.AllocationShared && ownerShareBPS != 0 {

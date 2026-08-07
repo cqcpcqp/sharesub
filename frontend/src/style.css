@@ -157,14 +157,9 @@ code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 11px; }
 .agreement-check a, .auth-legal a { color: var(--primary); text-decoration: none; }
 .agreement-check a:hover, .auth-legal a:hover { text-decoration: underline; }
 .form-error { margin: 15px 0 0; padding: 11px 13px; border: 1px solid var(--danger-border); border-radius: 7px; background: var(--red-soft); color: var(--danger-ink); font-size: 12px; line-height: 1.5; }
-.auth-invite-context { min-height: 58px; display: flex; align-items: center; gap: 11px; margin: -7px 0 18px; padding: 11px 12px; border: 1px solid var(--info-border); border-radius: 8px; background: var(--info-surface); }
-.auth-invite-context > span:first-child { width: 34px; height: 34px; display: grid; flex: 0 0 auto; place-items: center; border-radius: 7px; background: var(--surface); color: var(--teal); }
-.auth-invite-context > div:not(.auth-invite-actions) { min-width: 0; display: grid; flex: 1; gap: 4px; }
-.auth-invite-context strong, .auth-invite-context small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.auth-invite-context strong { color: var(--ink-strong); font-size: 11px; }
-.auth-invite-context small { color: var(--muted); font-size: 10px; }
+.auth-invite-context { min-height: 58px; display: grid; gap: 10px; margin: -7px 0 18px; padding: 11px 12px; border: 1px solid var(--info-border); border-radius: 8px; background: var(--info-surface); }
 .auth-invite-context > .n-alert { width: 100%; }
-.auth-invite-actions { display: flex; flex: 0 0 auto; gap: 10px; }
+.auth-invite-actions { display: flex; flex: 0 0 auto; justify-content: flex-end; gap: 10px; }
 .auth-legal { display: grid; gap: 9px; margin-top: 24px; padding-top: 17px; border-top: 1px solid var(--line-soft); }
 .auth-legal nav { display: flex; flex-wrap: wrap; gap: 15px; }
 .auth-legal a { font-size: 11px; }

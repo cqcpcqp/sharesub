@@ -61,7 +61,7 @@ func (s *Store) UpdatePlanPublication(ctx context.Context, ownerID, planID, visi
 		if share != 0 {
 			return domain.Plan{}, domain.ErrInvalidInput
 		}
-	} else if share < 1 {
+	} else if share < 0 {
 		return domain.Plan{}, domain.ErrInvalidInput
 	}
 	var approved int
@@ -170,7 +170,7 @@ func (s *Store) ReviewJoinApplication(ctx context.Context, ownerID, applicationI
 		if allocationMode == domain.AllocationShared && share != 0 {
 			return domain.JoinApplication{}, domain.ErrInvalidInput
 		}
-		if allocationMode == domain.AllocationFixed && share < 1 {
+		if allocationMode == domain.AllocationFixed && share < 0 {
 			return domain.JoinApplication{}, domain.ErrInvalidInput
 		}
 		var existingStatus string
@@ -207,9 +207,12 @@ func (s *Store) ReviewJoinApplication(ctx context.Context, ownerID, applicationI
 	notificationType := "application_rejected"
 	if approve {
 		title = "已加入 Plan"
-		body = "你的加入申请已通过，等待房主接入 OpenAI 账号后即可开始使用"
-		if accountID != "" {
+		if allocationMode == domain.AllocationFixed && share == 0 {
+			body = "你的加入申请已通过；当前份额为 0%，可查看 Plan，但不能通过该 Plan 发起请求"
+		} else if accountID != "" {
 			body = "你的加入申请已通过，可以开始配置 API Key"
+		} else {
+			body = "你的加入申请已通过，等待房主接入 OpenAI 账号后即可开始使用"
 		}
 		notificationType = "application_approved"
 	}
@@ -240,7 +243,7 @@ func (s *Store) CreateInvite(ctx context.Context, planID, ownerID string, invite
 			return domain.ErrInvalidInput
 		}
 	} else {
-		if invite.ShareBasisPoints < 1 {
+		if invite.ShareBasisPoints < 0 {
 			return domain.ErrInvalidInput
 		}
 		var allocated int
@@ -268,8 +271,8 @@ func (s *Store) AcceptInvite(ctx context.Context, tokenHash []byte, user domain.
 	}
 	defer tx.Rollback(ctx)
 	var invite domain.Invite
-	var planOwnerID, planStatus string
-	err = tx.QueryRow(ctx, `SELECT i.id,i.plan_id,i.share_basis_points,i.status,i.expires_at,p.owner_user_id,p.status FROM plan_invites i JOIN shared_plans p ON p.id=i.plan_id WHERE i.token_hash=$1 FOR UPDATE OF i,p`, tokenHash).Scan(&invite.ID, &invite.PlanID, &invite.ShareBasisPoints, &invite.Status, &invite.ExpiresAt, &planOwnerID, &planStatus)
+	var planOwnerID, planStatus, allocationMode string
+	err = tx.QueryRow(ctx, `SELECT i.id,i.plan_id,i.share_basis_points,i.status,i.expires_at,p.owner_user_id,p.status,p.allocation_mode FROM plan_invites i JOIN shared_plans p ON p.id=i.plan_id WHERE i.token_hash=$1 FOR UPDATE OF i,p`, tokenHash).Scan(&invite.ID, &invite.PlanID, &invite.ShareBasisPoints, &invite.Status, &invite.ExpiresAt, &planOwnerID, &planStatus, &allocationMode)
 	if err != nil {
 		return domain.Member{}, mapError(err)
 	}
@@ -314,7 +317,11 @@ func (s *Store) AcceptInvite(ctx context.Context, tokenHash []byte, user domain.
 	if err := insertNotification(ctx, tx, event.ID+":owner", planOwnerID, "invite_accepted", "邀请已接受", user.Username+" 已加入你的 Plan", "plan", invite.PlanID, now); err != nil {
 		return domain.Member{}, err
 	}
-	if err := insertNotification(ctx, tx, event.ID+":member", user.ID, "plan_joined", "已加入 Plan", "创建 API Key 后即可开始使用", "plan", invite.PlanID, now); err != nil {
+	memberNotification := "创建 API Key 后即可开始使用"
+	if allocationMode == domain.AllocationFixed && invite.ShareBasisPoints == 0 {
+		memberNotification = "当前份额为 0%，可查看 Plan，但不能通过该 Plan 发起请求"
+	}
+	if err := insertNotification(ctx, tx, event.ID+":member", user.ID, "plan_joined", "已加入 Plan", memberNotification, "plan", invite.PlanID, now); err != nil {
 		return domain.Member{}, err
 	}
 	return member, tx.Commit(ctx)
@@ -338,7 +345,7 @@ func (s *Store) UpdateMemberShare(ctx context.Context, planID, ownerID, memberID
 			return domain.Member{}, domain.ErrInvalidInput
 		}
 	} else {
-		if share < 1 {
+		if share < 0 {
 			return domain.Member{}, domain.ErrInvalidInput
 		}
 		var others int

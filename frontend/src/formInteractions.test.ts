@@ -3,7 +3,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { effectScope, reactive } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { api } from './api'
+import { APIRequestError, api } from './api'
 import { agreementVersions } from './agreements'
 import type { APIKey, Account, Plan, PlanDetail, PlanPerformance, PublicPlan, User } from './types'
 import APIKeySetupWizard from './components/APIKeySetupWizard.vue'
@@ -322,6 +322,117 @@ describe('form interactions', () => {
     expect(findButton(wrapper, '保存设置')!.attributes('disabled')).toBeUndefined()
   })
 
+  it('validates proposed public seat shares before saving', async () => {
+    const fixedPlan: Plan = {
+      ...activePlan,
+      id: 'plan-fixed-publication',
+      allocation_mode: 'fixed',
+      visibility: 'private',
+    }
+    const fixedDetail: PlanDetail = {
+      ...activeDetail,
+      plan: fixedPlan,
+      members: [{ ...activeDetail.members[0], plan_id: fixedPlan.id, share_basis_points: 100 }],
+    }
+    vi.spyOn(api, 'plan').mockResolvedValue(fixedDetail)
+    vi.spyOn(api, 'refreshPlanQuota').mockResolvedValue({ account_id: account.id, signals: [] })
+    const updatePublication = vi.spyOn(api, 'updatePublication').mockResolvedValue({
+      ...fixedPlan,
+      visibility: 'public',
+      public_slots: 3,
+      public_share_basis_points: 2500,
+    })
+    const scope = effectScope()
+    const view = scope.run(() => usePlansView(reactive({ accounts: [account], plans: [fixedPlan], user: owner, initialPlanId: '', invitePlanId: '' }), vi.fn()))!
+
+    await view.loadPlan(fixedPlan.id)
+    view.setPublicationVisibility(true)
+    view.updatePublicationSlots(3)
+    view.updatePublicationShare(25)
+
+    expect(view.publicationReservedShares.value.total).toBe(7600)
+    expect(view.maxPublicSeatSharePercent.value).toBe(33)
+    expect(view.canSavePublication.value).toBe(true)
+    await view.savePublication()
+    expect(updatePublication).toHaveBeenCalledWith(fixedPlan.id, {
+      visibility: 'public',
+      public_slots: 3,
+      public_share_basis_points: 2500,
+    })
+
+    scope.stop()
+  })
+
+  it('blocks a public seat allocation that exceeds the remaining Plan share', async () => {
+    const fixedPlan: Plan = {
+      ...activePlan,
+      id: 'plan-fixed-over-allocation',
+      allocation_mode: 'fixed',
+      visibility: 'private',
+    }
+    const fixedDetail: PlanDetail = {
+      ...activeDetail,
+      plan: fixedPlan,
+      members: [{ ...activeDetail.members[0], plan_id: fixedPlan.id, share_basis_points: 100 }],
+      invites: [{
+        id: 'pending-invite',
+        plan_id: fixedPlan.id,
+        share_basis_points: 2500,
+        status: 'pending',
+        expires_at: '2099-08-08T00:00:00Z',
+        created_at: createdAt,
+      }],
+    }
+    vi.spyOn(api, 'plan').mockResolvedValue(fixedDetail)
+    vi.spyOn(api, 'refreshPlanQuota').mockResolvedValue({ account_id: account.id, signals: [] })
+    const updatePublication = vi.spyOn(api, 'updatePublication')
+    const scope = effectScope()
+    const view = scope.run(() => usePlansView(reactive({ accounts: [account], plans: [fixedPlan], user: owner, initialPlanId: '', invitePlanId: '' }), vi.fn()))!
+
+    await view.loadPlan(fixedPlan.id)
+    view.setPublicationVisibility(true)
+    view.updatePublicationSlots(3)
+    view.updatePublicationShare(25)
+
+    expect(view.publicationReservedShares.value.total).toBe(10100)
+    expect(view.maxPublicSeatSharePercent.value).toBe(24)
+    expect(view.publicationCapacityExceeded.value).toBe(true)
+    expect(view.canSavePublication.value).toBe(false)
+    await view.savePublication()
+    expect(updatePublication).not.toHaveBeenCalled()
+
+    scope.stop()
+  })
+
+  it('explains a concurrent share allocation conflict in Chinese', async () => {
+    const fixedPlan: Plan = {
+      ...activePlan,
+      id: 'plan-fixed-conflict',
+      allocation_mode: 'fixed',
+      visibility: 'private',
+    }
+    const fixedDetail: PlanDetail = {
+      ...activeDetail,
+      plan: fixedPlan,
+      members: [{ ...activeDetail.members[0], plan_id: fixedPlan.id, share_basis_points: 100 }],
+    }
+    vi.spyOn(api, 'plan').mockResolvedValue(fixedDetail)
+    vi.spyOn(api, 'refreshPlanQuota').mockResolvedValue({ account_id: account.id, signals: [] })
+    vi.spyOn(api, 'updatePublication').mockRejectedValue(new APIRequestError(409, 'share_exceeded', 'allocated shares exceed 100 percent'))
+    const emit = vi.fn()
+    const scope = effectScope()
+    const view = scope.run(() => usePlansView(reactive({ accounts: [account], plans: [fixedPlan], user: owner, initialPlanId: '', invitePlanId: '' }), emit))!
+
+    await view.loadPlan(fixedPlan.id)
+    view.setPublicationVisibility(true)
+    view.updatePublicationSlots(3)
+    view.updatePublicationShare(25)
+    await view.savePublication()
+
+    expect(emit).toHaveBeenCalledWith('message', 'error', '分配份额已超过 100%，请刷新 Plan 后减少成员、邀请或公开席位额度')
+    scope.stop()
+  })
+
   it('publishes an unbound Plan for member recruitment', async () => {
     vi.spyOn(api, 'plan').mockResolvedValue(unboundDetail)
     const updatePublication = vi.spyOn(api, 'updatePublication').mockResolvedValue({
@@ -633,6 +744,32 @@ describe('form interactions', () => {
     expect(message.element).toHaveProperty('value', '一起使用')
     await message.setValue('')
     expect(message.element).toHaveProperty('value', '')
+  })
+
+  it('opens a public Plan detail from the lobby and applies from the detail view', async () => {
+    const wrapper = mount(LobbyView, {
+      attachTo: document.body,
+      props: { plans: [publicPlan], user: owner },
+      global: { stubs: { teleport: true } },
+    })
+
+    await findButton(wrapper, '查看详情')!.trigger('click')
+
+    const detailView = wrapper.get('.public-plan-detail-layout')
+    expect(wrapper.find('.lobby-grid').exists()).toBe(false)
+    expect(detailView.text()).toContain(publicPlan.plan.name)
+    expect(detailView.text()).toContain(publicPlan.plan.description)
+    expect(detailView.text()).toContain(publicPlan.owner_username)
+    expect(detailView.text()).toContain('plus 账号')
+    expect(detailView.text()).toContain('1 / 2 可申请')
+    expect(detailView.text()).toContain('共享额度')
+
+    await findButton(wrapper, '申请加入')!.trigger('click')
+    wrapper.get('textarea[placeholder="向房主简单介绍你的使用需求（可选）"]')
+    await findButton(wrapper, '取消')!.trigger('click')
+    await findButton(wrapper, '返回探索大厅')!.trigger('click')
+    expect(wrapper.find('.public-plan-detail-layout').exists()).toBe(false)
+    wrapper.get('.lobby-grid')
   })
 
   it('labels an unbound public Plan as preparing before application', async () => {

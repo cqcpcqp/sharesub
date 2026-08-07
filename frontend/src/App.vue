@@ -147,10 +147,13 @@
     </div>
 
     <InvitationStatusDialog
-      v-if="user && inviteIntent && (inviteAccepting || inviteError)"
+      v-if="user && inviteIntent"
+      :loading="invitePreviewLoading"
       :accepting="inviteAccepting"
       :error="inviteError"
       :preview="invitePreview"
+      :user="user"
+      @accept="acceptPendingInvite"
       @retry="acceptPendingInvite"
       @switch-account="switchInviteAccount"
       @discard="discardInvite"
@@ -181,7 +184,7 @@ import ThemeSwitcher from './components/ThemeSwitcher.vue'
 import UserAvatar from './components/UserAvatar.vue'
 import { darkThemeOverrides, lightThemeOverrides } from './theme'
 import { locationWithoutHash, parseNavigationIntent, type InviteIntent } from './navigationIntent'
-import { isPlanRoutable } from './planAvailability'
+import { canMemberRoutePlan, isPlanRoutable } from './planAvailability'
 import { isThemeMode, resolveTheme, type ThemeMode } from './themePreference'
 import { appRoutePath, parseAppRoute, type AppRoute, type PublicPageID, type ViewID } from './appRoutes'
 
@@ -285,11 +288,8 @@ async function onAuthenticated(value: User) {
     return
   }
   startNotificationPolling()
-  if (inviteIntent.value) await acceptPendingInvite()
-  else {
-    navigateToView('dashboard', true)
-    await refreshAll()
-  }
+  navigateToView('dashboard', true)
+  await refreshAll()
   await refreshNotifications()
 }
 
@@ -474,6 +474,10 @@ async function loadInvitePreview() {
 
 async function acceptPendingInvite() {
   if (!user.value || !inviteIntent.value || inviteAccepting.value) return
+  if (!invitePreview.value) {
+    await loadInvitePreview()
+    return
+  }
   inviteAccepting.value = true
   inviteError.value = ''
   try {
@@ -482,8 +486,17 @@ async function acceptPendingInvite() {
     await Promise.all([refreshAll(), refreshNotifications()])
     selectedPlanID.value = member.plan_id
     navigateToView('plans')
-    openKeySetup(member.plan_id)
-    showMessage('success', '已加入 Plan，接下来配置你的 API Key')
+    const joinedPlan = plans.value.find(plan => plan.id === member.plan_id)
+    if (!joinedPlan) {
+      showMessage('success', '已加入 Plan；工作区暂未刷新，请稍后重试')
+    } else if (joinedPlan.allocation_mode === 'fixed' && member.share_basis_points === 0) {
+      showMessage('success', '已加入 Plan；当前份额为 0%，可查看 Plan，但不能发起请求')
+    } else if (canMemberRoutePlan(joinedPlan, member.share_basis_points)) {
+      openKeySetup(member.plan_id)
+      showMessage('success', '已加入 Plan，接下来配置你的 API Key')
+    } else {
+      showMessage('success', '已加入 Plan；房主绑定 OpenAI 账号后即可配置 API Key')
+    }
   } catch (error) {
     inviteError.value = error instanceof Error ? error.message : String(error)
     await refreshAll()
@@ -500,7 +513,6 @@ async function syncNavigationIntent() {
   inviteError.value = ''
   if (!nextIntent) return
   await loadInvitePreview()
-  if (user.value) await acceptPendingInvite()
 }
 
 function clearInviteIntent() {
@@ -567,8 +579,7 @@ onMounted(async () => {
   authChecking.value = false
   if (user.value.must_change_password) return
   startNotificationPolling()
-  if (inviteIntent.value) await acceptPendingInvite()
-  else await refreshAll()
+  await refreshAll()
   await refreshNotifications()
 })
 onBeforeUnmount(() => {

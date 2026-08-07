@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isPlanRoutable } from './planAvailability'
+import { canMemberRoutePlan, isPlanRoutable } from './planAvailability'
 import type { Plan } from './types'
 
 const plan: Plan = {
@@ -21,5 +21,13 @@ describe('Plan route availability', () => {
     expect(isPlanRoutable(plan)).toBe(true)
     expect(isPlanRoutable({ ...plan, account_id: '' })).toBe(false)
     expect(isPlanRoutable({ ...plan, status: 'archived' })).toBe(false)
+  })
+
+  it('prevents zero-share fixed members from routing', () => {
+    const fixedPlan = { ...plan, allocation_mode: 'fixed' as const }
+
+    expect(canMemberRoutePlan(fixedPlan, 0)).toBe(false)
+    expect(canMemberRoutePlan(fixedPlan, 100)).toBe(true)
+    expect(canMemberRoutePlan(plan, 0)).toBe(true)
   })
 })

@@ -544,6 +544,21 @@ func TestCreateSharedPlanUsesZeroMemberShare(t *testing.T) {
 	}
 }
 
+func TestCreateFixedPlanAllowsZeroOwnerShare(t *testing.T) {
+	store := &createPlanStore{
+		account: domain.Account{ID: "account-id", OwnerUserID: "owner-id", Status: domain.StatusActive},
+		detail:  domain.PlanDetail{},
+	}
+	service := &Service{store: store, now: func() time.Time { return time.Unix(0, 0) }}
+
+	if _, err := service.CreatePlan(context.Background(), "owner-id", "account-id", "只读方案", domain.AllocationFixed, 0); err != nil {
+		t.Fatal(err)
+	}
+	if store.createdMember.ShareBasisPoints != 0 {
+		t.Fatalf("owner share = %d, want 0", store.createdMember.ShareBasisPoints)
+	}
+}
+
 func TestCreatePlanWithoutAccountSkipsAccountLookup(t *testing.T) {
 	store := &createPlanStore{detail: domain.PlanDetail{
 		Plan:    domain.Plan{ID: "plan-id", OwnerUserID: "owner-id", Name: "先探索的 Plan", Status: domain.StatusActive, AllocationMode: domain.AllocationFixed},
@@ -563,13 +578,14 @@ func TestCreatePlanWithoutAccountSkipsAccountLookup(t *testing.T) {
 	}
 }
 
-func TestCreatePlanRejectsShareForWrongAllocationMode(t *testing.T) {
+func TestCreatePlanRejectsInvalidShareForAllocationMode(t *testing.T) {
 	tests := []struct {
 		name  string
 		mode  string
 		share int
 	}{
-		{name: "fixed without share", mode: domain.AllocationFixed, share: 0},
+		{name: "fixed negative share", mode: domain.AllocationFixed, share: -1},
+		{name: "fixed excessive share", mode: domain.AllocationFixed, share: domain.MaxShareBPS + 1},
 		{name: "shared with share", mode: domain.AllocationShared, share: 1},
 		{name: "unknown mode", mode: "automatic", share: 0},
 	}
@@ -717,6 +733,23 @@ func TestResolveGatewayAccessBalancesByShareUsage(t *testing.T) {
 	}
 	if access.Credential.Plan.ID != "plan-b" {
 		t.Fatalf("selected plan = %q, want plan-b", access.Credential.Plan.ID)
+	}
+}
+
+func TestResolveGatewayAccessRejectsZeroShareWithoutQuotaLookup(t *testing.T) {
+	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
+	manager := testSecurityManager(t)
+	store := &gatewayStore{routes: domain.GatewayRouteSet{
+		APIKey:     domain.APIKey{ID: "key", Strategy: domain.RoutePriority},
+		Candidates: []domain.GatewayCredential{testCredential(t, manager, "key", "member", "plan", 1, 0, 0, now)},
+	}, exhausted: map[string]bool{}}
+	service := &Service{store: store, security: manager, now: func() time.Time { return now }}
+
+	if _, err := service.ResolveGatewayAccess(context.Background(), "sk-sharesub-test"); err != domain.ErrQuotaExhausted {
+		t.Fatalf("ResolveGatewayAccess() error = %v, want quota exhausted", err)
+	}
+	if len(store.memberChecks) != 0 {
+		t.Fatalf("zero-share member triggered quota lookup: %v", store.memberChecks)
 	}
 }
 

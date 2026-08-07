@@ -3,10 +3,10 @@
     <section class="auth-art" aria-hidden="true"><div class="auth-art-brand"><BrandMark :size="42" inverse /><strong>ShareSub</strong></div><div class="auth-art-copy"><span>SHARE · ROUTE · CREATE</span><p>一起使用，<br />也各自清楚。</p></div><div class="auth-art-blocks"><i /><i /><i /><i /></div></section>
     <section class="auth-panel"><div class="auth-form-wrap">
       <div class="auth-brand"><BrandMark :size="42" /><div><strong>ShareSub</strong><span>Access together</span></div></div>
-      <div class="auth-heading"><h1>{{ invitePending ? '登录后加入共享' : mode === 'login' ? '很高兴再见到你' : '创建你的账户' }}</h1><p>{{ invitePending ? '验证身份后，系统会自动接受这份邀请。' : mode === 'login' ? '登录后继续管理共享访问。' : '只需要一分钟，就可以开始。' }}</p></div>
+      <div class="auth-heading"><h1>{{ invitePending ? '登录后确认邀请' : mode === 'login' ? '很高兴再见到你' : '创建你的账户' }}</h1><p>{{ invitePending ? '验证身份后，你可以确认加入条件和使用账号。' : mode === 'login' ? '登录后继续管理共享访问。' : '只需要一分钟，就可以开始。' }}</p></div>
       <div v-if="invitePending" class="auth-invite-context">
         <NSpin v-if="inviteLoading" size="small" />
-        <template v-else-if="invitation"><span><Layers3 :size="18" /></span><div><strong>{{ invitation.plan_name }}</strong><small>{{ invitation.owner_username }} 邀请你加入 · 链接仅可使用一次</small></div></template>
+        <template v-else-if="invitation"><InvitationSummary :preview="invitation" /><div class="auth-invite-actions"><NButton text @click="emit('discardInvite')">放弃邀请</NButton></div></template>
         <template v-else-if="inviteError"><NAlert type="error">{{ inviteError }}</NAlert><div class="auth-invite-actions"><NButton text @click="emit('discardInvite')">放弃</NButton><NButton text type="primary" @click="emit('retryInvite')">重试</NButton></div></template>
       </div>
       <NButtonGroup class="segmented" aria-label="认证模式"><NButton :type="mode === 'login' ? 'primary' : 'default'" :secondary="mode === 'login'" :quaternary="mode !== 'login'" @click="mode = 'login'">登录</NButton><NButton :type="mode === 'register' ? 'primary' : 'default'" :secondary="mode === 'register'" :quaternary="mode !== 'register'" @click="mode = 'register'">注册</NButton></NButtonGroup>
@@ -29,11 +29,12 @@
 <script setup lang="ts">
 import { NAlert, NButton, NButtonGroup, NCheckbox, NSpin } from 'naive-ui'
 import { reactive, ref } from 'vue'
-import { Layers3, LogIn } from 'lucide-vue-next'
+import { LogIn } from 'lucide-vue-next'
 import { APIRequestError, api, setSessionToken } from '../api'
 import type { InvitePreview, User } from '../types'
 import BrandMark from '../components/BrandMark.vue'
 import AppInput from '../components/AppInput.vue'
+import InvitationSummary from '../components/InvitationSummary.vue'
 import { agreementVersions } from '../agreements'
 
 const props = withDefaults(defineProps<{ invitePending: boolean; invitation: InvitePreview | null; inviteLoading: boolean; inviteError: string; initialMode?: 'login' | 'register' }>(), { initialMode: 'login' })

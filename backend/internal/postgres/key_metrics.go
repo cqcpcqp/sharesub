@@ -188,6 +188,9 @@ func (s *Store) TouchAPIKey(ctx context.Context, keyID string, now time.Time) er
 }
 
 func (s *Store) MemberQuotaExhausted(ctx context.Context, memberID, accountID string, shareBPS int, now time.Time) (bool, error) {
+	if shareBPS == 0 {
+		return true, nil
+	}
 	var exhausted bool
 	limit := int64(shareBPS) * 10_000
 	err := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM member_quota_windows WHERE member_id=$1 AND account_id=$2 AND reset_at>$3 AND used_micros >= $4)`, memberID, accountID, now, limit).Scan(&exhausted)

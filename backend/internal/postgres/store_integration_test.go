@@ -153,7 +153,7 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	unboundPlan := domain.Plan{ID: "unbound-plan", OwnerUserID: "owner", Name: "先探索的 Plan", Status: domain.StatusActive, Visibility: domain.VisibilityPrivate, AllocationMode: domain.AllocationFixed, CreatedAt: now}
-	unboundOwner := domain.Member{ID: "unbound-owner-member", PlanID: unboundPlan.ID, UserID: "owner", Role: domain.RoleOwner, Status: domain.StatusActive, ShareBasisPoints: 2000, CreatedAt: now}
+	unboundOwner := domain.Member{ID: "unbound-owner-member", PlanID: unboundPlan.ID, UserID: "owner", Role: domain.RoleOwner, Status: domain.StatusActive, ShareBasisPoints: 0, CreatedAt: now}
 	if err := store.CreatePlan(ctx, unboundPlan, unboundOwner, audit("create-unbound", "owner", unboundPlan.ID)); err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +237,20 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if err := store.CreateUser(ctx, domain.User{ID: "second", Username: "second", Email: "second@example.com", PasswordHash: "hash", Status: domain.StatusActive, CreatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.UpdatePlanPublication(ctx, "owner", "plan", domain.VisibilityPublic, 1, 3000, audit("publish-plan", "owner", "plan")); err != nil {
+	if updated, err := store.UpdateMemberShare(ctx, "plan", "owner", "owner-member", 0, audit("zero-owner-share", "owner", "plan")); err != nil || updated.ShareBasisPoints != 0 {
+		t.Fatalf("set fixed owner share to zero = %+v, %v", updated, err)
+	}
+	if _, err := store.UpdateMemberShare(ctx, "plan", "owner", "owner-member", 6000, audit("restore-owner-share", "owner", "plan")); err != nil {
+		t.Fatal(err)
+	}
+	zeroInvite := domain.Invite{ID: "zero-fixed-invite", PlanID: "plan", TokenHash: []byte("zero-fixed-token"), ShareBasisPoints: 0, Status: "pending", ExpiresAt: now.Add(time.Hour), CreatedAt: now}
+	if err := store.CreateInvite(ctx, "plan", "owner", zeroInvite, audit("zero-fixed-invite", "owner", "plan")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RevokeInvite(ctx, "plan", "owner", zeroInvite.ID, audit("revoke-zero-fixed-invite", "owner", "plan")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpdatePlanPublication(ctx, "owner", "plan", domain.VisibilityPublic, 1, 0, audit("publish-plan", "owner", "plan")); err != nil {
 		t.Fatal(err)
 	}
 	publicPlans, err := store.ListPublicPlans(ctx, "applicant")
@@ -262,7 +275,7 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(detail.Members) != 2 || detail.Members[1].ShareBasisPoints != 3000 {
+	if len(detail.Members) != 2 || detail.Members[1].ShareBasisPoints != 0 {
 		t.Fatalf("members after approval = %+v", detail.Members)
 	}
 	if detail.Members[0].AvatarURL != updatedOwner.AvatarURL {
@@ -282,7 +295,7 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if !errors.Is(err, domain.ErrPublicPlanFull) {
 		t.Fatalf("second application error = %v, want public plan full", err)
 	}
-	_, err = store.UpdatePlanPublication(ctx, "owner", "plan", domain.VisibilityPublic, 2, 3000, audit("over-publish", "owner", "plan"))
+	_, err = store.UpdatePlanPublication(ctx, "owner", "plan", domain.VisibilityPublic, 2, 5000, audit("over-publish", "owner", "plan"))
 	if !errors.Is(err, domain.ErrShareExceeded) {
 		t.Fatalf("over-allocation error = %v, want share exceeded", err)
 	}

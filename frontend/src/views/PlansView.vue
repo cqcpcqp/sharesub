@@ -398,7 +398,17 @@
                       </div>
                       <div v-if="publication.visibility === 'public'" class="setting-fields" :class="{ single: isShared }">
                         <label>公开席位<NInputNumber :value="publication.slots" :min="1" :max="100" :precision="0" @update:value="updatePublicationSlots" /></label>
-                        <label v-if="!isShared">每席份额<SharePicker :model-value="publication.share" aria-label="大厅每席份额" @update:model-value="updatePublicationShare" /></label>
+                        <label v-if="!isShared">每席份额<SharePicker :model-value="publication.share" :max="maxPublicSeatSharePercent" aria-label="大厅每席份额" @update:model-value="updatePublicationShare" /></label>
+                      </div>
+                      <div
+                        v-if="publication.visibility === 'public' && !isShared && Number.isInteger(publication.slots)"
+                        class="publication-capacity"
+                        :class="{ invalid: publicationCapacityExceeded }"
+                        aria-live="polite"
+                      >
+                        <span>成员 {{ formatShareBasisPoints(publicationReservedShares.members) }} · 待领取邀请 {{ formatShareBasisPoints(publicationReservedShares.pendingInvites) }} · 本次席位 {{ formatShareBasisPoints(publicationReservedShares.publicSlots) }}</span>
+                        <strong>合计 {{ formatShareBasisPoints(publicationReservedShares.total) }} / 100%</strong>
+                        <small v-if="publicationCapacityExceeded">当前组合超过总额度，请减少公开席位或将每席份额降至 {{ maxPublicSeatSharePercent }}% 以内。</small>
                       </div>
                       <NButton attr-type="submit" secondary class="setting-submit" :disabled="!canSavePublication" :loading="actionLoading === 'publication'">
                         <template #icon><Save :size="16" /></template>
@@ -505,7 +515,7 @@
     </label>
     <div class="allocation-note">
       <strong>{{ createForm.allocationMode === 'shared' ? '成员共享账号总额度' : '为每位成员分配固定份额' }}</strong>
-      <span>{{ createForm.allocationMode === 'shared' ? '不设置个人额度上限，账号总额度耗尽后停止使用' : '每位成员用完自己的份额后停止使用' }}</span>
+      <span>{{ createForm.allocationMode === 'shared' ? '不设置个人额度上限，账号总额度耗尽后停止使用' : '份额设为 0% 时仍可查看 Plan，但不能通过该 Plan 发起请求' }}</span>
     </div>
     <label v-if="createForm.allocationMode === 'fixed'">房主份额<SharePicker :model-value="createForm.share" aria-label="房主份额" @update:model-value="updateCreateShare" /></label>
     <template #footer>
@@ -530,15 +540,20 @@
         <span><Link2 :size="19" /></span>
         <div>
           <strong>{{ isShared ? '共享使用' : '固定分配' }}</strong>
-          <small>{{ isShared ? '新成员与其他成员共同使用账号总额度' : '为通过该链接加入的成员预留固定份额' }}</small>
+          <small>{{ isShared ? '新成员与其他成员共同使用账号总额度' : '为新成员预留固定份额；0% 仅允许查看 Plan' }}</small>
         </div>
       </div>
-      <label v-if="!isShared">新成员份额<SharePicker :model-value="inviteForm.share" aria-label="受邀成员份额" @update:model-value="updateInviteShare" /></label>
+      <div v-if="!isShared" class="invite-capacity">
+        <div><span>本次最多可分配</span><strong>{{ remainingInviteSharePercent }}%</strong></div>
+        <p>当前已占用 {{ formatShareBasisPoints(reservedShares.total) }}，其中待领取邀请 {{ formatShareBasisPoints(reservedShares.pendingInvites) }}、公开席位预留 {{ formatShareBasisPoints(reservedShares.publicSlots) }}。</p>
+        <small v-if="remainingInviteSharePercent === 0">额度已全部预留，仍可创建 0% 的仅查看邀请。</small>
+      </div>
+      <label v-if="!isShared">新成员份额<SharePicker :model-value="inviteForm.share" :max="remainingInviteSharePercent" aria-label="受邀成员份额" @update:model-value="updateInviteShare" /></label>
       <NAlert type="warning" :show-icon="true">任何拿到链接并完成登录或注册的用户都可以领取，请只通过可信渠道发送。</NAlert>
     </div>
     <template #footer>
       <NButton @click="showInviteComposer = false">取消</NButton>
-      <NButton type="primary" :loading="actionLoading === 'create-invite'" @click="sendInvite">
+      <NButton type="primary" :loading="actionLoading === 'create-invite'" :disabled="!canCreateInvite" @click="sendInvite">
         <template #icon><UserPlus :size="17" /></template>
         生成链接
       </NButton>
@@ -658,7 +673,9 @@ const {
   showCreate, showConnectAccount, showInviteComposer, inviteSecret, showDeleteConfirmOne, showDeleteConfirmTwo,
   deleteNameDraft, renameDraft, descriptionDraft, transferMemberID, rebindAccountID, createForm, inviteForm,
   publication, shareDrafts, accountOptions, planOptions, isOwner, isShared, isArchived, isAccountBound, owner,
-  currentMember, allocatedShare, availablePublicSlots, canRename, canUpdateDescription, canSavePublication,
+  currentMember, allocatedShare, reservedShares, remainingInviteSharePercent, canCreateInvite, availablePublicSlots,
+  publicationReservedShares, maxPublicSeatSharePercent, publicationCapacityExceeded,
+  canRename, canUpdateDescription, canSavePublication,
   canConfirmDelete, transferMemberOptions, rebindAccountOptions, actionLabels, metadataLabels,
   setPublicationVisibility, updateRenameDraft, updateDescriptionDraft, updateDeleteNameDraft, updatePublicationSlots,
   updatePublicationShare, updateRebindAccount, updateTransferMember, updateCreateName,
