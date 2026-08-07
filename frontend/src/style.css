@@ -211,6 +211,7 @@ code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 11px; }
 
 .workspace { min-width: 0; background: var(--canvas); }
 .workspace-toolbar { position: sticky; top: 0; z-index: 15; height: 58px; display: flex; align-items: center; justify-content: flex-end; padding: 0 34px; border-bottom: 1px solid var(--line-soft); background: var(--surface-translucent); backdrop-filter: blur(14px); }
+.workspace-toolbar-actions { display: flex; align-items: center; gap: 8px; }
 .notification-trigger { background: var(--surface); box-shadow: var(--shadow-xs); }
 .workspace-body { position: relative; width: min(100%, 1510px); margin: 0 auto; }
 .view-content { padding: 28px 34px 48px; }

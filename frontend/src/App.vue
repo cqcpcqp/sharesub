@@ -121,16 +121,19 @@
 
       <main class="workspace">
         <header class="workspace-toolbar">
-          <NotificationCenter
-            :items="notifications"
-            :unread-count="unreadNotificationCount"
-            :loading="notificationLoading"
-            :reading-all="readingAllNotifications"
-            @refresh="refreshNotifications(true)"
-            @read="markNotificationRead"
-            @read-all="markAllNotificationsRead"
-            @open="openNotification"
-          />
+          <div class="workspace-toolbar-actions">
+            <CustomerSupportPopover />
+            <NotificationCenter
+              :items="notifications"
+              :unread-count="unreadNotificationCount"
+              :loading="notificationLoading"
+              :reading-all="readingAllNotifications"
+              @refresh="refreshNotifications(true)"
+              @read="markNotificationRead"
+              @read-all="markAllNotificationsRead"
+              @open="openNotification"
+            />
+          </div>
         </header>
         <div class="workspace-body">
           <Transition name="toast"><NAlert v-if="notice.text" class="notice" :type="notice.type" closable @close="notice.text = ''">{{ notice.text }}</NAlert></Transition>
@@ -174,6 +177,7 @@ import AsyncViewError from './components/AsyncViewError.vue'
 import AsyncViewLoading from './components/AsyncViewLoading.vue'
 import AuthView from './views/AuthView.vue'
 import BrandMark from './components/BrandMark.vue'
+import CustomerSupportPopover from './components/CustomerSupportPopover.vue'
 import InvitationStatusDialog from './components/InvitationStatusDialog.vue'
 import NotificationCenter from './components/NotificationCenter.vue'
 import OnboardingGuide from './components/OnboardingGuide.vue'
