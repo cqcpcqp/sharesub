@@ -250,7 +250,7 @@ func (s *Service) RecordGatewayMetric(ctx context.Context, access GatewayAccess,
 	metric.PlanID = access.Credential.Plan.ID
 	metric.AccountID = access.Credential.Account.ID
 	metric.MemberID = access.Credential.Member.ID
-	metric.CostBreakdown = billing.AccountCost(metric.BillingModel, metric.ServiceTier, metric.TokenUsage, metric.WebSearchCalls)
+	metric.CostBreakdown = billing.AccountCostForImageSize(metric.BillingModel, metric.ServiceTier, metric.TokenUsage, metric.WebSearchCalls, metric.ImageSize)
 	metric.AccountCostMicros = metric.CostBreakdown.TotalMicros
 	metric.CreatedAt = s.now()
 	return s.store.RecordGatewayMetric(ctx, metric)

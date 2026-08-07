@@ -12,7 +12,7 @@ ShareSub 是一个仅支持 OpenAI Codex 的账号共享平台。房主可以先
 - OpenAI 账号支持名称、备注、启停状态、独立代理、最大并发和 RPM 上限；OAuth 接入与刷新会同步当前付费订阅的有效期，只有账号所有者可编辑配置，Plan 的所有成员可查看完整配置。
 - API Key 归用户所有，一个 Key 可以绑定用户已加入的多个 Plan。
 - API Key 支持按优先级故障转移，或按可用额度均衡选路。
-- Codex 网关支持流式和非流式 Responses、远程 compact、模型列表以及 sub2api 兼容路径。
+- OpenAI 网关支持流式和非流式 Responses、远程 compact、模型列表，以及兼容 OpenAI Images 的图片生成和编辑接口。
 - Plan 创建时选择额度方式，创建后不可更改：`fixed` 按成员固定分配份额，`shared` 由所有成员共享账号总额度。
 - 固定分配 Plan 中，所有有效份额与待接受邀请的份额之和不能超过 100%；共享使用 Plan 不设置个人份额或个人额度上限。
 - 公开 Plan 上架时必须预留席位；固定分配模式还需设置每席份额，共享模式的每席份额固定为 `0`。
@@ -210,6 +210,10 @@ pnpm dev
 - `POST /responses/compact`
 - `POST /backend-api/codex/responses`
 - `POST /backend-api/codex/responses/compact`
+- `POST /v1/images/generations`
+- `POST /v1/images/edits`
+- `POST /images/generations`
+- `POST /images/edits`
 
 推荐普通 OpenAI 客户端使用 `/v1` 开头的标准入口；Codex 会通过 `/models?client_version=...` 获取所选 Plan 账号的实时模型 manifest，其余路径用于兼容已有 Codex/sub2api 客户端配置。
 
@@ -226,6 +230,8 @@ curl https://sharesub.example.com/v1/responses \
 网关会按 Key 的配置从仍然有效的 Plan 中选路：`priority` 按数字从小到大选择，当前路由在请求发出前不可用或达到账号并发/RPM 上限时尝试下一条；`balanced` 在固定分配模式按成员消耗占个人份额的比例选择，在共享模式按账号总额度使用比例选择。共享 Plan 不执行个人额度限制，但账号任一有效窗口达到 100% 后会停止路由。账号独立代理优先于 `SHARESUB_OUTBOUND_PROXY`，代理请求失败时不会回退直连。只有上游明确以 `429` 或 `529` 拒绝执行时，网关才会切换到下一个账号，最多切换 3 次；连接错误、超时和其他状态不会重试，避免重复执行。系统不把请求或响应正文写入数据库或性能记录。
 
 OAuth 请求会移除 ChatGPT 内部接口不支持的顶层字段并强制 `store=false`。非流式请求由网关把上游 SSE 终止响应还原成 JSON；流式上游异常关闭时会发出标准 `response.failed` 终止事件。完整兼容范围见 [转发兼容说明](docs/forwarding-compatibility.md)。
+
+Images 接口支持 `gpt-image-1`、`gpt-image-1.5`、`gpt-image-2`，生成请求使用 JSON，编辑请求支持 JSON 图片 URL 或 multipart 文件与 mask。网关把请求转换为 ChatGPT Responses 的 `image_generation` 工具调用，并将固定的图片事件转换回 OpenAI Images JSON 或 SSE 响应。
 
 ## 使用 Docker 部署到服务器
 

@@ -203,10 +203,14 @@ Plan 详情的 `insights.window_usage` 按当前 OpenAI 账号实际返回的 5h
 | `POST` | `/responses/compact` | 用户 API Key | 不带 `/v1` 的 compact 兼容入口 |
 | `POST` | `/backend-api/codex/responses` | 用户 API Key | 转发 Codex Responses 请求 |
 | `POST` | `/backend-api/codex/responses/compact` | 用户 API Key | Codex compact 兼容入口 |
+| `POST` | `/v1/images/generations` | 用户 API Key | 使用 `gpt-image-*` 模型生成图片 |
+| `POST` | `/v1/images/edits` | 用户 API Key | 使用 JSON 图片 URL 或 multipart 图片与 mask 编辑图片 |
+| `POST` | `/images/generations` | 用户 API Key | 不带 `/v1` 的图片生成兼容入口 |
+| `POST` | `/images/edits` | 用户 API Key | 不带 `/v1` 的图片编辑兼容入口 |
 
 网关请求体上限为 32 MiB。`priority` 按数字从小到大选路，并在请求发出前跳过不可用路由；`balanced` 在固定分配模式按当前成员消耗占个人份额的比例选择，在共享模式按账号总额度使用比例选择。Responses 上游明确返回 `429` 或 `529` 时最多切换 3 个账号；models manifest 在连接失败或上游返回 `401`、`429`、`5xx` 时最多切换 3 个账号。
 
-固定分配模式的候选成员在 5 小时或 7 天窗口中达到个人份额后不可用；共享模式不限制个人用量，但账号任一有效窗口达到 100% 后不可用。所有候选都不可用时返回 `429 quota_exhausted`；没有有效路由时返回 `503 no_route_available`。只有完整额度响应头会更新额度快照；额度头缺失不会篡改或拦截上游成功响应。指标记录状态码、TTFT、总耗时、终止事件中的 Input/Output/Cached Token 和关联成员，不记录请求或响应内容。
+固定分配模式的候选成员在 5 小时或 7 天窗口中达到个人份额后不可用；共享模式不限制个人用量，但账号任一有效窗口达到 100% 后不可用。所有候选都不可用时返回 `429 quota_exhausted`；没有有效路由时返回 `503 no_route_available`。只有完整额度响应头会更新额度快照；额度头缺失不会篡改或拦截上游成功响应。指标记录状态码、TTFT、总耗时、终止事件中的 Input/Output/Cached/Image Token、图片数量与关联成员，不记录请求或响应内容。图片按 sub2api 默认档位计费：1K、2K、4K 每张分别为 134000、201000、268000 micro-USD，优先采用上游输出尺寸，尺寸缺失时按 2K。
 
 ## 常见错误码
 

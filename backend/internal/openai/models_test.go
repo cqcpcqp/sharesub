@@ -9,6 +9,9 @@ func TestCodexModelsIncludeCurrentTextModels(t *testing.T) {
 		"gpt-5.6-terra": false,
 		"gpt-5.6-luna":  false,
 		"gpt-5.5":       false,
+		"gpt-image-1":   false,
+		"gpt-image-1.5": false,
+		"gpt-image-2":   false,
 	}
 	for _, model := range CodexModels {
 		if _, ok := want[model.ID]; ok {

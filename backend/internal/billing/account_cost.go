@@ -3,6 +3,7 @@ package billing
 import (
 	_ "embed"
 	"encoding/json"
+	"fmt"
 	"math"
 	"strings"
 	"sync"
@@ -39,14 +40,25 @@ func AccountCostMicros(model, serviceTier string, usage domain.TokenUsage) int64
 }
 
 func AccountCost(model, serviceTier string, usage domain.TokenUsage, webSearchCalls int64) domain.CostBreakdown {
+	return AccountCostForImageSize(model, serviceTier, usage, webSearchCalls, "")
+}
+
+// AccountCostForImageSize applies sub2api's image-generation size tiers. An
+// unspecified or unrecognized size is billed as 2K.
+func AccountCostForImageSize(model, serviceTier string, usage domain.TokenUsage, webSearchCalls int64, imageSize string) domain.CostBreakdown {
 	// Responses API web search is an add-on to the response's token usage.
 	// Image generation keeps sub2api's default per-generated-image mode, which
 	// replaces token billing for the generated response.
 	out := domain.CostBreakdown{WebSearchMicros: webSearchCalls * 10_000}
 	if usage.ImageCount > 0 {
-		// sub2api defaults an unspecified image size to 2K and uses its fallback
-		// image price ($0.134 * 1.5 = $0.201 per image).
-		out.ImageOutputMicros = usage.ImageCount * 201_000
+		unitMicros := int64(201_000)
+		switch imageBillingTier(imageSize) {
+		case "1K":
+			unitMicros = 134_000
+		case "4K":
+			unitMicros = 268_000
+		}
+		out.ImageOutputMicros = usage.ImageCount * unitMicros
 		out.TotalMicros = out.ImageOutputMicros + out.WebSearchMicros
 		return out
 	}
@@ -107,6 +119,34 @@ func AccountCost(model, serviceTier string, usage domain.TokenUsage, webSearchCa
 	out.ImageOutputMicros = toMicros(usage.ImageOutputTokens, imageOutputPrice)
 	out.TotalMicros = out.InputMicros + out.OutputMicros + out.CacheCreationMicros + out.CacheReadMicros + out.ImageInputMicros + out.ImageOutputMicros + out.WebSearchMicros
 	return out
+}
+
+func imageBillingTier(size string) string {
+	normalized := strings.ToLower(strings.TrimSpace(size))
+	switch normalized {
+	case "1k":
+		return "1K"
+	case "2k", "2048x2048", "2048x1152":
+		return "2K"
+	case "4k", "3840x2160", "2160x3840":
+		return "4K"
+	}
+	var width, height int
+	if _, err := fmt.Sscanf(normalized, "%dx%d", &width, &height); err != nil || width <= 0 || height <= 0 {
+		return "2K"
+	}
+	maxEdge := width
+	if height > maxEdge {
+		maxEdge = height
+	}
+	switch {
+	case maxEdge <= 1024:
+		return "1K"
+	case maxEdge <= 2048:
+		return "2K"
+	default:
+		return "4K"
+	}
 }
 
 func pricingForModel(model string) (modelPricing, bool) {

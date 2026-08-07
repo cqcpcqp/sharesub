@@ -25,6 +25,7 @@ type ProxyMetrics struct {
 	ImageInputTokens    int64
 	ImageOutputTokens   int64
 	ImageCount          int64
+	ImageSize           string
 	WebSearchCalls      int64
 	UpstreamModel       string
 	ClientDisconnected  bool
@@ -405,6 +406,7 @@ func proxyMetrics(startedAt, firstByteAt, firstTokenAt time.Time, terminal termi
 type responseUsage struct {
 	InputTokens       int64 `json:"input_tokens"`
 	OutputTokens      int64 `json:"output_tokens"`
+	Images            int64 `json:"images,omitempty"`
 	InputTokenDetails struct {
 		CachedTokens     int64 `json:"cached_tokens"`
 		CacheWriteTokens int64 `json:"cache_write_tokens"`

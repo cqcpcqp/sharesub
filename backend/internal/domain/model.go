@@ -413,6 +413,7 @@ type GatewayMetric struct {
 	Duration          time.Duration
 	TokenUsage        TokenUsage
 	ImageCount        int64
+	ImageSize         string
 	WebSearchCalls    int64
 	CostBreakdown     CostBreakdown
 	AccountCostMicros int64

@@ -95,3 +95,22 @@ func TestAccountCostUsesSub2APIDefaultImagePerRequestBilling(t *testing.T) {
 		t.Fatalf("image cost = %+v", got)
 	}
 }
+
+func TestAccountCostUsesSub2APIImageSizeTiers(t *testing.T) {
+	usage := domain.TokenUsage{ImageCount: 2}
+	tests := []struct {
+		size string
+		want int64
+	}{
+		{size: "1024x1024", want: 268_000},
+		{size: "2048x1152", want: 402_000},
+		{size: "4K", want: 536_000},
+		{size: "", want: 402_000},
+	}
+	for _, test := range tests {
+		got := AccountCostForImageSize("gpt-image-2", "", usage, 0, test.size)
+		if got.TotalMicros != test.want || got.ImageOutputMicros != test.want {
+			t.Errorf("size %q cost = %+v, want %d", test.size, got, test.want)
+		}
+	}
+}

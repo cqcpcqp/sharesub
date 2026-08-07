@@ -260,6 +260,25 @@ func TestForwardCompactUsesCompactEndpointAndHeaders(t *testing.T) {
 	}
 }
 
+func TestForwardOverridesMultipartContentTypeAfterBodyNormalization(t *testing.T) {
+	var captured *http.Request
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		captured = req
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("")), Request: req}, nil
+	})}
+	inbound := httptest.NewRequest(http.MethodPost, "http://gateway.test/v1/images/edits", nil)
+	inbound.Header.Set("Content-Type", "multipart/form-data; boundary=original")
+
+	response, err := NewGateway(client).Forward(context.Background(), inbound, []byte(`{"model":"gpt-5.4-mini"}`), RequestBilling{Model: "gpt-image-2"}, "access", "account", "key", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if got := captured.Header.Get("Content-Type"); got != "application/json" {
+		t.Fatalf("Content-Type = %q, want application/json", got)
+	}
+}
+
 func TestFetchModelsForwardsCodexDiscoveryHeaders(t *testing.T) {
 	var captured *http.Request
 	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {

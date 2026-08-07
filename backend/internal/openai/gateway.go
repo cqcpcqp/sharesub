@@ -299,9 +299,9 @@ func (g *Gateway) Forward(ctx context.Context, inbound *http.Request, body []byt
 	if req.Header.Get("Originator") == "" {
 		req.Header.Set("Originator", "codex_cli_rs")
 	}
-	if req.Header.Get("Content-Type") == "" {
-		req.Header.Set("Content-Type", "application/json")
-	}
+	// Every supported gateway request is normalized to a JSON body before it
+	// reaches Forward, including multipart Images edits.
+	req.Header.Set("Content-Type", "application/json")
 	if compact {
 		req.Header.Set("Accept", "application/json")
 		if req.Header.Get("Version") == "" {

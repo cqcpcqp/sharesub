@@ -101,4 +101,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /responses/compact", s.responses)
 	s.mux.HandleFunc("POST /backend-api/codex/responses", s.responses)
 	s.mux.HandleFunc("POST /backend-api/codex/responses/compact", s.responses)
+	s.mux.HandleFunc("POST /v1/images/generations", s.images)
+	s.mux.HandleFunc("POST /v1/images/edits", s.images)
+	s.mux.HandleFunc("POST /images/generations", s.images)
+	s.mux.HandleFunc("POST /images/edits", s.images)
 }

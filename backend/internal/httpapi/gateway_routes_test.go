@@ -31,6 +31,10 @@ func TestGatewayCompatibilityRoutesAreRegistered(t *testing.T) {
 		{http.MethodPost, "/responses/compact"},
 		{http.MethodPost, "/backend-api/codex/responses"},
 		{http.MethodPost, "/backend-api/codex/responses/compact"},
+		{http.MethodPost, "/v1/images/generations"},
+		{http.MethodPost, "/v1/images/edits"},
+		{http.MethodPost, "/images/generations"},
+		{http.MethodPost, "/images/edits"},
 	}
 	for _, test := range tests {
 		t.Run(test.method+" "+test.path, func(t *testing.T) {

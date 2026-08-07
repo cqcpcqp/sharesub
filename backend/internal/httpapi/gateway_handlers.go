@@ -227,6 +227,132 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) images(w http.ResponseWriter, r *http.Request) {
+	apiKey := bearerToken(r)
+	access, err := s.app.ResolveGatewayAccess(r.Context(), apiKey)
+	if err != nil {
+		writeGatewayDomainError(w, err)
+		return
+	}
+	defer func() { releaseGatewayAccess(&access) }()
+	releaseSlot, ok := s.gateway.TryAcquire()
+	if !ok {
+		writeGatewayErrorStatus(w, http.StatusServiceUnavailable, "server_overloaded", "gateway concurrency limit reached")
+		return
+	}
+	defer releaseSlot()
+
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxGatewayBody))
+	if err != nil {
+		writeGatewayErrorStatus(w, http.StatusRequestEntityTooLarge, "request_too_large", "request body exceeds 32 MiB")
+		return
+	}
+	forwardBody, imageRequest, billingMetadata, err := openai.PrepareImagesRequest(body, r.Header.Get("Content-Type"), r.URL.Path)
+	if err != nil {
+		writeGatewayErrorStatus(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+
+	gatewayRequestID := strings.TrimSpace(r.Header.Get("X-Request-Id"))
+	if gatewayRequestID == "" {
+		gatewayRequestID = strings.TrimSpace(r.Header.Get("Openai-Request-Id"))
+	}
+	if gatewayRequestID == "" {
+		gatewayRequestID, _ = security.NewID()
+	}
+	excludedAccountIDs := make([]string, 0, maxUpstreamAccountSwitches)
+	for switches := 0; ; {
+		attemptStartedAt := time.Now()
+		attemptCtx, cancelAttempt := upstreamAttemptContext(r.Context())
+		upstream, forwardErr := s.gateway.Forward(attemptCtx, r, forwardBody, billingMetadata, access.AccessToken, access.Credential.Account.ChatGPTAccountID, access.Credential.APIKeyID, access.ProxyURL)
+		if forwardErr != nil {
+			cancelAttempt()
+			metrics := openai.ProxyMetrics{Duration: time.Since(attemptStartedAt), UpstreamModel: imageRequest.Model}
+			s.recordGatewayMetric(r.Context(), access, gatewayMetric(gatewayRequestID, imageRequest.Model, billingMetadata, http.StatusBadGateway, metrics))
+			if r.Context().Err() != nil {
+				return
+			}
+			if switches < maxUpstreamAccountSwitches {
+				excludedAccountIDs = append(excludedAccountIDs, access.Credential.Account.ID)
+				releaseGatewayAccess(&access)
+				next, resolveErr := s.app.ResolveGatewayAccess(r.Context(), apiKey, excludedAccountIDs...)
+				if resolveErr == nil {
+					access = next
+					switches++
+					continue
+				}
+			}
+			writeGatewayErrorStatus(w, http.StatusBadGateway, "upstream_unavailable", forwardErr.Error())
+			return
+		}
+
+		requestID := upstreamRequestID(upstream, gatewayRequestID)
+		if upstream.StatusCode >= 200 && upstream.StatusCode < 300 {
+			s.recordGatewayUsage(r.Context(), access, upstream.Header, requestID)
+		}
+		if shouldSwitchUpstreamAccount(upstream.StatusCode) {
+			metrics, rejectedBody, drainErr := openai.DrainResponse(upstream, attemptStartedAt)
+			metrics.UpstreamModel = imageRequest.Model
+			_ = upstream.Body.Close()
+			cancelAttempt()
+			if drainErr != nil {
+				s.logger.Warn("drain rejected images response", "request_id", requestID, "error", drainErr)
+			}
+			s.recordGatewayMetric(r.Context(), access, gatewayMetric(requestID, imageRequest.Model, billingMetadata, upstream.StatusCode, metrics))
+			if err := s.recordGatewayAccountQuota(r.Context(), access, upstream.Header); err != nil {
+				s.logger.Debug("upstream image rejection did not include Codex quota signal", "account_id", access.Credential.Account.ID, "status", upstream.StatusCode)
+			}
+			if switches >= maxUpstreamAccountSwitches {
+				_ = openai.WriteDrainedResponse(w, upstream, rejectedBody)
+				return
+			}
+			excludedAccountIDs = append(excludedAccountIDs, access.Credential.Account.ID)
+			releaseGatewayAccess(&access)
+			next, resolveErr := s.app.ResolveGatewayAccess(r.Context(), apiKey, excludedAccountIDs...)
+			if resolveErr != nil {
+				_ = openai.WriteDrainedResponse(w, upstream, rejectedBody)
+				return
+			}
+			access = next
+			switches++
+			continue
+		}
+
+		metrics, copyErr := openai.CopyImagesResponse(w, upstream, attemptStartedAt, imageRequest)
+		_ = upstream.Body.Close()
+		cancelAttempt()
+		metrics.UpstreamModel = imageRequest.Model
+		metricStatus := upstream.StatusCode
+		var failoverErr *openai.StreamFailoverError
+		if errors.As(copyErr, &failoverErr) {
+			metricStatus = failoverErr.StatusCode
+		}
+		s.recordGatewayMetric(r.Context(), access, gatewayMetric(requestID, imageRequest.Model, billingMetadata, metricStatus, metrics))
+
+		if errors.As(copyErr, &failoverErr) && switches < maxUpstreamAccountSwitches && r.Context().Err() == nil {
+			excludedAccountIDs = append(excludedAccountIDs, access.Credential.Account.ID)
+			releaseGatewayAccess(&access)
+			next, resolveErr := s.app.ResolveGatewayAccess(r.Context(), apiKey, excludedAccountIDs...)
+			if resolveErr == nil {
+				access = next
+				switches++
+				continue
+			}
+		}
+		if errors.As(copyErr, &failoverErr) {
+			writeGatewayErrorStatus(w, failoverErr.StatusCode, "upstream_error", "upstream image generation failed")
+			return
+		}
+		if copyErr != nil {
+			s.logger.Warn("copy upstream images response", "request_id", requestID, "error", copyErr)
+			if !imageRequest.Stream {
+				writeGatewayErrorStatus(w, http.StatusBadGateway, "upstream_error", copyErr.Error())
+			}
+		}
+		return
+	}
+}
+
 func shouldSwitchUpstreamAccount(status int) bool {
 	return status == http.StatusUnauthorized || status == http.StatusPaymentRequired || status == http.StatusForbidden || status == http.StatusTooManyRequests || status == 529 || (status >= http.StatusInternalServerError && status < 600)
 }
@@ -263,6 +389,7 @@ func gatewayMetric(requestID, requestedModel string, metadata openai.RequestBill
 			ImageCount: metrics.ImageCount, TotalTokens: metrics.InputTokens + metrics.OutputTokens,
 		},
 		ImageCount: metrics.ImageCount, WebSearchCalls: metrics.WebSearchCalls,
+		ImageSize: metrics.ImageSize,
 	}
 }
 
