@@ -117,6 +117,35 @@ func TestCopyImagesResponseAsJSON(t *testing.T) {
 	}
 }
 
+func TestCopyImagesResponseUsesOutputItemDoneResult(t *testing.T) {
+	body := `data: {"type":"response.output_item.done","item":{"id":"ig_1","type":"image_generation_call","result":"aW1hZ2U=","revised_prompt":"a cat","output_format":"png","size":"1024x1024","background":"opaque","quality":"high","model":"gpt-image-2"}}` + "\n\n" +
+		`data: {"type":"response.completed","response":{"created_at":1710000000,"model":"gpt-5.4-mini","tool_usage":{"image_gen":{"input_tokens":46,"output_tokens":2459,"output_tokens_details":{"image_tokens":2459}}},"output":[{"type":"image_generation_call"}]}}` + "\n\n"
+	source := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}
+	recorder := httptest.NewRecorder()
+	metrics, err := CopyImagesResponse(recorder, source, time.Now(), ImagesRequest{Endpoint: imagesGenerationsEndpoint, Model: "gpt-image-2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metrics.ImageCount != 1 || metrics.ImageSize != "1024x1024" {
+		t.Fatalf("metrics = %+v", metrics)
+	}
+	var response struct {
+		Created int64  `json:"created"`
+		Model   string `json:"model"`
+		Size    string `json:"size"`
+		Data    []struct {
+			B64JSON       string `json:"b64_json"`
+			RevisedPrompt string `json:"revised_prompt"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Created != 1710000000 || response.Model != "gpt-image-2" || response.Size != "1024x1024" || len(response.Data) != 1 || response.Data[0].B64JSON != "aW1hZ2U=" || response.Data[0].RevisedPrompt != "a cat" {
+		t.Fatalf("response = %+v", response)
+	}
+}
+
 func TestCopyImagesResponseStreamsImageEvents(t *testing.T) {
 	body := "data: {\"type\":\"response.created\",\"response\":{\"created_at\":1710000000}}\n\n" +
 		"data: {\"type\":\"response.image_generation_call.partial_image\",\"partial_image_index\":0,\"partial_image_b64\":\"cGFydA==\"}\n\n" +

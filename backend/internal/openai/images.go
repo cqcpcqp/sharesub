@@ -292,7 +292,12 @@ type imagesResult struct {
 }
 
 type imagesTerminalEvent struct {
-	Type     string `json:"type"`
+	Type string `json:"type"`
+	Item struct {
+		ID   string `json:"id"`
+		Type string `json:"type"`
+		imagesResult
+	} `json:"item"`
 	Response struct {
 		CreatedAt int64  `json:"created_at"`
 		Model     string `json:"model"`
@@ -318,6 +323,7 @@ func CopyImagesResponse(dst http.ResponseWriter, src *http.Response, startedAt t
 	reader := bufio.NewReader(src.Body)
 	var terminal terminalResponse
 	var completed *imagesTerminalEvent
+	var outputItemResults []imagesResult
 	firstByteAt := time.Time{}
 	firstTokenAt := time.Time{}
 	streamStarted := false
@@ -357,6 +363,10 @@ func CopyImagesResponse(dst http.ResponseWriter, src *http.Response, startedAt t
 						if flusher != nil {
 							flusher.Flush()
 						}
+					}
+				case "response.output_item.done":
+					if event.Item.Type == "image_generation_call" && event.Item.Result != "" {
+						outputItemResults = append(outputItemResults, event.Item.imagesResult)
 					}
 				case "response.completed":
 					completed = &event
@@ -407,6 +417,9 @@ func CopyImagesResponse(dst http.ResponseWriter, src *http.Response, startedAt t
 		}
 	}
 	if len(results) == 0 {
+		results = outputItemResults
+	}
+	if len(results) == 0 {
 		if !streamStarted {
 			return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), &StreamFailoverError{StatusCode: http.StatusBadGateway}
 		}
@@ -450,6 +463,7 @@ func CopyImagesResponse(dst http.ResponseWriter, src *http.Response, startedAt t
 			flusher.Flush()
 		}
 		metrics := proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false)
+		metrics.ImageCount = int64(len(results))
 		metrics.ImageSize = imageSize
 		return metrics, nil
 	}
@@ -473,6 +487,7 @@ func CopyImagesResponse(dst http.ResponseWriter, src *http.Response, startedAt t
 	dst.WriteHeader(src.StatusCode)
 	writeErr := json.NewEncoder(dst).Encode(response)
 	metrics := proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false)
+	metrics.ImageCount = int64(len(results))
 	metrics.ImageSize = imageSize
 	return metrics, writeErr
 }
