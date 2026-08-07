@@ -341,14 +341,15 @@ func sameQuotaWindow(left, right time.Time) bool {
 func (s *Store) RecordGatewayMetric(ctx context.Context, metric domain.GatewayMetric) error {
 	_, err := s.pool.Exec(ctx, `INSERT INTO gateway_request_metrics(
 		request_id,api_key_id,plan_id,account_id,member_id,model,requested_model,upstream_model,billing_model,service_tier,
-		status_code,ttft_ms,duration_ms,input_tokens,output_tokens,cached_tokens,cache_creation_tokens,image_input_tokens,image_output_tokens,
+		endpoint,is_stream,status_code,error_source,error_code,error_message,ttft_ms,duration_ms,input_tokens,output_tokens,cached_tokens,cache_creation_tokens,image_input_tokens,image_output_tokens,
 		image_count,web_search_calls,input_cost_micros,output_cost_micros,cache_creation_cost_micros,cache_read_cost_micros,
 		image_input_cost_micros,image_output_cost_micros,web_search_cost_micros,estimated_cost_micros,created_at
 	) VALUES(
-		$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30
+		$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35
 	) ON CONFLICT(request_id,api_key_id,account_id) DO NOTHING`,
 		metric.RequestID, metric.APIKeyID, metric.PlanID, metric.AccountID, metric.MemberID, metric.Model, metric.RequestedModel, metric.UpstreamModel, metric.BillingModel, metric.ServiceTier,
-		metric.StatusCode, metric.TTFT.Milliseconds(), metric.Duration.Milliseconds(), metric.TokenUsage.InputTokens, metric.TokenUsage.OutputTokens, metric.TokenUsage.CachedTokens, metric.TokenUsage.CacheCreationTokens, metric.TokenUsage.ImageInputTokens, metric.TokenUsage.ImageOutputTokens,
+		metric.Endpoint, metric.IsStream, metric.StatusCode, metric.ErrorSource, metric.ErrorCode, metric.ErrorMessage,
+		metric.TTFT.Milliseconds(), metric.Duration.Milliseconds(), metric.TokenUsage.InputTokens, metric.TokenUsage.OutputTokens, metric.TokenUsage.CachedTokens, metric.TokenUsage.CacheCreationTokens, metric.TokenUsage.ImageInputTokens, metric.TokenUsage.ImageOutputTokens,
 		metric.ImageCount, metric.WebSearchCalls, metric.CostBreakdown.InputMicros, metric.CostBreakdown.OutputMicros, metric.CostBreakdown.CacheCreationMicros, metric.CostBreakdown.CacheReadMicros,
 		metric.CostBreakdown.ImageInputMicros, metric.CostBreakdown.ImageOutputMicros, metric.CostBreakdown.WebSearchMicros, metric.AccountCostMicros, metric.CreatedAt)
 	return err

@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/sharesub/sharesub/backend/internal/billing"
 	"github.com/sharesub/sharesub/backend/internal/domain"
@@ -254,8 +255,29 @@ func (s *Service) RecordGatewayMetric(ctx context.Context, access GatewayAccess,
 	metric.PlanID = access.Credential.Plan.ID
 	metric.AccountID = access.Credential.Account.ID
 	metric.MemberID = access.Credential.Member.ID
+	metric.Endpoint = truncateGatewayMetricText(metric.Endpoint, 160)
+	metric.ErrorCode = truncateGatewayMetricText(metric.ErrorCode, 120)
+	metric.ErrorMessage = truncateGatewayErrorMessage(metric.ErrorMessage, 2000)
 	metric.CostBreakdown = billing.AccountCostForImageSize(metric.BillingModel, metric.ServiceTier, metric.TokenUsage, metric.WebSearchCalls, metric.ImageSize)
 	metric.AccountCostMicros = metric.CostBreakdown.TotalMicros
 	metric.CreatedAt = s.now()
 	return s.store.RecordGatewayMetric(ctx, metric)
+}
+
+func truncateGatewayMetricText(value string, limit int) string {
+	runes := []rune(strings.TrimSpace(value))
+	if len(runes) > limit {
+		runes = runes[:limit]
+	}
+	return string(runes)
+}
+
+func truncateGatewayErrorMessage(value string, limit int) string {
+	value = strings.Map(func(char rune) rune {
+		if unicode.IsControl(char) && char != '\n' && char != '\t' {
+			return -1
+		}
+		return char
+	}, value)
+	return truncateGatewayMetricText(value, limit)
 }

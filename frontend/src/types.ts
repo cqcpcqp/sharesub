@@ -208,6 +208,37 @@ export interface PerformanceSummary {
   p95_duration_ms: number
 }
 
+export type GatewayErrorSource = '' | 'request' | 'upstream' | 'gateway'
+
+export interface PlanRequestError {
+  id: number
+  request_id: string
+  endpoint: string
+  is_stream: boolean
+  status_code: number
+  error_source: GatewayErrorSource
+  error_code: string
+  error_message: string
+  requested_model: string
+  upstream_model: string
+  service_tier: string
+  duration_ms: number
+  member_id: string
+  member_username: string
+  account_id: string
+  account_name: string
+  api_key_name: string
+  api_key_prefix: string
+  created_at: string
+}
+
+export interface PlanRequestErrorList {
+  items: PlanRequestError[]
+  total: number
+  page: number
+  page_size: number
+}
+
 export interface TokenUsage {
   input_tokens: number
   output_tokens: number

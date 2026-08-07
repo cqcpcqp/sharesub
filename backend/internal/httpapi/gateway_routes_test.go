@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/sharesub/sharesub/backend/internal/application"
+	"github.com/sharesub/sharesub/backend/internal/domain"
+	"github.com/sharesub/sharesub/backend/internal/openai"
 )
 
 func TestGatewayCompatibilityRoutesAreRegistered(t *testing.T) {
@@ -105,5 +107,40 @@ func TestShouldSwitchModelsAccountForRetryableFailure(t *testing.T) {
 		if shouldSwitchModelsAccount(status) {
 			t.Fatalf("status %d must not switch models account", status)
 		}
+	}
+}
+
+func TestGatewayMetricCarriesStructuredErrorContext(t *testing.T) {
+	metric := gatewayMetric("request-1", "gpt-5.6-sol", "/v1/responses", openai.RequestBilling{
+		Model: "gpt-5.6-sol", ServiceTier: "priority", Stream: true,
+	}, http.StatusServiceUnavailable, openai.ProxyMetrics{
+		Duration: 3 * time.Second, ErrorCode: "server_error", ErrorMessage: "upstream temporarily unavailable",
+	})
+	if metric.Endpoint != "/v1/responses" || !metric.IsStream || metric.ErrorSource != domain.GatewayErrorSourceUpstream || metric.ErrorCode != "server_error" || metric.ErrorMessage != "upstream temporarily unavailable" {
+		t.Fatalf("gateway metric = %+v", metric)
+	}
+}
+
+func TestGatewayClientDisconnectMetricUsesRequestErrorStatus(t *testing.T) {
+	metric := gatewayErrorMetric("request-1", "/v1/responses", "gpt-5.6-sol", openai.RequestBilling{
+		Model: "gpt-5.6-sol", Stream: true,
+	}, clientClosedRequestStatus, domain.GatewayErrorSourceRequest, "client_disconnected", "client disconnected before response completed", time.Second)
+
+	if metric.StatusCode != 499 || metric.ErrorSource != domain.GatewayErrorSourceRequest || metric.ErrorCode != "client_disconnected" {
+		t.Fatalf("client disconnect metric = %+v", metric)
+	}
+}
+
+func TestGatewayMetricStatusPreservesUpstreamHTTPError(t *testing.T) {
+	status := gatewayMetricStatus(http.StatusNotFound, openai.ProxyMetrics{ErrorStatusCode: http.StatusBadGateway}, nil)
+	if status != http.StatusNotFound {
+		t.Fatalf("metric status = %d", status)
+	}
+}
+
+func TestGatewayMetricStatusUsesTerminalFailureForSuccessfulHTTPResponse(t *testing.T) {
+	status := gatewayMetricStatus(http.StatusOK, openai.ProxyMetrics{ErrorStatusCode: http.StatusBadGateway}, nil)
+	if status != http.StatusBadGateway {
+		t.Fatalf("metric status = %d", status)
 	}
 }

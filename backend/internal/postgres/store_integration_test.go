@@ -379,10 +379,23 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if err := store.RecordGatewayMetric(ctx, domain.GatewayMetric{
 		RequestID: "owner-request", APIKeyID: "legacy-key", PlanID: "plan", AccountID: "account", MemberID: "owner-member",
 		Model: "gpt-5.6-terra", RequestedModel: "gpt-5.6-terra", UpstreamModel: "gpt-5.6-terra", BillingModel: "gpt-5.6-terra", AccountCostMicros: 850,
-		StatusCode: http.StatusInternalServerError, TTFT: 300 * time.Millisecond, Duration: 1300 * time.Millisecond,
+		Endpoint: "/v1/responses", IsStream: true, StatusCode: http.StatusInternalServerError,
+		ErrorSource: domain.GatewayErrorSourceUpstream, ErrorCode: "server_error", ErrorMessage: "upstream temporarily unavailable",
+		TTFT: 300 * time.Millisecond, Duration: 1300 * time.Millisecond,
 		TokenUsage: domain.TokenUsage{InputTokens: 9000, OutputTokens: 1000, CachedTokens: 2000}, CreatedAt: now,
 	}); err != nil {
 		t.Fatal(err)
+	}
+	errorsPage, err := store.PlanRequestErrors(ctx, "plan", "applicant", now.Add(-time.Hour), now.Add(time.Minute), 1, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if errorsPage.Total != 1 || len(errorsPage.Items) != 1 {
+		t.Fatalf("plan errors = %+v", errorsPage)
+	}
+	errorItem := errorsPage.Items[0]
+	if errorItem.RequestID != "owner-request" || errorItem.StatusCode != http.StatusInternalServerError || errorItem.ErrorSource != domain.GatewayErrorSourceUpstream || errorItem.ErrorCode != "server_error" || errorItem.ErrorMessage != "upstream temporarily unavailable" || errorItem.Endpoint != "/v1/responses" || !errorItem.IsStream || errorItem.MemberUsername == "" || errorItem.APIKeyPrefix != "sk-sharesub-old" {
+		t.Fatalf("plan error item = %+v", errorItem)
 	}
 	dashboard, err := store.Dashboard(ctx, "applicant", now.Add(-12*time.Hour), now.Add(-23*time.Hour), now.Add(time.Minute))
 	if err != nil {

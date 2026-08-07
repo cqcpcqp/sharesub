@@ -46,6 +46,13 @@ type planAccountStore struct {
 	performanceStartedAt time.Time
 	performanceEndedAt   time.Time
 	performanceBucket    time.Duration
+	requestErrors        domain.PlanRequestErrorList
+	errorPlanID          string
+	errorUserID          string
+	errorStartedAt       time.Time
+	errorEndedAt         time.Time
+	errorPage            int
+	errorPageSize        int
 }
 
 type planMetadataStore struct {
@@ -67,6 +74,16 @@ func (s *planAccountStore) PlanPerformance(_ context.Context, planID, userID str
 	s.performanceEndedAt = endedAt
 	s.performanceBucket = bucketSize
 	return s.performance, nil
+}
+
+func (s *planAccountStore) PlanRequestErrors(_ context.Context, planID, userID string, startedAt, endedAt time.Time, page, pageSize int) (domain.PlanRequestErrorList, error) {
+	s.errorPlanID = planID
+	s.errorUserID = userID
+	s.errorStartedAt = startedAt
+	s.errorEndedAt = endedAt
+	s.errorPage = page
+	s.errorPageSize = pageSize
+	return s.requestErrors, nil
 }
 
 type inviteStore struct {
@@ -328,6 +345,35 @@ func TestPlanPerformanceUsesRequestedFixedPeriod(t *testing.T) {
 	}
 	if _, err := service.PlanPerformance(context.Background(), "member", "plan", "today", "invalid/timezone"); err != domain.ErrInvalidInput {
 		t.Fatalf("invalid timezone error = %v, want invalid input", err)
+	}
+}
+
+func TestPlanRequestErrorsUsesPerformanceWindowAndPagination(t *testing.T) {
+	now := time.Date(2026, 8, 4, 10, 0, 0, 0, time.UTC)
+	store := &planAccountStore{requestErrors: domain.PlanRequestErrorList{
+		Items: []domain.PlanRequestError{{ID: 7, RequestID: "request-7"}}, Total: 1, Page: 2, PageSize: 10,
+	}}
+	service := &Service{store: store, now: func() time.Time { return now }}
+
+	result, err := service.PlanRequestErrors(context.Background(), "member", "plan", "6h", "Asia/Shanghai", 2, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Total != 1 || len(result.Items) != 1 || store.errorPlanID != "plan" || store.errorUserID != "member" || store.errorPage != 2 || store.errorPageSize != 10 {
+		t.Fatalf("result = %+v, store = %+v", result, store)
+	}
+	if !store.errorStartedAt.Equal(now.Add(-6*time.Hour)) || !store.errorEndedAt.Equal(now) {
+		t.Fatalf("error window = %s - %s", store.errorStartedAt, store.errorEndedAt)
+	}
+	if _, err := service.PlanRequestErrors(context.Background(), "member", "plan", "6h", "Asia/Shanghai", 0, 10); err != domain.ErrInvalidInput {
+		t.Fatalf("invalid page error = %v", err)
+	}
+	if _, err := service.PlanRequestErrors(context.Background(), "member", "plan", "6h", "Asia/Shanghai", 1, 101); err != domain.ErrInvalidInput {
+		t.Fatalf("invalid page size error = %v", err)
+	}
+	maxInt := int(^uint(0) >> 1)
+	if _, err := service.PlanRequestErrors(context.Background(), "member", "plan", "6h", "Asia/Shanghai", maxInt, 100); err != domain.ErrInvalidInput {
+		t.Fatalf("overflowing page error = %v", err)
 	}
 }
 

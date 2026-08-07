@@ -29,6 +29,9 @@ type ProxyMetrics struct {
 	WebSearchCalls      int64
 	UpstreamModel       string
 	ClientDisconnected  bool
+	ErrorCode           string
+	ErrorMessage        string
+	ErrorStatusCode     int
 }
 
 type StreamFailoverError struct {
@@ -117,6 +120,9 @@ func DrainResponse(src *http.Response, startedAt time.Time) (ProxyMetrics, []byt
 		return proxyMetrics(startedAt, firstByteAt, time.Time{}, terminalResponse{}, false), nil, fmt.Errorf("upstream response exceeds %d bytes", maxBufferedResponseBytes)
 	}
 	terminal, _ := parseJSONResponseUsage(body)
+	if terminal.Error == nil {
+		terminal.Error = parseUpstreamErrorEnvelope(body)
+	}
 	return proxyMetrics(startedAt, firstByteAt, time.Time{}, terminal, false), body, nil
 }
 
@@ -324,6 +330,9 @@ func copyBufferedResponse(dst http.ResponseWriter, src *http.Response, startedAt
 		return proxyMetrics(startedAt, firstByteAt, time.Time{}, terminalResponse{}, false), err
 	}
 	terminal, _ := parseJSONResponseUsage(body)
+	if terminal.Error == nil {
+		terminal.Error = parseUpstreamErrorEnvelope(body)
+	}
 	copyResponseHeaders(dst.Header(), src.Header)
 	if dst.Header().Get("Content-Type") == "" {
 		dst.Header().Set("Content-Type", "application/json")
@@ -387,7 +396,7 @@ func proxyMetrics(startedAt, firstByteAt, firstTokenAt time.Time, terminal termi
 	if !firstTokenAt.IsZero() {
 		ttft = firstTokenAt.Sub(startedAt)
 	}
-	return ProxyMetrics{
+	metrics := ProxyMetrics{
 		TTFT:                ttft,
 		Duration:            time.Since(startedAt),
 		InputTokens:         terminal.Usage.InputTokens,
@@ -401,6 +410,12 @@ func proxyMetrics(startedAt, firstByteAt, firstTokenAt time.Time, terminal termi
 		UpstreamModel:       terminal.Model,
 		ClientDisconnected:  clientDisconnected,
 	}
+	if terminal.Error != nil {
+		metrics.ErrorCode = terminal.Error.Code
+		metrics.ErrorMessage = terminal.Error.Message
+		metrics.ErrorStatusCode = terminalFailureStatus(terminal)
+	}
+	return metrics
 }
 
 type responseUsage struct {
@@ -461,6 +476,16 @@ func parseJSONResponseUsage(payload []byte) (terminalResponse, bool) {
 		return terminalResponse{}, false
 	}
 	return response, true
+}
+
+func parseUpstreamErrorEnvelope(payload []byte) *responseError {
+	var envelope struct {
+		Error *responseError `json:"error"`
+	}
+	if json.Unmarshal(payload, &envelope) != nil {
+		return nil
+	}
+	return envelope.Error
 }
 
 func parseResponseUsage(line []byte) (terminalResponse, bool) {

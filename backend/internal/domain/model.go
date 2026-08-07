@@ -256,6 +256,41 @@ type PerformanceSummary struct {
 	P95DurationMs     float64 `json:"p95_duration_ms"`
 }
 
+const (
+	GatewayErrorSourceRequest  = "request"
+	GatewayErrorSourceUpstream = "upstream"
+	GatewayErrorSourceGateway  = "gateway"
+)
+
+type PlanRequestError struct {
+	ID             int64     `json:"id"`
+	RequestID      string    `json:"request_id"`
+	Endpoint       string    `json:"endpoint"`
+	IsStream       bool      `json:"is_stream"`
+	StatusCode     int       `json:"status_code"`
+	ErrorSource    string    `json:"error_source"`
+	ErrorCode      string    `json:"error_code"`
+	ErrorMessage   string    `json:"error_message"`
+	RequestedModel string    `json:"requested_model"`
+	UpstreamModel  string    `json:"upstream_model"`
+	ServiceTier    string    `json:"service_tier"`
+	DurationMs     int64     `json:"duration_ms"`
+	MemberID       string    `json:"member_id"`
+	MemberUsername string    `json:"member_username"`
+	AccountID      string    `json:"account_id"`
+	AccountName    string    `json:"account_name"`
+	APIKeyName     string    `json:"api_key_name"`
+	APIKeyPrefix   string    `json:"api_key_prefix"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+type PlanRequestErrorList struct {
+	Items    []PlanRequestError `json:"items"`
+	Total    int64              `json:"total"`
+	Page     int                `json:"page"`
+	PageSize int                `json:"page_size"`
+}
+
 type TokenUsage struct {
 	InputTokens         int64 `json:"input_tokens"`
 	OutputTokens        int64 `json:"output_tokens"`
@@ -408,7 +443,12 @@ type GatewayMetric struct {
 	UpstreamModel     string
 	BillingModel      string
 	ServiceTier       string
+	Endpoint          string
+	IsStream          bool
 	StatusCode        int
+	ErrorSource       string
+	ErrorCode         string
+	ErrorMessage      string
 	TTFT              time.Duration
 	Duration          time.Duration
 	TokenUsage        TokenUsage

@@ -9,6 +9,7 @@ describe('PlanInsights performance period', () => {
   it('offers today and the four fixed periods and emits a selection change', async () => {
     const wrapper = mount(PlanInsights, {
       props: {
+        planId: 'plan',
         insights: {
           account_windows: [],
           member_quotas: [],
@@ -32,6 +33,11 @@ describe('PlanInsights performance period', () => {
         performancePeriod: '24h',
         theme: 'light',
       },
+      global: {
+        stubs: {
+          PlanErrorDetailsModal: { template: '<div data-testid="error-details-modal" />' },
+        },
+      },
     })
 
     const selects = wrapper.findAllComponents(NSelect)
@@ -53,6 +59,9 @@ describe('PlanInsights performance period', () => {
     expect(wrapper.find('.analytics-grid').text()).toContain('最近 6 小时')
     expect(wrapper.find('.recent-usage-panel').text()).toContain('最近 6 小时')
     expect(wrapper.find('.recent-usage-panel').text()).not.toContain('TOP 12')
+    expect(wrapper.find('.performance-green').text()).toContain('0 个错误')
+    await wrapper.get('button[aria-label="查看请求错误明细"]').trigger('click')
+    expect(wrapper.find('[data-testid="error-details-modal"]').exists()).toBe(true)
     const rankingSelect = selects.find(select => select !== performanceSelect && (select.props('options') as Array<{ value: string }>).some(option => option.value === 'today'))!
     expect(rankingSelect.props('value')).toBe('today')
   })
@@ -60,6 +69,7 @@ describe('PlanInsights performance period', () => {
   it('explains estimated member quota and displays separate 5h and 7d usage', () => {
     const wrapper = mount(PlanInsights, {
       props: {
+        planId: 'plan',
         insights: {
           account_windows: [
             { window_type: '5h', used_micros: 20_000_000, account_used_micros: 20_000_000, reset_at: '2026-08-04T15:00:00Z' },
@@ -103,6 +113,7 @@ describe('PlanInsights performance period', () => {
   it('shows total tokens before the token breakdown in every quota card', () => {
     const wrapper = mount(PlanInsights, {
       props: {
+        planId: 'plan',
         insights: {
           account_windows: [],
           member_quotas: [],

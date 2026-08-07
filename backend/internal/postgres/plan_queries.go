@@ -430,6 +430,61 @@ func (s *Store) PlanPerformance(ctx context.Context, planID, userID string, wind
 	return out, nil
 }
 
+func (s *Store) PlanRequestErrors(ctx context.Context, planID, userID string, windowStart, windowEnd time.Time, page, pageSize int) (domain.PlanRequestErrorList, error) {
+	out := domain.PlanRequestErrorList{
+		Items: make([]domain.PlanRequestError, 0),
+		Page:  page, PageSize: pageSize,
+	}
+	err := s.pool.QueryRow(ctx, `
+		WITH authorized AS (
+			SELECT p.id
+			FROM shared_plans p
+			JOIN plan_members viewer ON viewer.plan_id=p.id AND viewer.user_id=$2 AND viewer.status='active'
+			WHERE p.id=$1
+		)
+		SELECT count(g.id)
+		FROM authorized a
+		LEFT JOIN gateway_request_metrics g ON g.plan_id=a.id
+			AND g.created_at>=$3 AND g.created_at<=$4
+			AND (g.status_code<200 OR g.status_code>=300)
+		GROUP BY a.id`, planID, userID, windowStart, windowEnd).Scan(&out.Total)
+	if err != nil {
+		return domain.PlanRequestErrorList{}, mapError(err)
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT g.id,g.request_id,g.endpoint,g.is_stream,g.status_code,g.error_source,g.error_code,g.error_message,
+			g.requested_model,g.upstream_model,g.service_tier,g.duration_ms,
+			m.id,u.username,a.id,a.name,k.name,k.key_prefix,g.created_at
+		FROM gateway_request_metrics g
+		JOIN plan_members viewer ON viewer.plan_id=g.plan_id AND viewer.user_id=$2 AND viewer.status='active'
+		JOIN plan_members m ON m.id=g.member_id
+		JOIN users u ON u.id=m.user_id
+		JOIN openai_accounts a ON a.id=g.account_id
+		JOIN api_keys k ON k.id=g.api_key_id
+		WHERE g.plan_id=$1 AND g.created_at>=$3 AND g.created_at<=$4
+			AND (g.status_code<200 OR g.status_code>=300)
+		ORDER BY g.created_at DESC,g.id DESC
+		LIMIT $5 OFFSET $6`, planID, userID, windowStart, windowEnd, pageSize, (page-1)*pageSize)
+	if err != nil {
+		return domain.PlanRequestErrorList{}, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var item domain.PlanRequestError
+		if err := rows.Scan(
+			&item.ID, &item.RequestID, &item.Endpoint, &item.IsStream, &item.StatusCode,
+			&item.ErrorSource, &item.ErrorCode, &item.ErrorMessage,
+			&item.RequestedModel, &item.UpstreamModel, &item.ServiceTier, &item.DurationMs,
+			&item.MemberID, &item.MemberUsername, &item.AccountID, &item.AccountName,
+			&item.APIKeyName, &item.APIKeyPrefix, &item.CreatedAt,
+		); err != nil {
+			return domain.PlanRequestErrorList{}, err
+		}
+		out.Items = append(out.Items, item)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) memberUsageRanking(ctx context.Context, planID string, windowStart, windowEnd time.Time) ([]domain.MemberUsageRank, error) {
 	rows, err := s.pool.Query(ctx, `
 		WITH usage AS (

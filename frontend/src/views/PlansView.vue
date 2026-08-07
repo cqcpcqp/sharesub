@@ -92,6 +92,7 @@
               <PlanInsights
                 v-if="detail.account"
                 :key="detail.plan.id"
+                :plan-id="detail.plan.id"
                 :insights="detail.insights"
                 :members="detail.members"
                 :allocation-mode="detail.plan.allocation_mode"

@@ -41,6 +41,7 @@ type Store interface {
 	ListPlans(context.Context, string) ([]domain.Plan, error)
 	PlanDetail(context.Context, string, string, time.Time, time.Time) (domain.PlanDetail, error)
 	PlanPerformance(context.Context, string, string, time.Time, time.Time, time.Duration) (domain.PlanPerformance, error)
+	PlanRequestErrors(context.Context, string, string, time.Time, time.Time, int, int) (domain.PlanRequestErrorList, error)
 	RenamePlan(context.Context, string, string, string, domain.AuditEvent) (domain.Plan, error)
 	UpdatePlanDescription(context.Context, string, string, string, domain.AuditEvent) (domain.Plan, error)
 	UpdatePlanStatus(context.Context, string, string, string, domain.AuditEvent) (domain.Plan, error)

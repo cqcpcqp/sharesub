@@ -76,6 +76,25 @@
           </form>
         </section>
 
+        <section class="settings-block security-settings">
+          <div class="section-heading">
+            <div>
+              <h2>账户安全</h2>
+              <p>管理你的登录密码和会话安全</p>
+            </div>
+          </div>
+          <div class="security-preference">
+            <div class="preference-heading">
+              <span><LockKeyhole :size="18" /></span>
+              <div>
+                <strong>登录密码</strong>
+                <small>修改后，除当前设备外的其他登录会话会立即失效。</small>
+              </div>
+            </div>
+            <NButton secondary @click="passwordDialogOpen = true">修改密码</NButton>
+          </div>
+        </section>
+
         <section class="settings-block appearance-settings">
           <div class="section-heading">
             <div>
@@ -100,16 +119,23 @@
         </section>
       </div>
     </div>
+    <PasswordChangeDialog
+      v-if="passwordDialogOpen"
+      :forced="false"
+      @close="passwordDialogOpen = false"
+      @changed="onPasswordChanged"
+    />
   </section>
 </template>
 
 <script setup lang="ts">
 import { NButton, NPopconfirm, NRadioButton, NRadioGroup, NUpload } from 'naive-ui'
 import type { UploadCustomRequestOptions } from 'naive-ui'
-import { Camera, Monitor, Moon, Palette, Save, Sun, Trash2 } from 'lucide-vue-next'
+import { Camera, LockKeyhole, Monitor, Moon, Palette, Save, Sun, Trash2 } from 'lucide-vue-next'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { api } from '../api'
 import AppInput from '../components/AppInput.vue'
+import PasswordChangeDialog from '../components/PasswordChangeDialog.vue'
 import type { ThemeMode } from '../themePreference'
 import type { User } from '../types'
 import StatusBadge from '../components/StatusBadge.vue'
@@ -125,6 +151,7 @@ const username = ref(props.user.username)
 const busy = ref(false)
 const avatarBusy = ref(false)
 const avatarPreview = ref('')
+const passwordDialogOpen = ref(false)
 const displayedAvatar = computed(() => avatarPreview.value || props.user.avatar_url)
 const canSaveProfile = computed(() => {
   const normalized = username.value.trim()
@@ -206,6 +233,12 @@ function clearAvatarPreview() {
 
 function updateThemeMode(value: ThemeMode) {
   emit('update:themeMode', value)
+}
+
+function onPasswordChanged(user: User) {
+  passwordDialogOpen.value = false
+  emit('updated', user)
+  emit('message', 'success', '密码已更新，其他设备的登录会话已失效')
 }
 
 function formatDate(value: string) {

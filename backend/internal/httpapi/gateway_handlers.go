@@ -14,6 +14,8 @@ import (
 	"github.com/sharesub/sharesub/backend/internal/security"
 )
 
+const clientClosedRequestStatus = 499
+
 func (s *Server) models(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("client_version") != "" {
 		s.codexModels(w, r)
@@ -94,41 +96,40 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { releaseGatewayAccess(&access) }()
+	gatewayRequestID := gatewayRequestID(r)
 	releaseSlot, ok := s.gateway.TryAcquire()
 	if !ok {
+		s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, "", openai.RequestBilling{}, http.StatusServiceUnavailable, domain.GatewayErrorSourceGateway, "server_overloaded", "gateway concurrency limit reached", 0))
 		writeGatewayErrorStatus(w, http.StatusServiceUnavailable, "server_overloaded", "gateway concurrency limit reached")
 		return
 	}
 	defer releaseSlot()
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxGatewayBody))
 	if err != nil {
+		s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, "", openai.RequestBilling{}, http.StatusRequestEntityTooLarge, domain.GatewayErrorSourceRequest, "request_too_large", "request body exceeds 32 MiB", 0))
 		writeGatewayErrorStatus(w, http.StatusRequestEntityTooLarge, "request_too_large", "request body exceeds 32 MiB")
 		return
 	}
 	compact := strings.HasSuffix(strings.TrimRight(r.URL.Path, "/"), "/responses/compact")
 	forwardBody, billingMetadata, err := openai.PrepareRequest(body, compact)
 	if err != nil {
+		s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, "", openai.RequestBilling{}, http.StatusBadRequest, domain.GatewayErrorSourceRequest, "invalid_request_error", err.Error(), 0))
 		writeGatewayErrorStatus(w, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return
 	}
 
 	excludedAccountIDs := make([]string, 0, maxUpstreamAccountSwitches)
 	clientWantsStream := billingMetadata.Stream && !compact
-	gatewayRequestID := strings.TrimSpace(r.Header.Get("X-Request-Id"))
-	if gatewayRequestID == "" {
-		gatewayRequestID = strings.TrimSpace(r.Header.Get("Openai-Request-Id"))
-	}
-	if gatewayRequestID == "" {
-		gatewayRequestID, _ = security.NewID()
-	}
 	for switches := 0; ; {
 		attemptStartedAt := time.Now()
 		policyBody, policyMetadata, policyErr := openai.ApplyFastPolicy(forwardBody, billingMetadata, access.Credential.Account.FastPolicy, access.Credential.Member.UserID)
 		if policyErr != nil {
 			if blocked, ok := policyErr.(*openai.FastPolicyBlockedError); ok {
+				s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, billingMetadata.Model, billingMetadata, http.StatusForbidden, domain.GatewayErrorSourceRequest, "permission_error", blocked.Message, time.Since(attemptStartedAt)))
 				writeGatewayErrorStatus(w, http.StatusForbidden, "permission_error", blocked.Message)
 				return
 			}
+			s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, billingMetadata.Model, billingMetadata, http.StatusInternalServerError, domain.GatewayErrorSourceGateway, "policy_error", policyErr.Error(), time.Since(attemptStartedAt)))
 			writeGatewayErrorStatus(w, http.StatusInternalServerError, "policy_error", policyErr.Error())
 			return
 		}
@@ -136,10 +137,11 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		upstream, err := s.gateway.Forward(attemptCtx, r, policyBody, policyMetadata, access.AccessToken, access.Credential.Account.ChatGPTAccountID, access.Credential.APIKeyID, access.ProxyURL)
 		if err != nil {
 			cancelAttempt()
-			s.recordGatewayMetric(r.Context(), access, gatewayMetric(gatewayRequestID, billingMetadata.Model, policyMetadata, http.StatusBadGateway, openai.ProxyMetrics{Duration: time.Since(attemptStartedAt)}))
 			if r.Context().Err() != nil {
+				s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, billingMetadata.Model, policyMetadata, clientClosedRequestStatus, domain.GatewayErrorSourceRequest, "client_disconnected", "client disconnected before response completed", time.Since(attemptStartedAt)))
 				return
 			}
+			s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, billingMetadata.Model, policyMetadata, http.StatusBadGateway, domain.GatewayErrorSourceUpstream, "upstream_unavailable", err.Error(), time.Since(attemptStartedAt)))
 			if switches < maxUpstreamAccountSwitches {
 				excludedAccountIDs = append(excludedAccountIDs, access.Credential.Account.ID)
 				releaseGatewayAccess(&access)
@@ -166,7 +168,7 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 			if drainErr != nil {
 				s.logger.Warn("drain rejected upstream response", "request_id", requestID, "error", drainErr)
 			}
-			s.recordGatewayMetric(r.Context(), access, gatewayMetric(requestID, billingMetadata.Model, policyMetadata, upstream.StatusCode, metrics))
+			s.recordGatewayMetric(r.Context(), access, gatewayMetric(requestID, billingMetadata.Model, r.URL.Path, policyMetadata, upstream.StatusCode, metrics))
 			if err := s.recordGatewayAccountQuota(r.Context(), access, upstream.Header); err != nil {
 				s.logger.Debug("upstream rejection did not include Codex quota signal", "account_id", access.Credential.Account.ID, "status", upstream.StatusCode)
 			}
@@ -196,12 +198,19 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		metrics, copyErr := openai.CopyResponseForRequest(w, upstream, attemptStartedAt, policyMetadata.Stream && !compact)
 		_ = upstream.Body.Close()
 		cancelAttempt()
-		metricStatus := upstream.StatusCode
+		metricStatus := gatewayMetricStatus(upstream.StatusCode, metrics, copyErr)
 		var failoverErr *openai.StreamFailoverError
-		if errors.As(copyErr, &failoverErr) {
-			metricStatus = failoverErr.StatusCode
+		metric := gatewayMetric(requestID, billingMetadata.Model, r.URL.Path, policyMetadata, metricStatus, metrics)
+		if metrics.ClientDisconnected || r.Context().Err() != nil {
+			metric.StatusCode = clientClosedRequestStatus
+			metric.ErrorSource = domain.GatewayErrorSourceRequest
+			metric.ErrorCode = "client_disconnected"
+			metric.ErrorMessage = "client disconnected before response completed"
+		} else if copyErr != nil && metric.ErrorMessage == "" {
+			metric.ErrorSource = domain.GatewayErrorSourceUpstream
+			metric.ErrorCode = "upstream_error"
+			metric.ErrorMessage = copyErr.Error()
 		}
-		metric := gatewayMetric(requestID, billingMetadata.Model, policyMetadata, metricStatus, metrics)
 		s.recordGatewayMetric(r.Context(), access, metric)
 
 		if errors.As(copyErr, &failoverErr) && switches < maxUpstreamAccountSwitches && r.Context().Err() == nil {
@@ -235,8 +244,10 @@ func (s *Server) images(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { releaseGatewayAccess(&access) }()
+	gatewayRequestID := gatewayRequestID(r)
 	releaseSlot, ok := s.gateway.TryAcquire()
 	if !ok {
+		s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, "", openai.RequestBilling{}, http.StatusServiceUnavailable, domain.GatewayErrorSourceGateway, "server_overloaded", "gateway concurrency limit reached", 0))
 		writeGatewayErrorStatus(w, http.StatusServiceUnavailable, "server_overloaded", "gateway concurrency limit reached")
 		return
 	}
@@ -244,22 +255,17 @@ func (s *Server) images(w http.ResponseWriter, r *http.Request) {
 
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxGatewayBody))
 	if err != nil {
+		s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, "", openai.RequestBilling{}, http.StatusRequestEntityTooLarge, domain.GatewayErrorSourceRequest, "request_too_large", "request body exceeds 32 MiB", 0))
 		writeGatewayErrorStatus(w, http.StatusRequestEntityTooLarge, "request_too_large", "request body exceeds 32 MiB")
 		return
 	}
 	forwardBody, imageRequest, billingMetadata, err := openai.PrepareImagesRequest(body, r.Header.Get("Content-Type"), r.URL.Path)
 	if err != nil {
+		s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, "", openai.RequestBilling{}, http.StatusBadRequest, domain.GatewayErrorSourceRequest, "invalid_request_error", err.Error(), 0))
 		writeGatewayErrorStatus(w, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return
 	}
 
-	gatewayRequestID := strings.TrimSpace(r.Header.Get("X-Request-Id"))
-	if gatewayRequestID == "" {
-		gatewayRequestID = strings.TrimSpace(r.Header.Get("Openai-Request-Id"))
-	}
-	if gatewayRequestID == "" {
-		gatewayRequestID, _ = security.NewID()
-	}
 	excludedAccountIDs := make([]string, 0, maxUpstreamAccountSwitches)
 	for switches := 0; ; {
 		attemptStartedAt := time.Now()
@@ -267,11 +273,13 @@ func (s *Server) images(w http.ResponseWriter, r *http.Request) {
 		upstream, forwardErr := s.gateway.Forward(attemptCtx, r, forwardBody, billingMetadata, access.AccessToken, access.Credential.Account.ChatGPTAccountID, access.Credential.APIKeyID, access.ProxyURL)
 		if forwardErr != nil {
 			cancelAttempt()
-			metrics := openai.ProxyMetrics{Duration: time.Since(attemptStartedAt), UpstreamModel: imageRequest.Model}
-			s.recordGatewayMetric(r.Context(), access, gatewayMetric(gatewayRequestID, imageRequest.Model, billingMetadata, http.StatusBadGateway, metrics))
 			if r.Context().Err() != nil {
+				s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, imageRequest.Model, billingMetadata, clientClosedRequestStatus, domain.GatewayErrorSourceRequest, "client_disconnected", "client disconnected before response completed", time.Since(attemptStartedAt)))
 				return
 			}
+			metric := gatewayErrorMetric(gatewayRequestID, r.URL.Path, imageRequest.Model, billingMetadata, http.StatusBadGateway, domain.GatewayErrorSourceUpstream, "upstream_unavailable", forwardErr.Error(), time.Since(attemptStartedAt))
+			metric.UpstreamModel = imageRequest.Model
+			s.recordGatewayMetric(r.Context(), access, metric)
 			if switches < maxUpstreamAccountSwitches {
 				excludedAccountIDs = append(excludedAccountIDs, access.Credential.Account.ID)
 				releaseGatewayAccess(&access)
@@ -298,7 +306,7 @@ func (s *Server) images(w http.ResponseWriter, r *http.Request) {
 			if drainErr != nil {
 				s.logger.Warn("drain rejected images response", "request_id", requestID, "error", drainErr)
 			}
-			s.recordGatewayMetric(r.Context(), access, gatewayMetric(requestID, imageRequest.Model, billingMetadata, upstream.StatusCode, metrics))
+			s.recordGatewayMetric(r.Context(), access, gatewayMetric(requestID, imageRequest.Model, r.URL.Path, billingMetadata, upstream.StatusCode, metrics))
 			if err := s.recordGatewayAccountQuota(r.Context(), access, upstream.Header); err != nil {
 				s.logger.Debug("upstream image rejection did not include Codex quota signal", "account_id", access.Credential.Account.ID, "status", upstream.StatusCode)
 			}
@@ -322,12 +330,20 @@ func (s *Server) images(w http.ResponseWriter, r *http.Request) {
 		_ = upstream.Body.Close()
 		cancelAttempt()
 		metrics.UpstreamModel = imageRequest.Model
-		metricStatus := upstream.StatusCode
+		metricStatus := gatewayMetricStatus(upstream.StatusCode, metrics, copyErr)
 		var failoverErr *openai.StreamFailoverError
-		if errors.As(copyErr, &failoverErr) {
-			metricStatus = failoverErr.StatusCode
+		metric := gatewayMetric(requestID, imageRequest.Model, r.URL.Path, billingMetadata, metricStatus, metrics)
+		if metrics.ClientDisconnected || r.Context().Err() != nil {
+			metric.StatusCode = clientClosedRequestStatus
+			metric.ErrorSource = domain.GatewayErrorSourceRequest
+			metric.ErrorCode = "client_disconnected"
+			metric.ErrorMessage = "client disconnected before response completed"
+		} else if copyErr != nil && metric.ErrorMessage == "" {
+			metric.ErrorSource = domain.GatewayErrorSourceUpstream
+			metric.ErrorCode = "upstream_error"
+			metric.ErrorMessage = copyErr.Error()
 		}
-		s.recordGatewayMetric(r.Context(), access, gatewayMetric(requestID, imageRequest.Model, billingMetadata, metricStatus, metrics))
+		s.recordGatewayMetric(r.Context(), access, metric)
 
 		if errors.As(copyErr, &failoverErr) && switches < maxUpstreamAccountSwitches && r.Context().Err() == nil {
 			excludedAccountIDs = append(excludedAccountIDs, access.Credential.Account.ID)
@@ -375,14 +391,31 @@ func upstreamRequestID(upstream *http.Response, fallback string) string {
 	return requestID
 }
 
-func gatewayMetric(requestID, requestedModel string, metadata openai.RequestBilling, status int, metrics openai.ProxyMetrics) domain.GatewayMetric {
+func gatewayRequestID(r *http.Request) string {
+	requestID := strings.TrimSpace(r.Header.Get("X-Request-Id"))
+	if requestID == "" {
+		requestID = strings.TrimSpace(r.Header.Get("Openai-Request-Id"))
+	}
+	if requestID == "" {
+		requestID, _ = security.NewID()
+	}
+	return requestID
+}
+
+func gatewayMetric(requestID, requestedModel, endpoint string, metadata openai.RequestBilling, status int, metrics openai.ProxyMetrics) domain.GatewayMetric {
 	upstreamModel := metrics.UpstreamModel
 	if upstreamModel == "" {
 		upstreamModel = metadata.Model
 	}
+	errorSource := ""
+	if status < http.StatusOK || status >= http.StatusMultipleChoices || metrics.ErrorCode != "" || metrics.ErrorMessage != "" {
+		errorSource = domain.GatewayErrorSourceUpstream
+	}
 	return domain.GatewayMetric{
 		RequestID: requestID, Model: metadata.Model, RequestedModel: requestedModel, UpstreamModel: upstreamModel, BillingModel: upstreamModel,
-		ServiceTier: metadata.ServiceTier, StatusCode: status, TTFT: metrics.TTFT, Duration: metrics.Duration,
+		ServiceTier: metadata.ServiceTier, Endpoint: endpoint, IsStream: metadata.Stream, StatusCode: status,
+		ErrorSource: errorSource, ErrorCode: metrics.ErrorCode, ErrorMessage: metrics.ErrorMessage,
+		TTFT: metrics.TTFT, Duration: metrics.Duration,
 		TokenUsage: domain.TokenUsage{
 			InputTokens: metrics.InputTokens, OutputTokens: metrics.OutputTokens, CachedTokens: metrics.CachedTokens,
 			CacheCreationTokens: metrics.CacheCreationTokens, ImageInputTokens: metrics.ImageInputTokens, ImageOutputTokens: metrics.ImageOutputTokens,
@@ -391,6 +424,26 @@ func gatewayMetric(requestID, requestedModel string, metadata openai.RequestBill
 		ImageCount: metrics.ImageCount, WebSearchCalls: metrics.WebSearchCalls,
 		ImageSize: metrics.ImageSize,
 	}
+}
+
+func gatewayErrorMetric(requestID, endpoint, requestedModel string, metadata openai.RequestBilling, status int, source, code, message string, duration time.Duration) domain.GatewayMetric {
+	metric := gatewayMetric(requestID, requestedModel, endpoint, metadata, status, openai.ProxyMetrics{Duration: duration})
+	metric.ErrorSource = source
+	metric.ErrorCode = code
+	metric.ErrorMessage = message
+	return metric
+}
+
+func gatewayMetricStatus(upstreamStatus int, metrics openai.ProxyMetrics, copyErr error) int {
+	status := upstreamStatus
+	if upstreamStatus >= http.StatusOK && upstreamStatus < http.StatusMultipleChoices && metrics.ErrorStatusCode != 0 {
+		status = metrics.ErrorStatusCode
+	}
+	var failoverErr *openai.StreamFailoverError
+	if errors.As(copyErr, &failoverErr) {
+		status = failoverErr.StatusCode
+	}
+	return status
 }
 
 func metricContext(parent context.Context) (context.Context, context.CancelFunc) {

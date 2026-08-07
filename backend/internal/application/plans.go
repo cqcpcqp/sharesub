@@ -81,7 +81,7 @@ func (s *Service) PlanDetail(ctx context.Context, userID, planID, timezone strin
 	return detail, nil
 }
 
-func (s *Service) PlanPerformance(ctx context.Context, userID, planID, period, timezone string) (domain.PlanPerformance, error) {
+func (s *Service) planPerformanceWindow(period, timezone string) (time.Time, time.Time, time.Duration, error) {
 	type periodConfig struct {
 		duration   time.Duration
 		bucketSize time.Duration
@@ -99,7 +99,7 @@ func (s *Service) PlanPerformance(ctx context.Context, userID, planID, period, t
 		}
 		location, err := time.LoadLocation(timezone)
 		if err != nil {
-			return domain.PlanPerformance{}, domain.ErrInvalidInput
+			return time.Time{}, time.Time{}, 0, domain.ErrInvalidInput
 		}
 		localNow := now.In(location)
 		windowStart := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, location)
@@ -113,13 +113,36 @@ func (s *Service) PlanPerformance(ctx context.Context, userID, planID, period, t
 		case duration <= 12*time.Hour:
 			bucketSize = 30 * time.Minute
 		}
-		return s.store.PlanPerformance(ctx, planID, userID, windowStart, now, bucketSize)
+		return windowStart, now, bucketSize, nil
 	}
 	config, ok := periods[period]
 	if !ok {
-		return domain.PlanPerformance{}, domain.ErrInvalidInput
+		return time.Time{}, time.Time{}, 0, domain.ErrInvalidInput
 	}
-	return s.store.PlanPerformance(ctx, planID, userID, now.Add(-config.duration), now, config.bucketSize)
+	return now.Add(-config.duration), now, config.bucketSize, nil
+}
+
+func (s *Service) PlanPerformance(ctx context.Context, userID, planID, period, timezone string) (domain.PlanPerformance, error) {
+	windowStart, windowEnd, bucketSize, err := s.planPerformanceWindow(period, timezone)
+	if err != nil {
+		return domain.PlanPerformance{}, err
+	}
+	return s.store.PlanPerformance(ctx, planID, userID, windowStart, windowEnd, bucketSize)
+}
+
+func (s *Service) PlanRequestErrors(ctx context.Context, userID, planID, period, timezone string, page, pageSize int) (domain.PlanRequestErrorList, error) {
+	if page < 1 || pageSize < 1 || pageSize > 100 {
+		return domain.PlanRequestErrorList{}, domain.ErrInvalidInput
+	}
+	maxInt := int(^uint(0) >> 1)
+	if page-1 > maxInt/pageSize {
+		return domain.PlanRequestErrorList{}, domain.ErrInvalidInput
+	}
+	windowStart, windowEnd, _, err := s.planPerformanceWindow(period, timezone)
+	if err != nil {
+		return domain.PlanRequestErrorList{}, err
+	}
+	return s.store.PlanRequestErrors(ctx, planID, userID, windowStart, windowEnd, page, pageSize)
 }
 
 func (s *Service) ListPublicPlans(ctx context.Context, userID string) ([]domain.PublicPlan, error) {

@@ -24,7 +24,14 @@
       </article>
       <article class="performance-card performance-green">
         <span class="performance-icon"><Gauge :size="17" /></span>
-        <div><small>成功率</small><strong>{{ successRate }}</strong><span>2xx 响应</span></div>
+        <div>
+          <div class="performance-card-heading">
+            <small>成功率</small>
+            <NButton text size="tiny" aria-label="查看请求错误明细" @click="showErrorDetails = true">明细</NButton>
+          </div>
+          <strong>{{ successRate }}</strong>
+          <span>2xx 响应 · {{ errorCountLabel }}</span>
+        </div>
       </article>
       <article class="performance-card performance-blue">
         <span class="performance-icon"><Zap :size="17" /></span>
@@ -234,6 +241,13 @@
       </section>
     </div>
 
+    <PlanErrorDetailsModal
+      v-if="showErrorDetails"
+      :plan-id="planId"
+      :period="performancePeriod"
+      @close="showErrorDetails = false"
+    />
+
   </section>
 </template>
 
@@ -249,10 +263,12 @@ import UserAvatar from './UserAvatar.vue'
 import MemberCostShareChart from './MemberCostShareChart.vue'
 import MemberUsageChart from './MemberUsageChart.vue'
 import ModelDistributionChart from './ModelDistributionChart.vue'
+import PlanErrorDetailsModal from './PlanErrorDetailsModal.vue'
 import QuotaResetControls from './QuotaResetControls.vue'
 import TokenUsageChart from './TokenUsageChart.vue'
 
 const props = withDefaults(defineProps<{
+  planId: string
   insights: PlanInsights
   members: Member[]
   allocationMode: PlanAllocationMode
@@ -294,6 +310,7 @@ const performancePeriodLabels: Record<PerformancePeriod, string> = {
 const performancePeriodOptions = Object.entries(performancePeriodLabels).map(([value, label]) => ({ value, label }))
 const performancePeriodLabel = computed(() => performancePeriodLabels[props.performancePeriod])
 const rankingPeriodID = ref<MemberRankingPeriodID>('today')
+const showErrorDetails = ref(false)
 const rankingPeriodLabels: Record<MemberRankingPeriodID, string> = {
   today: '本日',
   last_7_days: '最近 7 天',
@@ -317,6 +334,8 @@ const quotaCards = computed(() => quotaKinds.map(item => ({
 const successRate = computed(() => props.insights.performance.request_count === 0
   ? '--'
   : `${((props.insights.performance.success_count / props.insights.performance.request_count) * 100).toFixed(1)}%`)
+const errorCount = computed(() => props.insights.performance.request_count - props.insights.performance.success_count)
+const errorCountLabel = computed(() => `${formatNumber(errorCount.value)} 个错误`)
 const modelColors = ['#4b7bec', '#18a27f', '#d59020', '#8b5cf6', '#e45b78', '#18a6b8', '#eb7f43', '#6f7a8a', '#57b86d', '#a66dd4', '#e3b341', '#3d93d8']
 const memberColors = ['#4b6cdb', '#18a27f', '#d59020', '#8b5cf6', '#e45b78', '#18a6b8', '#eb7f43', '#57b86d', '#a66dd4', '#3d93d8']
 const modelUsageTotal = computed(() => props.insights.model_usage.reduce((total, item) => total + item.token_usage.total_tokens, 0))
@@ -459,6 +478,9 @@ function usagePeriod(usage: WindowUsage | undefined) {
 .performance-amber { --performance-accent: var(--amber); --performance-soft: var(--amber-soft); }
 .performance-icon { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 7px; background: var(--performance-soft); color: var(--performance-accent); }
 .performance-card > div { min-width: 0; display: grid; align-content: start; gap: 4px; }
+.performance-card-heading { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.performance-card-heading :deep(.n-button) { min-width: auto; height: 22px; padding: 0 2px; color: var(--teal); font-size: 10px; font-weight: 760; }
+.performance-card-heading :deep(.n-button):focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
 .performance-card small { color: var(--muted); font-size: 11px; font-weight: 760; }
 .performance-card strong { overflow-wrap: anywhere; color: var(--ink-strong); font-size: 21px; font-variant-numeric: tabular-nums; line-height: 1.2; }
 .performance-card span:last-child { color: var(--muted-light); font-size: 11px; }
@@ -593,6 +615,7 @@ tbody tr:hover { background: var(--surface-hover); }
   .performance-card { min-height: 108px; grid-template-columns: 30px minmax(0, 1fr); gap: 9px; padding: 12px 10px; }
   .performance-icon { width: 30px; height: 30px; }
   .performance-card strong { font-size: 18px; }
+  .performance-card-heading { align-items: flex-start; flex-direction: column; gap: 1px; }
   .quota-card { padding: 15px 13px; }
   .quota-card-heading { align-items: flex-start; flex-direction: column; gap: 7px; }
   .quota-card-heading > small { max-width: 100%; text-align: left; }

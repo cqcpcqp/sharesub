@@ -57,6 +57,7 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/plans", s.requireUser(http.HandlerFunc(s.createPlan)))
 	s.mux.Handle("GET /api/plans/{planID}", s.requireUser(http.HandlerFunc(s.planDetail)))
 	s.mux.Handle("GET /api/plans/{planID}/performance", s.requireUser(http.HandlerFunc(s.planPerformance)))
+	s.mux.Handle("GET /api/plans/{planID}/errors", s.requireUser(http.HandlerFunc(s.planRequestErrors)))
 	s.mux.Handle("PATCH /api/plans/{planID}", s.requireUser(http.HandlerFunc(s.updatePlan)))
 	s.mux.Handle("PATCH /api/plans/{planID}/status", s.requireUser(http.HandlerFunc(s.updatePlanStatus)))
 	s.mux.Handle("DELETE /api/plans/{planID}", s.requireUser(http.HandlerFunc(s.deletePlan)))

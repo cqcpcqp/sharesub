@@ -57,6 +57,8 @@
   .auth-theme-switcher { top: 18px; right: 18px; }
   .n-input input, .n-input textarea { font-size: 16px; }
   .view-content { padding: 20px 16px 30px; }
+  .security-preference { align-items: stretch; flex-direction: column; }
+  .security-preference > .n-button { width: 100%; }
   .notice { top: 60px; right: 16px; }
   .workspace-toolbar { height: 50px; padding: 0 16px; }
   .onboarding-intro { align-items: flex-start; padding-top: 18px; }

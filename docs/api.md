@@ -91,6 +91,7 @@ OAuth 开始接口返回 `authorization_url` 和 `flow_id`。完成授权后，�
 | `POST` | `/api/plans` | 登录 Token | `account_id`（可为空字符串）, `name`, `allocation_mode`, `owner_share_basis_points` | 创建方案；空账号可稍后绑定 |
 | `GET` | `/api/plans/{planID}` | 登录 Token | 无 | 获取当前成员可见的方案详情 |
 | `GET` | `/api/plans/{planID}/performance` | 登录 Token | `period`, `timezone` | 获取当前成员可见的性能、模型分布、Token 趋势及最近使用汇总；`period` 固定为 `today`、`30m`、`6h`、`12h` 或 `24h`；本日边界按 IANA 时区计算 |
+| `GET` | `/api/plans/{planID}/errors` | 登录 Token | `period`, `timezone`, `page`, `page_size` | 分页获取与成功率同口径的非 2xx 请求明细；`page_size` 为 `1..100` |
 | `PATCH` | `/api/plans/{planID}` | 登录 Token | `name` 或 `description`（只传一个） | 房主修改 Plan 名称或描述 |
 | `PATCH` | `/api/plans/{planID}/status` | 登录 Token | `status` | 房主归档或恢复 Plan |
 | `DELETE` | `/api/plans/{planID}` | 登录 Token | 无 | 删除已经归档的 Plan |
@@ -110,6 +111,8 @@ OAuth 开始接口返回 `authorization_url` 和 `flow_id`。完成授权后，�
 | `DELETE` | `/api/plans/{planID}/invites/{inviteID}` | 登录 Token | 无 | 房主撤销待接受邀请 |
 | `PATCH` | `/api/plans/{planID}/members/{memberID}` | 登录 Token | `share_basis_points` | 房主修改成员固定份额 |
 | `DELETE` | `/api/plans/{planID}/members/{memberID}` | 登录 Token | 无 | 房主移除成员或成员主动退出 |
+
+错误明细接口只允许 Plan 的有效成员访问。响应固定包含 `items`、`total`、`page` 和 `page_size`；每条记录包含请求 ID、端点、流式标记、状态码、错误来源、错误代码、错误消息、请求/上游模型、Service Tier、耗时、成员、账号、API Key 名称与前缀以及发生时间。`error_source` 固定为 `request`、`upstream`、`gateway` 或空字符串；空字符串表示结构化错误字段上线前的历史记录。接口不返回请求正文、完整响应体或完整 API Key。
 
 邀请 Token 以 `ss_invite_` 开头，有效期为 7 天，只能由一个用户领取。创建邀请固定返回 `invite` 和 `invite_url`；链接使用 `/#/invite/<token>` fragment，完整 Token 不作为独立 JSON 字段返回，也不会进入服务端请求路径。邀请不绑定邮箱，拿到链接的用户可使用任意有效账号登录或注册后领取。
 

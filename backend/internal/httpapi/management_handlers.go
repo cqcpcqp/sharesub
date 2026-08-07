@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 
 	"github.com/sharesub/sharesub/backend/internal/application"
 	"github.com/sharesub/sharesub/backend/internal/domain"
@@ -196,6 +197,30 @@ func (s *Server) planDetail(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) planPerformance(w http.ResponseWriter, r *http.Request) {
 	v, err := s.app.PlanPerformance(r.Context(), currentUser(r).ID, r.PathValue("planID"), r.URL.Query().Get("period"), r.URL.Query().Get("timezone"))
+	writeResult(w, v, err)
+}
+
+func (s *Server) planRequestErrors(w http.ResponseWriter, r *http.Request) {
+	page, pageSize := 1, 20
+	var err error
+	if raw := r.URL.Query().Get("page"); raw != "" {
+		page, err = strconv.Atoi(raw)
+		if err != nil {
+			writeError(w, domain.ErrInvalidInput)
+			return
+		}
+	}
+	if raw := r.URL.Query().Get("page_size"); raw != "" {
+		pageSize, err = strconv.Atoi(raw)
+		if err != nil {
+			writeError(w, domain.ErrInvalidInput)
+			return
+		}
+	}
+	v, err := s.app.PlanRequestErrors(
+		r.Context(), currentUser(r).ID, r.PathValue("planID"),
+		r.URL.Query().Get("period"), r.URL.Query().Get("timezone"), page, pageSize,
+	)
 	writeResult(w, v, err)
 }
 func (s *Server) updatePlan(w http.ResponseWriter, r *http.Request) {

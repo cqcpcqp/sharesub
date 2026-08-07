@@ -1,12 +1,20 @@
 <template>
-  <ModalShell title="设置新密码" subtitle="首次登录必须更换临时管理员密码" :closable="false">
-    <NAlert type="warning" :show-icon="true">临时密码只能用于首次登录。新密码设置成功后，后台管理功能才会开放。</NAlert>
+  <ModalShell
+    :title="forced ? '设置新密码' : '修改密码'"
+    :subtitle="forced ? '首次登录必须更换临时管理员密码' : '更新你的 ShareSub 登录密码'"
+    :closable="!forced"
+    @close="emit('close')"
+  >
+    <NAlert v-if="forced" type="warning" :show-icon="true">临时密码只能用于首次登录。新密码设置成功后，后台管理功能才会开放。</NAlert>
     <form class="password-change-form" @submit.prevent="submit">
-      <label>当前临时密码<AppInput :value="currentPassword" type="password" show-password-on="mousedown" :input-props="{ autocomplete: 'current-password', required: true }" @update:value="currentPassword = $event" /></label>
-      <label>新密码<AppInput :value="newPassword" type="password" show-password-on="mousedown" :minlength="10" :maxlength="128" :input-props="{ autocomplete: 'new-password', required: true }" @update:value="newPassword = $event" /><small>至少 10 个字符，且不能与临时密码相同。</small></label>
+      <label>{{ forced ? '当前临时密码' : '当前密码' }}<AppInput :value="currentPassword" type="password" show-password-on="mousedown" :input-props="{ autocomplete: 'current-password', required: true }" @update:value="currentPassword = $event" /></label>
+      <label>新密码<AppInput :value="newPassword" type="password" show-password-on="mousedown" :minlength="10" :maxlength="128" :input-props="{ autocomplete: 'new-password', required: true }" @update:value="newPassword = $event" /><small>至少 10 个字符，且不能与当前密码相同。</small></label>
       <label>确认新密码<AppInput :value="confirmation" type="password" show-password-on="mousedown" :minlength="10" :maxlength="128" :input-props="{ autocomplete: 'new-password', required: true }" @update:value="confirmation = $event" /></label>
       <NAlert v-if="error" type="error" :show-icon="true">{{ error }}</NAlert>
-      <NButton type="primary" attr-type="submit" :loading="busy" :disabled="!canSubmit">保存新密码</NButton>
+      <div class="password-change-actions">
+        <NButton v-if="!forced" secondary :disabled="busy" @click="emit('close')">取消</NButton>
+        <NButton type="primary" attr-type="submit" :loading="busy" :disabled="!canSubmit">保存新密码</NButton>
+      </div>
     </form>
   </ModalShell>
 </template>
@@ -19,7 +27,8 @@ import type { User } from '../types'
 import AppInput from './AppInput.vue'
 import ModalShell from './ModalShell.vue'
 
-const emit = defineEmits<{ changed: [user: User] }>()
+withDefaults(defineProps<{ forced?: boolean }>(), { forced: true })
+const emit = defineEmits<{ changed: [user: User]; close: [] }>()
 const currentPassword = ref('')
 const newPassword = ref('')
 const confirmation = ref('')
@@ -40,4 +49,5 @@ async function submit() {
 .password-change-form { display: grid; gap: 14px; margin-top: 16px; }
 .password-change-form label { display: grid; gap: 7px; color: var(--ink); font-size: 11px; font-weight: 700; }
 .password-change-form label small { color: var(--muted); font-size: 11px; font-weight: 500; }
+.password-change-actions { display: flex; justify-content: flex-end; gap: 10px; }
 </style>
