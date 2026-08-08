@@ -8,7 +8,7 @@
 @media (max-width: 940px) {
   .app-shell { grid-template-columns: 1fr; padding-bottom: calc(72px + env(safe-area-inset-bottom)); }
   .sidebar-toggle { display: none; }
-  .sidebar { position: fixed; inset: auto 0 0; z-index: 20; width: 100%; height: calc(68px + env(safe-area-inset-bottom)); display: block; padding: 7px 9px calc(7px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); border-right: 0; background: var(--sidebar-translucent); }
+  .sidebar { position: fixed; inset: auto 0 0; z-index: 20; width: 100%; height: calc(68px + env(safe-area-inset-bottom)); display: block; padding: 7px max(9px, env(safe-area-inset-right)) calc(7px + env(safe-area-inset-bottom)) max(9px, env(safe-area-inset-left)); border-top: 1px solid var(--line); border-right: 0; background: var(--sidebar); }
   .sidebar .brand, .sidebar .nav-label, .sidebar-version, .profile-menu { display: none; }
   .sidebar .desktop-nav { display: none; }
   .sidebar .mobile-nav { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 2px; }
@@ -17,6 +17,7 @@
   .sidebar nav .nav-text { display: none; }
   .sidebar nav .nav-text-mobile { display: block; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .nav-icon { width: auto; height: auto; }
+  .sidebar nav .n-button.active { background: transparent; color: var(--primary); }
   .sidebar nav .n-button.active .nav-icon { background: transparent; box-shadow: none; }
   .workspace-toolbar { height: 52px; padding: 0 20px; }
   .view-content { padding: 24px 20px 36px; }
