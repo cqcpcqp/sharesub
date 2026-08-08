@@ -28,6 +28,9 @@ jobs:
           ref: main
           fetch-depth: 0
 
+      - name: Verify release tag
+        run: ./scripts/verify-version.sh --release
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: backend/go.mod

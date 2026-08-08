@@ -4,6 +4,7 @@ import { config, shallowMount } from '@vue/test-utils'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { User } from '../types'
 import ProfileView from './ProfileView.vue'
+import { buildInfo } from '../buildInfo'
 
 const member: User = {
   id: 'member',
@@ -20,6 +21,13 @@ const member: User = {
 afterEach(() => { config.global.renderStubDefaultSlot = false })
 
 describe('ProfileView password settings', () => {
+  it('shows the exact Web release identity', () => {
+    const wrapper = shallowMount(ProfileView, { props: { user: member, themeMode: 'system' } })
+
+    expect(wrapper.get('.release-metadata').text()).toContain(buildInfo.version)
+    expect(wrapper.get('.release-metadata').text()).toContain(buildInfo.revision)
+  })
+
   it('opens the regular password dialog and publishes the updated user', async () => {
     config.global.renderStubDefaultSlot = true
     const wrapper = shallowMount(ProfileView, { props: { user: member, themeMode: 'system' } })

@@ -22,6 +22,10 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
+      - name: Verify version metadata
+        run: ../scripts/verify-version.sh
+      - name: Test version validation
+        run: ../scripts/verify-version-test.sh
       - uses: actions/setup-go@v5
         with:
           go-version-file: backend/go.mod
@@ -37,6 +41,8 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v4
+      - name: Verify version metadata
+        run: ../scripts/verify-version.sh
       - uses: pnpm/action-setup@v4
         with:
           version: 10
@@ -63,10 +69,10 @@ jobs:
       matrix:
         include:
           - name: API
-            context: backend
+            dockerfile: backend/Dockerfile
             image: sharesub-api
           - name: Web
-            context: frontend
+            dockerfile: frontend/Dockerfile
             image: sharesub-web
     steps:
       - uses: actions/checkout@v4
@@ -76,10 +82,17 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Read release version
+        id: version
+        run: echo "value=$(./scripts/verify-version.sh)" >> "$GITHUB_OUTPUT"
       - uses: docker/build-push-action@v6
         with:
-          context: ${{ matrix.context }}
+          context: .
+          file: ${{ matrix.dockerfile }}
           push: true
+          build-args: |
+            SHARESUB_VERSION=${{ steps.version.outputs.value }}
+            SHARESUB_REVISION=${{ github.sha }}
           tags: |
             ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:${{ github.sha }}
             ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:main

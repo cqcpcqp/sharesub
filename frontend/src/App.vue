@@ -99,6 +99,10 @@
             </div>
           </NPopover>
         </nav>
+        <div class="sidebar-version" :title="`构建 ${buildInfo.revision}`" aria-label="ShareSub 版本信息">
+          <span>v{{ buildInfo.version }}</span>
+          <code>{{ shortRevision(buildInfo.revision) }}</code>
+        </div>
         <div class="profile-menu">
           <NTooltip placement="right" :disabled="!sidebarCollapsed">
             <template #trigger>
@@ -191,6 +195,7 @@ import { locationWithoutHash, parseNavigationIntent, type InviteIntent } from '.
 import { canMemberRoutePlan, isPlanRoutable } from './planAvailability'
 import { isThemeMode, resolveTheme, type ThemeMode } from './themePreference'
 import { appRoutePath, parseAppRoute, type AppRoute, type PublicPageID, type ViewID } from './appRoutes'
+import { buildInfo, shortRevision } from './buildInfo'
 
 function defineAsyncView(loader: () => Promise<{ default: Component }>) {
   return defineAsyncComponent({

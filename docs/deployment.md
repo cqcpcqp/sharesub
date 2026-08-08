@@ -53,6 +53,12 @@ production releases always use the immutable full SHA tags.
 
 ### Production release
 
+The repository-root `VERSION` file is the single source of the human-readable
+SemVer. A production commit must have an annotated `v<VERSION>` tag pointing
+at it. `scripts/verify-version.sh --release` enforces the version format, tag
+type, tag name, and target before any production state is changed. Images and
+rollbacks continue to use the immutable full Git SHA.
+
 The `Deploy production` workflow is manually dispatched. It uses the GitHub
 `production` Environment so repository owners can add required reviewers and
 an approval gate. It checks out the current `main` with full history and runs:

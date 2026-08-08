@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/sharesub/sharesub/backend/internal/application"
+	"github.com/sharesub/sharesub/backend/internal/buildinfo"
 	"github.com/sharesub/sharesub/backend/internal/openai"
 )
 
@@ -36,6 +37,9 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	})
+	s.mux.HandleFunc("GET /api/version", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, buildinfo.Current())
 	})
 	s.mux.HandleFunc("POST /api/auth/register", s.register)
 	s.mux.HandleFunc("POST /api/auth/login", s.login)

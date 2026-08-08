@@ -366,6 +366,16 @@ server {
 
 推荐通过 GitHub Actions 手动运行 `Deploy production`。发布前，当前 `main` 的 `CI and images` 必须已经成功，将两个带完整 commit SHA 的镜像推送到 GHCR。GitHub `production` Environment 可以配置人工审批和生产 SSH Secrets。
 
+正式版本以根目录 `VERSION` 为唯一来源，格式为不带 `v` 前缀的 SemVer。每次生产发布前必须为当前提交创建对应的 annotated tag：
+
+```bash
+version="$(./scripts/verify-version.sh)"
+git tag -a "v$version" -m "ShareSub v$version"
+git push origin "v$version"
+```
+
+`scripts/verify-version.sh --release` 会校验 `VERSION`、tag 名称、tag 类型和 tag 指向的提交。生产仍使用完整 commit SHA 镜像部署与回滚，SemVer tag 不代替不可变镜像标识。
+
 生产环境固定为 `share.underelay.com`、SSH 别名固定为 `underelay` 时，也可以在本机从干净且已经推送的 `main` 执行同一发布脚本：
 
 ```bash

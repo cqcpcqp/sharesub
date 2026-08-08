@@ -114,9 +114,14 @@ start_backend() {
   rm -f "$pid_file"
   assert_port_free 8080 "后端"
   mkdir -p "$RUN_DIR/go-cache"
+  local version revision
+  version="$("$ROOT/scripts/verify-version.sh")"
+  revision="$(git -C "$ROOT" rev-parse HEAD)"
   (
     cd "$ROOT/backend"
-    GOCACHE="$RUN_DIR/go-cache" go build -mod=readonly -o "$RUN_DIR/sharesub-api" ./cmd/api
+    GOCACHE="$RUN_DIR/go-cache" go build -mod=readonly \
+      -ldflags="-X github.com/sharesub/sharesub/backend/internal/buildinfo.Version=$version -X github.com/sharesub/sharesub/backend/internal/buildinfo.Revision=$revision" \
+      -o "$RUN_DIR/sharesub-api" ./cmd/api
   )
   set -a
   source "$ENV_FILE"
@@ -134,9 +139,13 @@ start_frontend() {
   fi
   rm -f "$pid_file"
   assert_port_free 5173 "前端"
+  local version revision
+  version="$("$ROOT/scripts/verify-version.sh")"
+  revision="$(git -C "$ROOT" rev-parse HEAD)"
   (
     cd "$ROOT/frontend"
-    nohup pnpm exec vite > "$RUN_DIR/frontend.log" 2>&1 &
+    SHARESUB_BUILD_VERSION="$version" SHARESUB_BUILD_REVISION="$revision" \
+      nohup pnpm exec vite > "$RUN_DIR/frontend.log" 2>&1 &
     echo $! > "$pid_file"
   )
   echo "前端已启动（PID $(cat "$pid_file")）"

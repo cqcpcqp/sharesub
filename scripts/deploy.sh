@@ -144,7 +144,7 @@ assert_deployable_commit() {
   [[ -z "$worktree_status" ]] || die "工作区不干净，请先提交或移除本地改动"
 
   info "更新 origin/main" >&2
-  GIT_SSH_COMMAND="$SSH_COMMAND" git -C "$ROOT" fetch --quiet origin main
+  GIT_SSH_COMMAND="$SSH_COMMAND" git -C "$ROOT" fetch --quiet --tags origin main
 
   head_commit="$(git -C "$ROOT" rev-parse HEAD)"
   origin_commit="$(git -C "$ROOT" rev-parse origin/main)"
@@ -162,13 +162,14 @@ run_deploy() {
   require_command tar
   require_command curl
 
-  local current_commit previous_commit short_commit release_dir backup_path release_compose
+  local current_commit previous_commit short_commit release_dir backup_path release_compose release_version
   local migrations_changed=0
 
   assert_image_repository "$API_IMAGE_REPOSITORY"
   assert_image_repository "$WEB_IMAGE_REPOSITORY"
 
   current_commit="$(assert_deployable_commit)"
+  release_version="$("$ROOT/scripts/verify-version.sh" --release)"
   short_commit="${current_commit:0:12}"
   release_compose="$(compose_for_commit "$current_commit")"
   previous_commit="$(read_deployed_commit)" \
@@ -198,7 +199,7 @@ run_deploy() {
   trap "rm -rf '$release_dir'" EXIT
   git -C "$ROOT" archive --format=tar "$current_commit" | tar -xf - -C "$release_dir"
 
-  info "同步提交 $short_commit"
+  info "同步 ShareSub v$release_version（$short_commit）"
   rsync -az --delete-after --itemize-changes \
     -e "$SSH_COMMAND" \
     --exclude='.env' \
@@ -257,7 +258,8 @@ run_deploy() {
   prune_release_images
 
   info "发布完成"
-  printf '版本：%s\n' "$current_commit"
+  printf '版本：v%s\n' "$release_version"
+  printf '提交：%s\n' "$current_commit"
   printf '健康检查：%s\n' "$public_health"
   printf '数据库备份：%s\n' "$backup_path"
   ssh "${SSH_OPTIONS[@]}" "$DEPLOY_HOST" \

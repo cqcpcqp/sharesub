@@ -31,6 +31,8 @@ restart:
 	@$(DEV_SCRIPT) restart
 
 test:
+	@./scripts/verify-version.sh >/dev/null
+	@./scripts/verify-version-test.sh
 	@$(DEV_SCRIPT) test
 
 deploy:

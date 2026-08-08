@@ -117,6 +117,28 @@
             </NRadioGroup>
           </div>
         </section>
+
+        <section class="settings-block release-settings">
+          <div class="section-heading">
+            <div>
+              <h2>关于 ShareSub</h2>
+              <p>反馈问题时可以附上版本与构建标识</p>
+            </div>
+          </div>
+          <div class="release-metadata">
+            <div class="preference-heading">
+              <span><Info :size="18" /></span>
+              <div>
+                <strong>ShareSub v{{ buildInfo.version }}</strong>
+                <small>当前 Web 应用的发布身份</small>
+              </div>
+            </div>
+            <dl>
+              <div><dt>版本</dt><dd><code>{{ buildInfo.version }}</code></dd></div>
+              <div><dt>构建</dt><dd><code>{{ buildInfo.revision }}</code></dd></div>
+            </dl>
+          </div>
+        </section>
       </div>
     </div>
     <PasswordChangeDialog
@@ -131,7 +153,7 @@
 <script setup lang="ts">
 import { NButton, NPopconfirm, NRadioButton, NRadioGroup, NUpload } from 'naive-ui'
 import type { UploadCustomRequestOptions } from 'naive-ui'
-import { Camera, LockKeyhole, Monitor, Moon, Palette, Save, Sun, Trash2 } from 'lucide-vue-next'
+import { Camera, Info, LockKeyhole, Monitor, Moon, Palette, Save, Sun, Trash2 } from 'lucide-vue-next'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { api } from '../api'
 import AppInput from '../components/AppInput.vue'
@@ -140,6 +162,7 @@ import type { ThemeMode } from '../themePreference'
 import type { User } from '../types'
 import StatusBadge from '../components/StatusBadge.vue'
 import UserAvatar from '../components/UserAvatar.vue'
+import { buildInfo } from '../buildInfo'
 
 const props = defineProps<{ user: User; themeMode: ThemeMode }>()
 const emit = defineEmits<{

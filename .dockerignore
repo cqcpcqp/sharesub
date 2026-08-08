@@ -1,0 +1,11 @@
+.git
+.github
+.env
+.env.*
+.run
+.pnpm-store
+backend/bin
+backend/coverage.out
+frontend/node_modules
+frontend/dist
+frontend/*.tsbuildinfo
