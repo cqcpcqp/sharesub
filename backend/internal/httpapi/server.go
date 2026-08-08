@@ -10,9 +10,13 @@ import (
 )
 
 const maxJSONBody = 1 << 20
-const maxGatewayBody = 32 << 20
+const maxGatewayBody = 256 << 20
+const maxTextGatewayBody = 32 << 20
 const maxAvatarBody = application.MaxAvatarBytes + 64<<10
 const maxUpstreamAccountSwitches = 3
+
+const gatewayBodyTooLargeMessage = "request body exceeds 256 MiB"
+const textGatewayBodyTooLargeMessage = "request body exceeds 32 MiB"
 
 type Server struct {
 	app     *application.Service

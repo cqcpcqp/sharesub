@@ -64,6 +64,21 @@ func TestGatewayCompatibilityRoutesAreRegistered(t *testing.T) {
 	}
 }
 
+func TestGatewayBodyLimitsMatchEndpointCapabilities(t *testing.T) {
+	if maxGatewayBody != 256<<20 {
+		t.Fatalf("general gateway body limit = %d, want 256 MiB", maxGatewayBody)
+	}
+	if maxTextGatewayBody != 32<<20 {
+		t.Fatalf("text gateway body limit = %d, want 32 MiB", maxTextGatewayBody)
+	}
+	if gatewayBodyTooLargeMessage != "request body exceeds 256 MiB" {
+		t.Fatalf("general gateway body limit message = %q", gatewayBodyTooLargeMessage)
+	}
+	if textGatewayBodyTooLargeMessage != "request body exceeds 32 MiB" {
+		t.Fatalf("text gateway body limit message = %q", textGatewayBodyTooLargeMessage)
+	}
+}
+
 func TestGatewayContextsHandleClientCancellation(t *testing.T) {
 	parent, cancelParent := context.WithCancel(context.Background())
 	metricCtx, cancelMetric := metricContext(parent)

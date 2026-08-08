@@ -342,7 +342,19 @@ server {
     ssl_certificate /etc/letsencrypt/live/sharesub.example.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/sharesub.example.com/privkey.pem;
 
-    client_max_body_size 32m;
+    client_max_body_size 256m;
+
+    location ~ ^/(v1/alpha/search|alpha/search|backend-api/codex/alpha/search)$ {
+        client_max_body_size 32m;
+        proxy_pass http://127.0.0.1:8081;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
 
     location / {
         proxy_pass http://127.0.0.1:8081;

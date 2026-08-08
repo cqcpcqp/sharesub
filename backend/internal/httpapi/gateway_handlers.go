@@ -106,8 +106,8 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 	defer releaseSlot()
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxGatewayBody))
 	if err != nil {
-		s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, "", openai.RequestBilling{}, http.StatusRequestEntityTooLarge, domain.GatewayErrorSourceRequest, "request_too_large", "request body exceeds 32 MiB", 0))
-		writeGatewayErrorStatus(w, http.StatusRequestEntityTooLarge, "request_too_large", "request body exceeds 32 MiB")
+		s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, "", openai.RequestBilling{}, http.StatusRequestEntityTooLarge, domain.GatewayErrorSourceRequest, "request_too_large", gatewayBodyTooLargeMessage, 0))
+		writeGatewayErrorStatus(w, http.StatusRequestEntityTooLarge, "request_too_large", gatewayBodyTooLargeMessage)
 		return
 	}
 	compact := strings.HasSuffix(strings.TrimRight(r.URL.Path, "/"), "/responses/compact")
@@ -255,8 +255,8 @@ func (s *Server) images(w http.ResponseWriter, r *http.Request) {
 
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxGatewayBody))
 	if err != nil {
-		s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, "", openai.RequestBilling{}, http.StatusRequestEntityTooLarge, domain.GatewayErrorSourceRequest, "request_too_large", "request body exceeds 32 MiB", 0))
-		writeGatewayErrorStatus(w, http.StatusRequestEntityTooLarge, "request_too_large", "request body exceeds 32 MiB")
+		s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, "", openai.RequestBilling{}, http.StatusRequestEntityTooLarge, domain.GatewayErrorSourceRequest, "request_too_large", gatewayBodyTooLargeMessage, 0))
+		writeGatewayErrorStatus(w, http.StatusRequestEntityTooLarge, "request_too_large", gatewayBodyTooLargeMessage)
 		return
 	}
 	forwardBody, imageRequest, billingMetadata, err := openai.PrepareImagesRequest(body, r.Header.Get("Content-Type"), r.URL.Path)

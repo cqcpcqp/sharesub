@@ -78,17 +78,21 @@ func AccountCostForImageSize(model, serviceTier string, usage domain.TokenUsage,
 	tierMultiplier := 1.0
 	switch strings.ToLower(strings.TrimSpace(serviceTier)) {
 	case "priority":
-		if pricing.InputPricePriority > 0 {
-			inputPrice = pricing.InputPricePriority
-		}
-		if pricing.OutputPricePriority > 0 {
-			outputPrice = pricing.OutputPricePriority
-		}
-		if pricing.CacheReadPricePriority > 0 {
-			cacheReadPrice = pricing.CacheReadPricePriority
-		}
-		if pricing.CacheCreationPriority > 0 {
-			cacheCreationPrice = pricing.CacheCreationPriority
+		if hasPriorityPricing(pricing) {
+			if pricing.InputPricePriority > 0 {
+				inputPrice = pricing.InputPricePriority
+			}
+			if pricing.OutputPricePriority > 0 {
+				outputPrice = pricing.OutputPricePriority
+			}
+			if pricing.CacheReadPricePriority > 0 {
+				cacheReadPrice = pricing.CacheReadPricePriority
+			}
+			if pricing.CacheCreationPriority > 0 {
+				cacheCreationPrice = pricing.CacheCreationPriority
+			}
+		} else {
+			tierMultiplier = 2.0
 		}
 	case "flex":
 		tierMultiplier = 0.5
@@ -119,6 +123,11 @@ func AccountCostForImageSize(model, serviceTier string, usage domain.TokenUsage,
 	out.ImageOutputMicros = toMicros(usage.ImageOutputTokens, imageOutputPrice)
 	out.TotalMicros = out.InputMicros + out.OutputMicros + out.CacheCreationMicros + out.CacheReadMicros + out.ImageInputMicros + out.ImageOutputMicros + out.WebSearchMicros
 	return out
+}
+
+func hasPriorityPricing(pricing modelPricing) bool {
+	return pricing.InputPricePriority > 0 || pricing.OutputPricePriority > 0 ||
+		pricing.CacheCreationPriority > 0 || pricing.CacheReadPricePriority > 0
 }
 
 func imageBillingTier(size string) string {

@@ -20,6 +20,17 @@ func TestAccountCostMicrosUsesPriorityPricing(t *testing.T) {
 	}
 }
 
+func TestAccountCostMicrosPriorityUsesDoubleMultiplierWithoutPriorityPricing(t *testing.T) {
+	usage := domain.TokenUsage{InputTokens: 100_000, CachedTokens: 20_000, OutputTokens: 50_000}
+	standard := AccountCostMicros("claude-4-sonnet-20250514", "", usage)
+	if standard == 0 {
+		t.Fatal("standard account cost must be non-zero")
+	}
+	if got, want := AccountCostMicros("claude-4-sonnet-20250514", "priority", usage), standard*2; got != want {
+		t.Fatalf("priority account cost without priority pricing = %d, want %d", got, want)
+	}
+}
+
 func TestAccountCostMicrosMatchesSub2APIDefaultLongContextPolicy(t *testing.T) {
 	usage := domain.TokenUsage{InputTokens: 300_000, OutputTokens: 100_000}
 	if got, want := AccountCostMicros("gpt-5.4", "", usage), int64(2_250_000); got != want {

@@ -220,7 +220,7 @@ Plan 详情的 `insights.window_usage` 按当前 OpenAI 账号实际返回的 5h
 | `POST` | `/images/generations` | 用户 API Key | 不带 `/v1` 的图片生成兼容入口 |
 | `POST` | `/images/edits` | 用户 API Key | 不带 `/v1` 的图片编辑兼容入口 |
 
-网关请求体上限为 32 MiB。`priority` 按数字从小到大选路，并在请求发出前跳过不可用路由；`balanced` 在固定分配模式按当前成员消耗占个人份额的比例选择，在共享模式按账号总额度使用比例选择。Responses 上游明确返回 `429` 或 `529` 时最多切换 3 个账号；models manifest 在连接失败或上游返回 `401`、`429`、`5xx` 时最多切换 3 个账号。Alpha Search 请求体必须包含固定字符串字段 `model`，其余 SearchClient 字段按原协议转发；成功的 2xx 响应计为一次 Web Search，非 2xx 不计费。
+Responses 与图片端点的请求体上限为 256 MiB；纯文本 Alpha Search 端点的请求体上限为 32 MiB。`priority` 按数字从小到大选路，并在请求发出前跳过不可用路由；`balanced` 在固定分配模式按当前成员消耗占个人份额的比例选择，在共享模式按账号总额度使用比例选择。Responses 上游明确返回 `429` 或 `529` 时最多切换 3 个账号；models manifest 在连接失败或上游返回 `401`、`429`、`5xx` 时最多切换 3 个账号。Alpha Search 请求体必须包含固定字符串字段 `model`，其余 SearchClient 字段按原协议转发；成功的 2xx 响应计为一次 Web Search，非 2xx 不计费。
 
 固定分配模式分别汇总成员在账号 5 小时和 7 天窗口内的 `estimated_cost_micros`，并用“账号窗口当前已用额度 × 成员费用 ÷ 窗口内全部成员费用”估算成员已用额度。候选成员份额为 0，或任一窗口的估算已用额度达到个人份额后不可用；共享模式不限制个人用量，但账号任一有效窗口达到 100% 后不可用。所有候选都不可用时返回 `429 quota_exhausted`；没有有效路由时返回 `503 no_route_available`。只有完整额度响应头会更新额度快照；额度头缺失不会篡改或拦截上游成功响应。指标记录状态码、TTFT、总耗时、终止事件中的 Input/Output/Cached/Image Token、图片数量与关联成员，不记录请求或响应内容。图片按 sub2api 默认档位计费：1K、2K、4K 每张分别为 134000、201000、268000 micro-USD，优先采用上游输出尺寸，尺寸缺失时按 2K。
 
@@ -235,7 +235,7 @@ Plan 详情的 `insights.window_usage` 按当前 OpenAI 账号实际返回的 5h
 | `404` | `not_found` | 目标不存在或不可见 |
 | `409` | `conflict` | 数据状态冲突 |
 | `409` | `share_exceeded` | 方案已分配份额超过 100% |
-| `413` | `request_too_large` | 网关请求体超过 32 MiB |
+| `413` | `request_too_large` | Responses/图片请求体超过 256 MiB，或 Alpha Search 请求体超过 32 MiB |
 | `429` | `quota_exhausted` | 固定分配的成员份额或共享使用的账号总额度已耗尽 |
 | `429` | `account_concurrency_limited` | 当前账号已达到最大并发请求数 |
 | `429` | `account_rate_limited` | 当前账号已达到 RPM 上限 |
