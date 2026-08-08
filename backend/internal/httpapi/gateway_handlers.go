@@ -439,6 +439,9 @@ func gatewayMetricStatus(upstreamStatus int, metrics openai.ProxyMetrics, copyEr
 	if upstreamStatus >= http.StatusOK && upstreamStatus < http.StatusMultipleChoices && metrics.ErrorStatusCode != 0 {
 		status = metrics.ErrorStatusCode
 	}
+	if copyErr != nil {
+		status = http.StatusBadGateway
+	}
 	var failoverErr *openai.StreamFailoverError
 	if errors.As(copyErr, &failoverErr) {
 		status = failoverErr.StatusCode

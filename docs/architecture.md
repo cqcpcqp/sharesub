@@ -89,7 +89,7 @@ Plan 成功率和错误明细使用完全相同的成员权限、时间窗口和
 
 ## 请求路径
 
-管理请求通过 `ss_session_...` 登录 Token 鉴权，由 `/api` 路由处理。Codex 请求通过 `sk-sharesub-...` 用户 API Key 鉴权，由 `/v1/responses`、`/responses` 或 `/backend-api/codex/responses` 进入网关；三个前缀都支持 `/compact`。
+管理请求通过 `ss_session_...` 登录 Token 鉴权，由 `/api` 路由处理。Codex 请求通过 `sk-sharesub-...` 用户 API Key 鉴权，由 `/v1/responses`、`/responses` 或 `/backend-api/codex/responses` 进入网关；三个前缀都支持 `/compact`，并分别提供独立 SearchClient 使用的 `/alpha/search`。
 
 Docker 部署时，外部请求先到 Web 容器中的 Nginx。静态页面直接返回，`/api/`、`/v1/`、`/responses` 和 `/backend-api/` 转发到 API 容器。网关路径关闭代理缓冲，以支持流式响应。
 

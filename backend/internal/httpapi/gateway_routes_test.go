@@ -33,6 +33,9 @@ func TestGatewayCompatibilityRoutesAreRegistered(t *testing.T) {
 		{http.MethodPost, "/responses/compact"},
 		{http.MethodPost, "/backend-api/codex/responses"},
 		{http.MethodPost, "/backend-api/codex/responses/compact"},
+		{http.MethodPost, "/v1/alpha/search"},
+		{http.MethodPost, "/alpha/search"},
+		{http.MethodPost, "/backend-api/codex/alpha/search"},
 		{http.MethodPost, "/v1/images/generations"},
 		{http.MethodPost, "/v1/images/edits"},
 		{http.MethodPost, "/images/generations"},
@@ -140,6 +143,13 @@ func TestGatewayMetricStatusPreservesUpstreamHTTPError(t *testing.T) {
 
 func TestGatewayMetricStatusUsesTerminalFailureForSuccessfulHTTPResponse(t *testing.T) {
 	status := gatewayMetricStatus(http.StatusOK, openai.ProxyMetrics{ErrorStatusCode: http.StatusBadGateway}, nil)
+	if status != http.StatusBadGateway {
+		t.Fatalf("metric status = %d", status)
+	}
+}
+
+func TestGatewayMetricStatusUsesBadGatewayForCopyFailure(t *testing.T) {
+	status := gatewayMetricStatus(http.StatusOK, openai.ProxyMetrics{}, errors.New("read upstream response"))
 	if status != http.StatusBadGateway {
 		t.Fatalf("metric status = %d", status)
 	}

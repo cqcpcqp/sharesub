@@ -232,6 +232,124 @@ func TestPrepareRequestRejectsInvalidStreamType(t *testing.T) {
 	}
 }
 
+func TestPrepareAlphaSearchRequestPreservesWireAndRemovesRejectedFields(t *testing.T) {
+	original := []byte(`{"id":"search-session","model":"gpt-5.6-sol","commands":{"search_query":[{"q":"news"}]},"future_field":{"keep":true}}`)
+	body, metadata, err := PrepareAlphaSearchRequest(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metadata.Model != "gpt-5.6-sol" || string(body) != string(original) {
+		t.Fatalf("body = %s, metadata = %+v", body, metadata)
+	}
+
+	body, metadata, err = PrepareAlphaSearchRequest([]byte(`{"model":"gpt-5.6-sol","prompt_cache_key":"session","prompt_cache_retention":"24h","future_field":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if metadata.Model != "gpt-5.6-sol" || payload["future_field"] != true {
+		t.Fatalf("body = %s, metadata = %+v", body, metadata)
+	}
+	for _, field := range alphaSearchUnsupportedFields {
+		if _, exists := payload[field]; exists {
+			t.Fatalf("unsupported field %q was forwarded", field)
+		}
+	}
+}
+
+func TestPrepareAlphaSearchRequestRejectsInvalidRequests(t *testing.T) {
+	for _, body := range []string{``, `[]`, `{}`, `{"model":1}`, `{"model":""}`} {
+		if _, _, err := PrepareAlphaSearchRequest([]byte(body)); err == nil {
+			t.Fatalf("request %q was accepted", body)
+		}
+	}
+}
+
+func TestForwardAlphaSearchUsesStandaloneSearchProtocol(t *testing.T) {
+	var captured *http.Request
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		captured = req
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"output":"result"}`)), Request: req}, nil
+	})}
+	inbound := httptest.NewRequest(http.MethodPost, "http://gateway.test/v1/alpha/search?feature=standalone", nil)
+	inbound.Header.Set("Version", "0.144.1")
+	inbound.Header.Set("User-Agent", codexProbeUserAgent)
+	inbound.Header.Set("X-Codex-Turn-Metadata", `{"turn_id":"turn-1"}`)
+
+	response, err := NewGateway(client).ForwardAlphaSearch(context.Background(), inbound, []byte(`{"model":"gpt-5.6-sol"}`), "access", "account", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if captured.URL.String() != codexAlphaSearchURL+"?feature=standalone" || captured.Host != "chatgpt.com" {
+		t.Fatalf("request target = %s (Host %q)", captured.URL, captured.Host)
+	}
+	wantHeaders := map[string]string{
+		"Authorization":         "Bearer access",
+		"Chatgpt-Account-Id":    "account",
+		"Content-Type":          "application/json",
+		"Accept":                "application/json",
+		"Originator":            "codex_cli_rs",
+		"Version":               "0.144.1",
+		"User-Agent":            codexProbeUserAgent,
+		"X-Codex-Turn-Metadata": `{"turn_id":"turn-1"}`,
+	}
+	for key, want := range wantHeaders {
+		if got := captured.Header.Get(key); got != want {
+			t.Errorf("%s = %q, want %q", key, got, want)
+		}
+	}
+	for _, absent := range []string{"OpenAI-Beta", "Session_Id", "Conversation_Id"} {
+		if got := captured.Header.Get(absent); got != "" {
+			t.Errorf("%s = %q, want empty", absent, got)
+		}
+	}
+}
+
+func TestForwardAlphaSearchNormalizesInvalidIdentityAndOldVersion(t *testing.T) {
+	var captured *http.Request
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		captured = req
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: http.NoBody, Request: req}, nil
+	})}
+	inbound := httptest.NewRequest(http.MethodPost, "http://gateway.test/alpha/search", nil)
+	inbound.Header.Set("Version", "0.137.0")
+	inbound.Header.Set("User-Agent", "Mozilla/5.0")
+	response, err := NewGateway(client).ForwardAlphaSearch(context.Background(), inbound, []byte(`{"model":"gpt-5.6-sol"}`), "access", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if captured.Header.Get("Version") != codexProbeVersion || captured.Header.Get("Originator") != "codex_cli_rs" || captured.Header.Get("User-Agent") != codexProbeUserAgent {
+		t.Fatalf("identity headers = %#v", captured.Header)
+	}
+	if captured.Header.Get("Chatgpt-Account-Id") != "" {
+		t.Fatalf("empty account id produced header %q", captured.Header.Get("Chatgpt-Account-Id"))
+	}
+}
+
+func TestCopyAlphaSearchResponseCountsOnlySuccess(t *testing.T) {
+	for _, test := range []struct {
+		status int
+		want   int64
+	}{
+		{status: http.StatusOK, want: 1},
+		{status: http.StatusNotFound, want: 0},
+	} {
+		source := &http.Response{StatusCode: test.status, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"output":"result"}`))}
+		metrics, err := CopyAlphaSearchResponse(httptest.NewRecorder(), source, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if metrics.WebSearchCalls != test.want {
+			t.Fatalf("status %d web search calls = %d, want %d", test.status, metrics.WebSearchCalls, test.want)
+		}
+	}
+}
+
 func TestForwardCompactUsesCompactEndpointAndHeaders(t *testing.T) {
 	var captured *http.Request
 	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
