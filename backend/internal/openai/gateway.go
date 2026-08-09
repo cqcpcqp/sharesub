@@ -65,7 +65,6 @@ type Gateway struct {
 	httpClient           *http.Client
 	proxyMu              sync.Mutex
 	proxyClients         map[string]*proxyClientEntry
-	slots                chan struct{}
 	now                  func() time.Time
 	quotaResetCreditsURL string
 	quotaResetConsumeURL string
@@ -184,30 +183,13 @@ func prepareRequest(body []byte, compact, normalize bool) ([]byte, RequestBillin
 	return normalized, metadata, nil
 }
 
-func NewGateway(httpClient *http.Client, maxConcurrency ...int) *Gateway {
-	gateway := &Gateway{
+func NewGateway(httpClient *http.Client) *Gateway {
+	return &Gateway{
 		httpClient:           httpClient,
 		proxyClients:         make(map[string]*proxyClientEntry),
 		now:                  time.Now,
 		quotaResetCreditsURL: chatGPTRateLimitResetCreditsURL,
 		quotaResetConsumeURL: chatGPTRateLimitResetConsumeURL,
-	}
-	if len(maxConcurrency) > 0 && maxConcurrency[0] > 0 {
-		gateway.slots = make(chan struct{}, maxConcurrency[0])
-	}
-	return gateway
-}
-
-func (g *Gateway) TryAcquire() (func(), bool) {
-	if g.slots == nil {
-		return func() {}, true
-	}
-	select {
-	case g.slots <- struct{}{}:
-		var once sync.Once
-		return func() { once.Do(func() { <-g.slots }) }, true
-	default:
-		return nil, false
 	}
 }
 

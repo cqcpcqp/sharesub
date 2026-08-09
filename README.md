@@ -133,7 +133,6 @@ openssl rand -base64 32
 | `SHARESUB_AUDIT_EVENT_RETENTION` | 审计记录保留期 | `8760h`（365 天） |
 | `SHARESUB_READ_NOTIFICATION_RETENTION` | 已读通知保留期；未读通知不自动删除 | `2160h`（90 天） |
 | `SHARESUB_TERMINAL_RECORD_RETENTION` | 已结束邀请、申请及撤销 Key 保留期 | `2160h`（90 天） |
-| `SHARESUB_GATEWAY_MAX_CONCURRENCY` | 单 API 实例的网关及额度探测总并发上限 | `8` |
 | `SHARESUB_TOKEN_REFRESH_ENABLED` | 是否启用 OpenAI OAuth Token 后台自动刷新 | `true` |
 | `SHARESUB_TOKEN_REFRESH_INTERVAL` | 后台扫描即将到期 Token 的周期 | `5m` |
 | `SHARESUB_TOKEN_REFRESH_BEFORE_EXPIRY` | 提前多久刷新 access token | `30m` |

@@ -18,13 +18,6 @@ func (s *Server) alphaSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { releaseGatewayAccess(&access) }()
 	requestID := gatewayRequestID(r)
-	releaseSlot, ok := s.gateway.TryAcquire()
-	if !ok {
-		s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(requestID, r.URL.Path, "", openai.RequestBilling{}, http.StatusServiceUnavailable, domain.GatewayErrorSourceGateway, "server_overloaded", "gateway concurrency limit reached", 0))
-		writeGatewayErrorStatus(w, http.StatusServiceUnavailable, "server_overloaded", "gateway concurrency limit reached")
-		return
-	}
-	defer releaseSlot()
 
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxTextGatewayBody))
 	if err != nil {

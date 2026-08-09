@@ -36,12 +36,6 @@ func (s *Server) codexModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { releaseGatewayAccess(&access) }()
-	releaseSlot, ok := s.gateway.TryAcquire()
-	if !ok {
-		writeGatewayErrorStatus(w, http.StatusServiceUnavailable, "server_overloaded", "gateway concurrency limit reached")
-		return
-	}
-	defer releaseSlot()
 
 	excludedAccountIDs := make([]string, 0, maxUpstreamAccountSwitches)
 	var upstream *http.Response
@@ -97,13 +91,6 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { releaseGatewayAccess(&access) }()
 	gatewayRequestID := gatewayRequestID(r)
-	releaseSlot, ok := s.gateway.TryAcquire()
-	if !ok {
-		s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, "", openai.RequestBilling{}, http.StatusServiceUnavailable, domain.GatewayErrorSourceGateway, "server_overloaded", "gateway concurrency limit reached", 0))
-		writeGatewayErrorStatus(w, http.StatusServiceUnavailable, "server_overloaded", "gateway concurrency limit reached")
-		return
-	}
-	defer releaseSlot()
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxGatewayBody))
 	if err != nil {
 		s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, "", openai.RequestBilling{}, http.StatusRequestEntityTooLarge, domain.GatewayErrorSourceRequest, "request_too_large", gatewayBodyTooLargeMessage, 0))
@@ -245,13 +232,6 @@ func (s *Server) images(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { releaseGatewayAccess(&access) }()
 	gatewayRequestID := gatewayRequestID(r)
-	releaseSlot, ok := s.gateway.TryAcquire()
-	if !ok {
-		s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, "", openai.RequestBilling{}, http.StatusServiceUnavailable, domain.GatewayErrorSourceGateway, "server_overloaded", "gateway concurrency limit reached", 0))
-		writeGatewayErrorStatus(w, http.StatusServiceUnavailable, "server_overloaded", "gateway concurrency limit reached")
-		return
-	}
-	defer releaseSlot()
 
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxGatewayBody))
 	if err != nil {

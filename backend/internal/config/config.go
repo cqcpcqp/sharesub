@@ -26,7 +26,6 @@ type Config struct {
 	AuditEventRetention       time.Duration
 	ReadNotificationRetention time.Duration
 	TerminalRecordRetention   time.Duration
-	GatewayMaxConcurrency     int
 	TokenRefreshEnabled       bool
 	TokenRefreshInterval      time.Duration
 	TokenRefreshBeforeExpiry  time.Duration
@@ -83,10 +82,6 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	gatewayMaxConcurrency, err := positiveIntEnv("SHARESUB_GATEWAY_MAX_CONCURRENCY", 8)
-	if err != nil {
-		return Config{}, err
-	}
 	tokenRefreshEnabled, err := boolEnv("SHARESUB_TOKEN_REFRESH_ENABLED", true)
 	if err != nil {
 		return Config{}, err
@@ -126,7 +121,6 @@ func Load() (Config, error) {
 		AuditEventRetention:       auditEventRetention,
 		ReadNotificationRetention: readNotificationRetention,
 		TerminalRecordRetention:   terminalRecordRetention,
-		GatewayMaxConcurrency:     gatewayMaxConcurrency,
 		TokenRefreshEnabled:       tokenRefreshEnabled,
 		TokenRefreshInterval:      tokenRefreshInterval,
 		TokenRefreshBeforeExpiry:  tokenRefreshBeforeExpiry,

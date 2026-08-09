@@ -22,7 +22,7 @@ func TestLoadResourceDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	if config.CleanupInterval != 6*time.Hour || config.GatewayMetricRetention != 90*24*time.Hour ||
-		config.AuditEventRetention != 365*24*time.Hour || config.GatewayMaxConcurrency != 8 ||
+		config.AuditEventRetention != 365*24*time.Hour ||
 		!config.TokenRefreshEnabled || config.TokenRefreshInterval != 5*time.Minute ||
 		config.TokenRefreshBeforeExpiry != 30*time.Minute || config.TokenRefreshBatchSize != 200 ||
 		config.TokenRefreshConcurrency != 4 || config.TokenRefreshMaxRetries != 3 {
@@ -34,7 +34,6 @@ func TestLoadRejectsInvalidResourceLimits(t *testing.T) {
 	for name, value := range map[string]string{
 		"SHARESUB_CLEANUP_INTERVAL":          "never",
 		"SHARESUB_GATEWAY_METRIC_RETENTION":  "167h59m59s",
-		"SHARESUB_GATEWAY_MAX_CONCURRENCY":   "0",
 		"SHARESUB_TOKEN_REFRESH_INTERVAL":    "never",
 		"SHARESUB_TOKEN_REFRESH_CONCURRENCY": "0",
 		"SHARESUB_TOKEN_REFRESH_ENABLED":     "sometimes",

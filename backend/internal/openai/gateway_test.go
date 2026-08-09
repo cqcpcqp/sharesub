@@ -476,24 +476,6 @@ func TestClientForProxyOverridesBaseTransport(t *testing.T) {
 	}
 }
 
-func TestGatewayConcurrencyLimitReleasesExactlyOnce(t *testing.T) {
-	gateway := NewGateway(&http.Client{}, 1)
-	release, ok := gateway.TryAcquire()
-	if !ok {
-		t.Fatal("first gateway slot was rejected")
-	}
-	if _, ok := gateway.TryAcquire(); ok {
-		t.Fatal("gateway accepted more requests than its concurrency limit")
-	}
-	release()
-	release()
-	if releaseAgain, ok := gateway.TryAcquire(); !ok {
-		t.Fatal("released gateway slot was not reusable")
-	} else {
-		releaseAgain()
-	}
-}
-
 func TestProxyClientCacheEvictsOldAndExpiredEntries(t *testing.T) {
 	baseTransport := &http.Transport{Proxy: http.ProxyFromEnvironment}
 	gateway := NewGateway(&http.Client{Transport: baseTransport})

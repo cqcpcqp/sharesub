@@ -76,7 +76,7 @@ func main() {
 	if bootstrapAdmin != nil {
 		logger.Warn("bootstrap admin created; change this temporary password after login", "email", bootstrapAdmin.Email, "temporary_password", bootstrapAdmin.TemporaryPassword)
 	}
-	gateway := openai.NewGateway(httpClient, cfg.GatewayMaxConcurrency)
+	gateway := openai.NewGateway(httpClient)
 	defer gateway.Close()
 	api := httpapi.New(app, gateway, logger)
 	server := &http.Server{

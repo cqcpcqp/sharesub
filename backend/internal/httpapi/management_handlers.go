@@ -296,12 +296,6 @@ func (s *Server) manualQuotaRefresh(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"account_id": probe.AccountID, "signals": []domain.QuotaSignal{}})
 		return
 	}
-	releaseSlot, ok := s.gateway.TryAcquire()
-	if !ok {
-		writeErrorStatus(w, http.StatusServiceUnavailable, "server_overloaded", "gateway concurrency limit reached")
-		return
-	}
-	defer releaseSlot()
 	signals, err := s.gateway.ProbeQuota(r.Context(), probe.AccessToken, probe.ChatGPTAccountID, probe.ProxyURL)
 	if err != nil {
 		s.logger.Error("probe OpenAI quota", "error", err, "plan_id", planID)
@@ -338,12 +332,6 @@ func (s *Server) planQuotaResetCredits(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	releaseSlot, ok := s.gateway.TryAcquire()
-	if !ok {
-		writeErrorStatus(w, http.StatusServiceUnavailable, "server_overloaded", "gateway concurrency limit reached")
-		return
-	}
-	defer releaseSlot()
 	credits, err := s.gateway.QueryQuotaResetCredits(r.Context(), probe.AccessToken, probe.ChatGPTAccountID, probe.ProxyURL)
 	if err != nil {
 		s.logger.Error("query OpenAI quota reset credits", "error", err, "plan_id", planID)
@@ -361,12 +349,6 @@ func (s *Server) resetPlanQuota(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	releaseSlot, ok := s.gateway.TryAcquire()
-	if !ok {
-		writeErrorStatus(w, http.StatusServiceUnavailable, "server_overloaded", "gateway concurrency limit reached")
-		return
-	}
-	defer releaseSlot()
 	reset, err := s.gateway.ConsumeQuotaResetCredit(r.Context(), probe.AccessToken, probe.ChatGPTAccountID, probe.ProxyURL)
 	if err != nil {
 		s.logger.Error("reset OpenAI quota", "error", err, "plan_id", planID)
