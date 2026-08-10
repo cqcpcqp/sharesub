@@ -5,7 +5,7 @@
       <p>{{ precedenceDescription }}</p>
       <dl>
         <div><dt>未指定 tier</dt><dd>命中“强制 Fast”时主动添加 service_tier；否则由下一层规则或 OpenAI 默认模式处理。</dd></div>
-        <div><dt>Fast</dt><dd>使用最新官方值 fast；priority 作为兼容别名按同一模式匹配。</dd></div>
+        <div><dt>Fast</dt><dd>客户端的 fast 与 priority 按同一模式匹配；强制规则向 ChatGPT Codex 上游发送兼容值 priority。</dd></div>
         <div><dt>Flex</dt><dd>响应更慢且可能暂时无可用资源，适合低优先级或异步任务；可用性取决于 OpenAI 和模型。</dd></div>
       </dl>
     </div>

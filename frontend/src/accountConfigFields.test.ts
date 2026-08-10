@@ -19,7 +19,7 @@ describe('AccountConfigFields', () => {
   it('explains the default, Fast, and Flex processing modes', () => {
     const wrapper = mount(AccountConfigFields, { props: { modelValue } })
     expect(wrapper.text()).toContain('命中“强制 Fast”时主动添加 service_tier')
-    expect(wrapper.text()).toContain('使用最新官方值 fast')
+    expect(wrapper.text()).toContain('发送兼容值 priority')
     expect(wrapper.text()).toContain('响应更慢且可能暂时无可用资源')
     expect(wrapper.text()).toContain('继续执行成员 Key 的规则')
   })

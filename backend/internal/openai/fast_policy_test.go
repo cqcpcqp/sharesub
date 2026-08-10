@@ -56,7 +56,7 @@ func TestApplyFastPolicyUsesModelFallbackAction(t *testing.T) {
 	if err := json.Unmarshal(body, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload["service_tier"] != "fast" || metadata.ServiceTier != "fast" {
+	if payload["service_tier"] != "priority" || metadata.ServiceTier != "priority" {
 		t.Fatalf("forced payload = %s, metadata tier = %q", body, metadata.ServiceTier)
 	}
 }
@@ -71,7 +71,7 @@ func TestApplyFastPolicyForcesFastWhenServiceTierIsOmitted(t *testing.T) {
 	if err := json.Unmarshal(updated, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload["service_tier"] != "fast" || metadata.ServiceTier != "fast" {
+	if payload["service_tier"] != "priority" || metadata.ServiceTier != "priority" {
 		t.Fatalf("forced payload = %s metadata=%+v", updated, metadata)
 	}
 }
@@ -83,7 +83,7 @@ func TestApplyFastPolicyDelegatesAccountPassToKeyPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(body), `"service_tier":"fast"`) || metadata.ServiceTier != "fast" {
+	if !strings.Contains(string(body), `"service_tier":"priority"`) || metadata.ServiceTier != "priority" {
 		t.Fatalf("layered policy result: body=%s metadata=%+v", body, metadata)
 	}
 }
@@ -111,7 +111,7 @@ func TestApplyFastPolicyAccountForceOverridesKeyBlock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(body), `"service_tier":"fast"`) || metadata.ServiceTier != "fast" {
+	if !strings.Contains(string(body), `"service_tier":"priority"`) || metadata.ServiceTier != "priority" {
 		t.Fatalf("account force did not override key block: body=%s metadata=%+v", body, metadata)
 	}
 }

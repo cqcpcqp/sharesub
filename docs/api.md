@@ -78,7 +78,7 @@ OAuth 开始接口返回 `authorization_url` 和 `flow_id`。完成授权后，�
 
 `fast_policy` 规则按顺序首条命中，指定成员规则优先于全局规则。每条规则包含 `service_tier`（`all`、`priority`、`flex`）、`action`（`pass`、`filter`、`force_priority`、`block`）、`user_ids`、`error_message`、`model_whitelist`、`fallback_action` 和 `fallback_error_message`。`priority` 在规则中表示 Fast 模式并同时匹配请求值 `fast` 与兼容别名 `priority`。`model_whitelist` 支持精确模型名与末尾 `*` 通配符；未命中白名单时执行 fallback 动作。
 
-账号规则的 `filter`、`force_priority` 和 `block` 是最终决定；账号规则为空、未命中或结果为 `pass` 时继续执行当前 API Key 的规则。`force_priority` 即使请求未携带 `service_tier` 也会主动写入最新官方值 `fast`；其他透传请求保留原始 `fast`、`priority` 或 `flex`。过滤或强制后的 service tier 同步用于请求成本统计。ShareSub 负责识别、过滤、改写或拦截该字段，实际 Fast/Flex 推理、额度消耗和模型可用性由 OpenAI 上游决定。
+账号规则的 `filter`、`force_priority` 和 `block` 是最终决定；账号规则为空、未命中或结果为 `pass` 时继续执行当前 API Key 的规则。`force_priority` 即使请求未携带 `service_tier` 也会主动写入 ChatGPT Codex 上游当前接受的兼容值 `priority`；入站 `fast` 与 `priority` 均按 Fast 模式匹配，其他透传请求保留原始值。过滤或强制后的 service tier 同步用于请求成本统计。ShareSub 负责识别、过滤、改写或拦截该字段，实际 Fast/Flex 推理、额度消耗和模型可用性由 OpenAI 上游决定。
 
 账号列表与已绑定 Plan 详情中的 `account` 返回 `id`、`owner_user_id`、上述配置、OpenAI 邮箱、ChatGPT Account ID、套餐类型、付费订阅有效期 `subscription_expires_at`、OAuth Token 到期时间、状态、最近错误和创建时间。`subscription_expires_at` 的固定类型为 RFC 3339 时间字符串或 `null`；当前没有取得订阅有效期时返回 `null`。未绑定账号的 Plan 固定返回 `account: null` 和 `plan.account_id: ""`。OAuth access token、refresh token 以及任何密文字段永远不会进入 JSON 响应。只有账号所有者可以修改配置；Plan 的所有有效成员都能通过 Plan 详情查看该账号的完整配置。
 

@@ -92,9 +92,9 @@ func applyFastPolicyAction(payload map[string]any, metadata *RequestBilling, raw
 		metadata.ServiceTier = ""
 		return "", changed
 	case "force_priority":
-		payload["service_tier"] = "fast"
-		metadata.ServiceTier = "fast"
-		return "fast", changed || rawTier != "fast"
+		payload["service_tier"] = "priority"
+		metadata.ServiceTier = "priority"
+		return "priority", changed || rawTier != "priority"
 	default:
 		return rawTier, changed
 	}
