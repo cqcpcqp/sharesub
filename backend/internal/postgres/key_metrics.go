@@ -13,12 +13,15 @@ import (
 const quotaWindowResetTolerance = 2 * time.Minute
 
 func (s *Store) CreateAPIKey(ctx context.Context, key domain.APIKey, routes []domain.APIKeyRoute) error {
+	if key.FastPolicy == nil {
+		key.FastPolicy = make([]domain.FastPolicyRule, 0)
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	_, err = tx.Exec(ctx, `INSERT INTO api_keys(id,user_id,name,key_prefix,key_hash,key_ciphertext,strategy,status,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$9)`, key.ID, key.UserID, key.Name, key.KeyPrefix, key.KeyHash, key.KeyCiphertext, key.Strategy, key.Status, key.CreatedAt)
+	_, err = tx.Exec(ctx, `INSERT INTO api_keys(id,user_id,name,key_prefix,key_hash,key_ciphertext,strategy,fast_policy,status,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10)`, key.ID, key.UserID, key.Name, key.KeyPrefix, key.KeyHash, key.KeyCiphertext, key.Strategy, key.FastPolicy, key.Status, key.CreatedAt)
 	if err != nil {
 		return mapError(err)
 	}
@@ -29,12 +32,15 @@ func (s *Store) CreateAPIKey(ctx context.Context, key domain.APIKey, routes []do
 }
 
 func (s *Store) UpdateAPIKey(ctx context.Context, userID string, key domain.APIKey, routes []domain.APIKeyRoute) (domain.APIKey, error) {
+	if key.FastPolicy == nil {
+		key.FastPolicy = make([]domain.FastPolicyRule, 0)
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return domain.APIKey{}, err
 	}
 	defer tx.Rollback(ctx)
-	err = tx.QueryRow(ctx, `UPDATE api_keys SET name=$3,strategy=$4,updated_at=now() WHERE id=$1 AND user_id=$2 RETURNING id,user_id,name,key_prefix,key_ciphertext,strategy,status,last_used_at,created_at`, key.ID, userID, key.Name, key.Strategy).Scan(&key.ID, &key.UserID, &key.Name, &key.KeyPrefix, &key.KeyCiphertext, &key.Strategy, &key.Status, &key.LastUsedAt, &key.CreatedAt)
+	err = tx.QueryRow(ctx, `UPDATE api_keys SET name=$3,strategy=$4,fast_policy=$5,updated_at=now() WHERE id=$1 AND user_id=$2 RETURNING id,user_id,name,key_prefix,key_ciphertext,strategy,fast_policy,status,last_used_at,created_at`, key.ID, userID, key.Name, key.Strategy, key.FastPolicy).Scan(&key.ID, &key.UserID, &key.Name, &key.KeyPrefix, &key.KeyCiphertext, &key.Strategy, &key.FastPolicy, &key.Status, &key.LastUsedAt, &key.CreatedAt)
 	if err != nil {
 		return domain.APIKey{}, mapError(err)
 	}
@@ -84,14 +90,14 @@ func insertAPIKeyRoutes(ctx context.Context, tx pgx.Tx, keyID, userID string, ro
 }
 
 func (s *Store) ListAPIKeys(ctx context.Context, userID string) ([]domain.APIKey, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id,user_id,name,key_prefix,key_ciphertext,strategy,status,last_used_at,created_at FROM api_keys WHERE user_id=$1 ORDER BY created_at DESC`, userID)
+	rows, err := s.pool.Query(ctx, `SELECT id,user_id,name,key_prefix,key_ciphertext,strategy,fast_policy,status,last_used_at,created_at FROM api_keys WHERE user_id=$1 ORDER BY created_at DESC`, userID)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]domain.APIKey, 0)
 	for rows.Next() {
 		var k domain.APIKey
-		if err := rows.Scan(&k.ID, &k.UserID, &k.Name, &k.KeyPrefix, &k.KeyCiphertext, &k.Strategy, &k.Status, &k.LastUsedAt, &k.CreatedAt); err != nil {
+		if err := rows.Scan(&k.ID, &k.UserID, &k.Name, &k.KeyPrefix, &k.KeyCiphertext, &k.Strategy, &k.FastPolicy, &k.Status, &k.LastUsedAt, &k.CreatedAt); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -142,14 +148,14 @@ func (s *Store) RevokeAPIKey(ctx context.Context, userID, keyID string) error {
 
 func (s *Store) ResolveGatewayRoutes(ctx context.Context, hash []byte, now time.Time) (domain.GatewayRouteSet, error) {
 	var out domain.GatewayRouteSet
-	err := s.pool.QueryRow(ctx, `SELECT id,user_id,name,key_prefix,strategy,status,last_used_at,created_at FROM api_keys WHERE key_hash=$1 AND status='active'`, hash).Scan(&out.APIKey.ID, &out.APIKey.UserID, &out.APIKey.Name, &out.APIKey.KeyPrefix, &out.APIKey.Strategy, &out.APIKey.Status, &out.APIKey.LastUsedAt, &out.APIKey.CreatedAt)
+	err := s.pool.QueryRow(ctx, `SELECT id,user_id,name,key_prefix,strategy,fast_policy,status,last_used_at,created_at FROM api_keys WHERE key_hash=$1 AND status='active'`, hash).Scan(&out.APIKey.ID, &out.APIKey.UserID, &out.APIKey.Name, &out.APIKey.KeyPrefix, &out.APIKey.Strategy, &out.APIKey.FastPolicy, &out.APIKey.Status, &out.APIKey.LastUsedAt, &out.APIKey.CreatedAt)
 	if err != nil {
 		return out, mapError(err)
 	}
 	out.APIKey.Routes = make([]domain.APIKeyRoute, 0)
 	out.Candidates = make([]domain.GatewayCredential, 0)
 	rows, err := s.pool.Query(ctx, `
-		SELECT k.id,k.strategy,r.priority,
+		SELECT k.id,k.strategy,k.fast_policy,r.priority,
 			m.id,m.plan_id,m.user_id,u.username,u.email,m.role,m.status,m.share_basis_points,m.created_at,
 			p.id,p.owner_user_id,p.account_id,p.name,p.status,p.visibility,p.public_slots,p.public_share_basis_points,p.allocation_mode,p.created_at,
 			a.id,a.owner_user_id,a.name,a.notes,a.email,a.chatgpt_account_id,a.plan_type,a.subscription_expires_at,a.access_token_ciphertext,a.refresh_token_ciphertext,a.proxy_url_ciphertext,a.max_concurrency,a.rpm_limit,a.fast_policy,a.token_expires_at,a.status,a.last_error,a.created_at,
@@ -182,7 +188,7 @@ func (s *Store) ResolveGatewayRoutes(ctx context.Context, hash []byte, now time.
 	defer rows.Close()
 	for rows.Next() {
 		var credential domain.GatewayCredential
-		err := rows.Scan(&credential.APIKeyID, &credential.APIKeyStrategy, &credential.RoutePriority,
+		err := rows.Scan(&credential.APIKeyID, &credential.APIKeyStrategy, &credential.APIKeyFastPolicy, &credential.RoutePriority,
 			&credential.Member.ID, &credential.Member.PlanID, &credential.Member.UserID, &credential.Member.Username, &credential.Member.Email, &credential.Member.Role, &credential.Member.Status, &credential.Member.ShareBasisPoints, &credential.Member.CreatedAt,
 			&credential.Plan.ID, &credential.Plan.OwnerUserID, &credential.Plan.AccountID, &credential.Plan.Name, &credential.Plan.Status, &credential.Plan.Visibility, &credential.Plan.PublicSlots, &credential.Plan.PublicShareBasisPoints, &credential.Plan.AllocationMode, &credential.Plan.CreatedAt,
 			&credential.Account.ID, &credential.Account.OwnerUserID, &credential.Account.Name, &credential.Account.Notes, &credential.Account.Email, &credential.Account.ChatGPTAccountID, &credential.Account.PlanType, &credential.Account.SubscriptionExpiresAt, &credential.AccessTokenCiphertext, &credential.RefreshTokenCiphertext, &credential.ProxyURLCiphertext, &credential.Account.MaxConcurrency, &credential.Account.RPMLimit, &credential.Account.FastPolicy, &credential.TokenExpiresAt, &credential.Account.Status, &credential.Account.LastError, &credential.Account.CreatedAt,

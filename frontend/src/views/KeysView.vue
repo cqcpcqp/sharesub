@@ -11,6 +11,7 @@
                 <strong>{{ key.name }}</strong>
                 <StatusBadge :value="key.status" />
                 <NTag v-if="!key.key_available" size="tiny" :bordered="false" type="warning">需升级</NTag>
+                <NTag v-if="key.fast_policy.length" size="tiny" :bordered="false" type="success">Key 策略 {{ key.fast_policy.length }}</NTag>
               </div>
               <code>{{ key.key_prefix }}...</code>
             </div>
@@ -51,9 +52,10 @@
     <EmptyState v-else title="还没有 API Key" :description="routablePlans.length ? '创建属于你的 Key，并选择它可以使用的 Plan。' : '先恢复一个已绑定账号的 Plan，或为状态正常的 Plan 绑定账号，再创建访问密钥。'" :icon="KeyRound" />
   </section>
 
-  <ModalShell v-if="editing" title="编辑 API Key" subtitle="配置路由目标和选路策略" wide @close="closeEdit">
+  <ModalShell v-if="editing" title="编辑 API Key" subtitle="配置路由目标、选路策略和 Fast/Flex 规则" wide @close="closeEdit">
     <div class="key-form-grid"><label>名称<AppInput :value="nameDraft" clearable :maxlength="100" :input-props="{ 'aria-label': 'API Key 名称' }" placeholder="例如：个人 Codex" @update:value="updateNameDraft" /></label><label>路由策略<NSelect :value="strategyDraft" :options="strategyOptions" to="body" @update:value="updateStrategyDraft" /></label></div>
     <div class="route-editor"><div class="section-heading"><div><h3>路由 Plans</h3><p>归档路由会暂停；数字越小，优先级越高</p></div></div><div class="route-option" v-for="plan in editablePlans" :key="plan.id"><NCheckbox :checked="routeDrafts[plan.id].enabled" class="check-label" @update:checked="updateRouteEnabled(plan.id, $event)"><span><strong>{{ plan.name }}</strong><small>{{ plan.status === 'archived' ? '已归档，恢复后自动生效' : plan.visibility === 'public' ? '公开' : '私密' }}</small></span></NCheckbox><label class="priority-input">优先级<NInputNumber :value="routeDrafts[plan.id].priority" size="small" :min="1" :max="10000" :disabled="!routeDrafts[plan.id].enabled" @update:value="updateRoutePriority(plan.id, $event)" /></label></div></div>
+    <FastPolicyFields v-model="fastPolicyDraft" scope="key" />
     <template #footer><NButton :disabled="saving" @click="closeEdit">取消</NButton><NButton type="primary" :loading="saving" :disabled="!canSave" @click="save"><template #icon><Save :size="17" /></template>保存配置</NButton></template>
   </ModalShell>
 
@@ -73,12 +75,13 @@ import { NAlert, NButton, NCheckbox, NInputNumber, NPopconfirm, NSelect, NTag } 
 import { computed, reactive, ref } from 'vue'
 import { Clock3, GitFork, KeyRound, Plus, RotateCw, Save, Settings2, SquareTerminal, Trash2, Upload, Waypoints } from 'lucide-vue-next'
 import { api } from '../api'
-import type { APIKey, Plan, RouteStrategy } from '../types'
+import type { APIKey, FastPolicyRule, Plan, RouteStrategy } from '../types'
 import { buildCCSwitchImportDeepLink, gatewayBaseURL, openCCSwitchImport } from '../keyUsage'
 import { canSubmitKeyConfig, type KeyRouteDraft } from '../keyConfigValidation'
 import { availableKeyRoutes, canUpgradeAPIKey } from '../keyReissue'
 import { isPlanRoutable } from '../planAvailability'
 import EmptyState from '../components/EmptyState.vue'
+import FastPolicyFields from '../components/FastPolicyFields.vue'
 import AppInput from '../components/AppInput.vue'
 import APIKeySetupWizard from '../components/APIKeySetupWizard.vue'
 import ModalShell from '../components/ModalShell.vue'
@@ -96,6 +99,7 @@ const upgradeTarget = ref<APIKey | null>(null)
 const upgrading = ref(false)
 const nameDraft = ref('')
 const strategyDraft = ref<RouteStrategy>('balanced')
+const fastPolicyDraft = ref<FastPolicyRule[]>([])
 const routeDrafts = reactive<Record<string, KeyRouteDraft>>({})
 const routablePlans = computed(() => props.plans.filter(isPlanRoutable))
 const editablePlans = computed(() => {
@@ -116,7 +120,8 @@ function resetRoutes(key: APIKey) {
     routeDrafts[plan.id] = { enabled: route?.enabled ?? false, priority: route?.priority ?? 100 }
   }
 }
-function openEdit(key: APIKey) { editing.value = key; nameDraft.value = key.name; strategyDraft.value = key.strategy; resetRoutes(key) }
+function cloneFastPolicy(policy: FastPolicyRule[]) { return policy.map(rule => ({ ...rule, user_ids: [...rule.user_ids], model_whitelist: [...rule.model_whitelist] })) }
+function openEdit(key: APIKey) { editing.value = key; nameDraft.value = key.name; strategyDraft.value = key.strategy; fastPolicyDraft.value = cloneFastPolicy(key.fast_policy); resetRoutes(key) }
 function closeEdit() { if (!saving.value) editing.value = null }
 function updateNameDraft(value: string) { nameDraft.value = value }
 function updateStrategyDraft(value: RouteStrategy) { strategyDraft.value = value }
@@ -144,7 +149,7 @@ async function confirmUpgrade() {
   if (routes.length === 0) return
   upgrading.value = true
   try {
-    const result = await api.createKey({ name: target.name, strategy: target.strategy, routes })
+    const result = await api.createKey({ name: target.name, strategy: target.strategy, routes, fast_policy: cloneFastPolicy(target.fast_policy) })
     const replacement = { ...result.api_key, key: result.key, key_available: true }
     let oldKeyRevoked = true
     try {
@@ -168,7 +173,7 @@ async function save() {
   const routes = editablePlans.value.filter(plan => routeDrafts[plan.id].enabled).map(plan => ({ plan_id: plan.id, plan_name: plan.name, priority: routeDrafts[plan.id].priority!, enabled: true }))
   saving.value = true
   try {
-    await api.updateKey(editing.value.id, { name: nameDraft.value.trim(), strategy: strategyDraft.value, routes })
+    await api.updateKey(editing.value.id, { name: nameDraft.value.trim(), strategy: strategyDraft.value, routes, fast_policy: cloneFastPolicy(fastPolicyDraft.value) })
     emit('message', 'success', 'API Key 配置已更新')
     editing.value = null
     emit('changed')

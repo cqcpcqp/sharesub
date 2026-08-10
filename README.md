@@ -198,7 +198,7 @@ pnpm dev
 
 ## 调用 Codex 网关
 
-成员密钥可调用以下入口：
+成员密钥可独立配置 Fast/Flex 规则；Plan 绑定账号的规则优先，账号规则为空、未命中或透传时才执行 Key 规则。“强制 Fast”会在请求未携带 `service_tier` 时主动写入官方值 `fast`。成员密钥可调用以下入口：
 
 - `GET /v1/models`
 - `GET /models`

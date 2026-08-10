@@ -128,6 +128,7 @@ const apiKey: APIKey = {
   key_available: true,
   key_prefix: 'sk-sharesub-test',
   strategy: 'balanced',
+  fast_policy: [],
   status: 'active',
   created_at: createdAt,
   routes: [{ plan_id: activePlan.id, plan_name: activePlan.name, priority: 100, enabled: true }],
@@ -874,6 +875,30 @@ describe('form interactions', () => {
     expect(findButton(keys, '保存配置')!.attributes('disabled')).toBeUndefined()
   })
 
+  it('creates an API key with its own Fast policy', async () => {
+    const createKey = vi.spyOn(api, 'createKey').mockResolvedValue({ api_key: apiKey, key: apiKey.key })
+    const wrapper = mount(APIKeySetupWizard, {
+      attachTo: document.body,
+      props: { show: true, plans: [activePlan] },
+      global: { stubs: { teleport: true } },
+    })
+
+    await findButton(wrapper, '新增规则')!.trigger('click')
+    expect(wrapper.text()).toContain('仅在绑定账号透传或未命中时生效')
+    await findButton(wrapper, '创建密钥')!.trigger('click')
+    await flushPromises()
+
+    expect(createKey).toHaveBeenCalledWith({
+      name: '我的 Codex',
+      strategy: 'balanced',
+      routes: [{ plan_id: activePlan.id, plan_name: activePlan.name, priority: 100, enabled: true }],
+      fast_policy: [{
+        service_tier: 'priority', action: 'force_priority', user_ids: [], error_message: '',
+        model_whitelist: [], fallback_action: 'pass', fallback_error_message: '',
+      }],
+    })
+  })
+
   it('does not create new routes for archived Plans but preserves an existing archived route while editing', async () => {
     const archivedKey: APIKey = {
       ...apiKey,
@@ -896,6 +921,7 @@ describe('form interactions', () => {
       name: archivedKey.name,
       strategy: archivedKey.strategy,
       routes: archivedKey.routes,
+      fast_policy: [],
     })
   })
 

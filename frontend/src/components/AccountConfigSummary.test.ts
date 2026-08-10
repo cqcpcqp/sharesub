@@ -27,7 +27,7 @@ describe('AccountConfigSummary', () => {
   it('shows Fast/Flex policy details with resolved member identity', () => {
     const wrapper = mount(AccountConfigSummary, { props: { account, members: [member] } })
     expect(wrapper.text()).toContain('OpenAI Fast/Flex 策略')
-    expect(wrapper.text()).toContain('Fast（priority）')
+    expect(wrapper.text()).toContain('Fast（含 priority）')
     expect(wrapper.text()).toContain('过滤 service_tier')
     expect(wrapper.text()).toContain('alice · alice@example.com')
     expect(wrapper.text()).toContain('gpt-5.5*')
@@ -46,9 +46,9 @@ describe('AccountConfigSummary', () => {
 
   it('shows the passthrough state when no rules are configured', () => {
     const wrapper = mount(AccountConfigSummary, { props: { account: { ...account, fast_policy: [] }, members: [] } })
-    expect(wrapper.text()).toContain('未配置策略')
-    expect(wrapper.text()).toContain('按请求原选择转发')
-    expect(wrapper.text()).toContain('OpenAI 默认处理')
+    expect(wrapper.text()).toContain('未配置账号策略')
+    expect(wrapper.text()).toContain('交由成员 Key 规则处理')
+    expect(wrapper.text()).toContain('保留请求原选择')
   })
 
   it('shows when the account has no recorded subscription expiry', () => {

@@ -16,11 +16,11 @@
       <header>
         <div class="fast-policy-summary-title">
           <span><Zap :size="17" /></span>
-          <div><strong>OpenAI Fast/Flex 策略</strong><small>仅作用于当前 OpenAI 账号</small></div>
+          <div><strong>OpenAI Fast/Flex 策略</strong><small>账号层优先于成员 API Key</small></div>
         </div>
         <div class="fast-policy-summary-count"><strong>{{ account.fast_policy.length }}</strong><span>条规则</span></div>
       </header>
-      <div v-if="account.fast_policy.length === 0" class="fast-policy-summary-empty">未配置策略：Fast/priority 与 Flex 按请求原选择转发；未携带 service_tier 时交由 OpenAI 默认处理。</div>
+      <div v-if="account.fast_policy.length === 0" class="fast-policy-summary-empty">未配置账号策略：交由成员 Key 规则处理；Key 也未配置时保留请求原选择。</div>
       <div v-else class="fast-policy-summary-rules">
         <article v-for="(rule, index) in account.fast_policy" :key="index" class="fast-policy-summary-rule">
           <header>
@@ -66,9 +66,9 @@ import StatusBadge from './StatusBadge.vue'
 const props = withDefaults(defineProps<{ account: Account; members?: Member[] }>(), { members: () => [] })
 function formatDate(value: string) { return new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) }
 function limitLabel(value: number, suffix: string) { return value === 0 ? '不限制' : `${value} ${suffix}` }
-function tierLabel(value: FastPolicyTier) { return value === 'all' ? '全部 tier' : value === 'priority' ? 'Fast（priority）' : 'Flex' }
+function tierLabel(value: FastPolicyTier) { return value === 'all' ? '全部 Fast/Flex tier' : value === 'priority' ? 'Fast（含 priority）' : 'Flex' }
 function actionLabel(value: FastPolicyAction) {
-  return { pass: '透传', filter: '过滤 service_tier', force_priority: '强制 Fast（priority）', block: '拦截请求' }[value]
+  return { pass: '透传到下一层', filter: '过滤 service_tier', force_priority: '强制 Fast', block: '拦截请求' }[value]
 }
 function actionTagType(value: FastPolicyAction): 'default' | 'success' | 'warning' | 'error' {
   return { pass: 'success', filter: 'warning', force_priority: 'default', block: 'error' }[value] as 'default' | 'success' | 'warning' | 'error'

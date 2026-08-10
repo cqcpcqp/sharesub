@@ -44,13 +44,31 @@ func normalizeAccountConfig(config AccountConfigInput) (AccountConfigInput, erro
 	if config.Status != domain.StatusActive && config.Status != domain.StatusDisabled && config.Status != domain.StatusRefreshRequired {
 		return AccountConfigInput{}, domain.ErrInvalidInput
 	}
-	if len(config.FastPolicy) > 50 {
-		return AccountConfigInput{}, domain.ErrInvalidInput
+	var err error
+	config.FastPolicy, err = normalizeFastPolicy(config.FastPolicy, true)
+	if err != nil {
+		return AccountConfigInput{}, err
+	}
+	if config.ProxyURL != "" {
+		parsed, err := url.Parse(config.ProxyURL)
+		if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https" && parsed.Scheme != "socks5") {
+			return AccountConfigInput{}, domain.ErrInvalidInput
+		}
+	}
+	return config, nil
+}
+
+func normalizeFastPolicy(policy []domain.FastPolicyRule, allowUserScope bool) ([]domain.FastPolicyRule, error) {
+	if policy == nil {
+		policy = make([]domain.FastPolicyRule, 0)
+	}
+	if len(policy) > 50 {
+		return nil, domain.ErrInvalidInput
 	}
 	validTiers := map[string]bool{"all": true, "priority": true, "flex": true}
 	validActions := map[string]bool{"pass": true, "filter": true, "block": true, "force_priority": true}
-	for index := range config.FastPolicy {
-		rule := &config.FastPolicy[index]
+	for index := range policy {
+		rule := &policy[index]
 		if rule.UserIDs == nil {
 			rule.UserIDs = make([]string, 0)
 		}
@@ -63,19 +81,19 @@ func normalizeAccountConfig(config AccountConfigInput) (AccountConfigInput, erro
 		rule.FallbackAction = strings.ToLower(strings.TrimSpace(rule.FallbackAction))
 		rule.FallbackErrorMessage = strings.TrimSpace(rule.FallbackErrorMessage)
 		if !validTiers[rule.ServiceTier] || !validActions[rule.Action] || !validActions[rule.FallbackAction] || utf8.RuneCountInString(rule.ErrorMessage) > 500 || utf8.RuneCountInString(rule.FallbackErrorMessage) > 500 {
-			return AccountConfigInput{}, domain.ErrInvalidInput
+			return nil, domain.ErrInvalidInput
 		}
-		if len(rule.UserIDs) > 500 || len(rule.ModelWhitelist) > 100 {
-			return AccountConfigInput{}, domain.ErrInvalidInput
+		if (!allowUserScope && len(rule.UserIDs) > 0) || len(rule.UserIDs) > 500 || len(rule.ModelWhitelist) > 100 {
+			return nil, domain.ErrInvalidInput
 		}
 		seenUsers := make(map[string]struct{}, len(rule.UserIDs))
 		for userIndex := range rule.UserIDs {
 			rule.UserIDs[userIndex] = strings.TrimSpace(rule.UserIDs[userIndex])
 			if rule.UserIDs[userIndex] == "" {
-				return AccountConfigInput{}, domain.ErrInvalidInput
+				return nil, domain.ErrInvalidInput
 			}
 			if _, exists := seenUsers[rule.UserIDs[userIndex]]; exists {
-				return AccountConfigInput{}, domain.ErrInvalidInput
+				return nil, domain.ErrInvalidInput
 			}
 			seenUsers[rule.UserIDs[userIndex]] = struct{}{}
 		}
@@ -84,21 +102,15 @@ func normalizeAccountConfig(config AccountConfigInput) (AccountConfigInput, erro
 			rule.ModelWhitelist[modelIndex] = strings.TrimSpace(rule.ModelWhitelist[modelIndex])
 			pattern := rule.ModelWhitelist[modelIndex]
 			if pattern == "" || utf8.RuneCountInString(pattern) > 100 || strings.Count(pattern, "*") > 1 || (strings.Contains(pattern, "*") && !strings.HasSuffix(pattern, "*")) {
-				return AccountConfigInput{}, domain.ErrInvalidInput
+				return nil, domain.ErrInvalidInput
 			}
 			if _, exists := seenModels[pattern]; exists {
-				return AccountConfigInput{}, domain.ErrInvalidInput
+				return nil, domain.ErrInvalidInput
 			}
 			seenModels[pattern] = struct{}{}
 		}
 	}
-	if config.ProxyURL != "" {
-		parsed, err := url.Parse(config.ProxyURL)
-		if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https" && parsed.Scheme != "socks5") {
-			return AccountConfigInput{}, domain.ErrInvalidInput
-		}
-	}
-	return config, nil
+	return policy, nil
 }
 
 func (s *Service) setAccountProxy(account *domain.Account, proxyURL string) error {

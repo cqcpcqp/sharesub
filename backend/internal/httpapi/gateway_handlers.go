@@ -109,7 +109,11 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 	clientWantsStream := billingMetadata.Stream && !compact
 	for switches := 0; ; {
 		attemptStartedAt := time.Now()
-		policyBody, policyMetadata, policyErr := openai.ApplyFastPolicy(forwardBody, billingMetadata, access.Credential.Account.FastPolicy, access.Credential.Member.UserID)
+		policyBody, policyMetadata := forwardBody, billingMetadata
+		var policyErr error
+		if !compact {
+			policyBody, policyMetadata, policyErr = openai.ApplyFastPolicy(forwardBody, billingMetadata, access.Credential.Account.FastPolicy, access.Credential.APIKeyFastPolicy, access.Credential.Member.UserID)
+		}
 		if policyErr != nil {
 			if blocked, ok := policyErr.(*openai.FastPolicyBlockedError); ok {
 				s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, billingMetadata.Model, billingMetadata, http.StatusForbidden, domain.GatewayErrorSourceRequest, "permission_error", blocked.Message, time.Since(attemptStartedAt)))

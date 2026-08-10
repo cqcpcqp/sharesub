@@ -77,7 +77,7 @@ func AccountCostForImageSize(model, serviceTier string, usage domain.TokenUsage,
 	imageOutputPrice := pricing.ImageOutputPrice
 	tierMultiplier := 1.0
 	switch strings.ToLower(strings.TrimSpace(serviceTier)) {
-	case "priority":
+	case "priority", "fast":
 		if hasPriorityPricing(pricing) {
 			if pricing.InputPricePriority > 0 {
 				inputPrice = pricing.InputPricePriority

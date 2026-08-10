@@ -24,7 +24,7 @@ ShareSub 复用 sub2api 已验证的 OpenAI Codex 协议行为，但产品边界
 | 安全账号切换 | 只在上游明确返回 `429` 或 `529` 时切换账号，最多切换 3 次 |
 | 账号代理 | 支持账号独立代理，且不会在代理失败后静默改为直连 |
 | Token 与成本指标 | 记录 Input、Output、Cached/Image Token、图片数、独立联网检索次数，并按实际模型、service tier、图片尺寸与 Web Search 次数计算账号成本 |
-| Fast/Flex 策略 | 账号所有者可按成员、模型和 `service_tier` 配置透传、过滤、强制 priority 或拦截规则 |
+| Fast/Flex 策略 | 账号规则优先，成员 API Key 规则补充；可按成员、模型和 `service_tier` 透传、过滤、强制 Fast 或拦截，强制 Fast 会为未指定 tier 的请求写入 `fast` |
 
 ## 有意不支持
 

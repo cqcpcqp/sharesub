@@ -2,7 +2,7 @@
   <ModalShell
     v-if="show"
     :title="secret ? '连接 Codex' : '创建访问密钥'"
-    :subtitle="secret ? '保存密钥并完成 Codex 配置' : '选择这个密钥可以使用的共享 Plan'"
+    :subtitle="secret ? '保存密钥并完成 Codex 配置' : '选择共享 Plan，并设置自己的 Fast/Flex 规则'"
     wide
     @close="close"
   >
@@ -25,6 +25,7 @@
           <label class="priority-input">优先级<NInputNumber :value="routeDrafts[plan.id].priority" size="small" :min="1" :max="10000" :disabled="!routeDrafts[plan.id].enabled" @update:value="updateRoutePriority(plan.id, $event)" /></label>
         </div>
       </div>
+      <FastPolicyFields v-model="fastPolicy" scope="key" />
     </template>
 
     <div v-else class="key-connection-guide">
@@ -66,8 +67,9 @@ import { api } from '../api'
 import { buildCCSwitchImportDeepLink, codexConfigFiles, gatewayBaseURL, openCCSwitchImport } from '../keyUsage'
 import { canSubmitKeyConfig, type KeyRouteDraft } from '../keyConfigValidation'
 import { isPlanRoutable } from '../planAvailability'
-import type { Plan, RouteStrategy } from '../types'
+import type { FastPolicyRule, Plan, RouteStrategy } from '../types'
 import AppInput from './AppInput.vue'
+import FastPolicyFields from './FastPolicyFields.vue'
 import ModalShell from './ModalShell.vue'
 
 const props = withDefaults(defineProps<{ show: boolean; plans: Plan[]; initialPlanId?: string }>(), { initialPlanId: '' })
@@ -77,6 +79,7 @@ const emit = defineEmits<{
   message: [type: 'success' | 'error', text: string]
 }>()
 const form = reactive<{ name: string; strategy: RouteStrategy }>({ name: '我的 Codex', strategy: 'balanced' })
+const fastPolicy = ref<FastPolicyRule[]>([])
 const routeDrafts = reactive<Record<string, KeyRouteDraft>>({})
 const saving = ref(false)
 const secret = ref('')
@@ -103,6 +106,7 @@ watch(
 function reset() {
   form.name = '我的 Codex'
   form.strategy = 'balanced'
+  fastPolicy.value = []
   for (const key of Object.keys(routeDrafts)) delete routeDrafts[key]
   const requestedPlan = usablePlans.value.find(plan => plan.id === props.initialPlanId)
   const defaultPlanID = requestedPlan?.id || (usablePlans.value.length === 1 ? usablePlans.value[0].id : '')
@@ -124,7 +128,7 @@ async function createKey() {
     enabled: true,
   }))
   try {
-    const result = await api.createKey({ name: form.name.trim(), strategy: form.strategy, routes })
+    const result = await api.createKey({ name: form.name.trim(), strategy: form.strategy, routes, fast_policy: fastPolicy.value })
     secret.value = result.key
     emit('created')
     emit('message', 'success', 'API Key 已创建')

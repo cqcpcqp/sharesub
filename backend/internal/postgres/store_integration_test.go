@@ -498,9 +498,16 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if _, err := store.AcceptInvite(ctx, lifecycleInvite.TokenHash, domain.User{ID: "second", Username: "second", Email: "second@example.com", Status: domain.StatusActive}, "second-invite-member", now, audit("accept-used-invite", "second", sharedPlan.ID)); !errors.Is(err, domain.ErrConflict) {
 		t.Fatalf("second invite acceptance error = %v, want conflict", err)
 	}
-	inviteeKey := domain.APIKey{ID: "invitee-key", UserID: invitee.ID, Name: "邀请成员 Key", KeyPrefix: "sk-sharesub-invitee", KeyHash: []byte("invitee-key-hash"), Strategy: domain.RoutePriority, Status: domain.StatusActive, CreatedAt: now}
+	inviteeKey := domain.APIKey{ID: "invitee-key", UserID: invitee.ID, Name: "邀请成员 Key", KeyPrefix: "sk-sharesub-invitee", KeyHash: []byte("invitee-key-hash"), Strategy: domain.RoutePriority, FastPolicy: []domain.FastPolicyRule{{ServiceTier: "priority", Action: "force_priority", UserIDs: []string{}, ModelWhitelist: []string{}, FallbackAction: "pass"}}, Status: domain.StatusActive, CreatedAt: now}
 	if err := store.CreateAPIKey(ctx, inviteeKey, []domain.APIKeyRoute{{PlanID: sharedPlan.ID, Priority: 1, Enabled: true}}); err != nil {
 		t.Fatal(err)
+	}
+	resolvedInviteeKey, err := store.ResolveGatewayRoutes(ctx, inviteeKey.KeyHash, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resolvedInviteeKey.Candidates) != 1 || len(resolvedInviteeKey.Candidates[0].APIKeyFastPolicy) != 1 || resolvedInviteeKey.Candidates[0].APIKeyFastPolicy[0].Action != "force_priority" {
+		t.Fatalf("resolved API key Fast policy = %+v", resolvedInviteeKey)
 	}
 	if err := store.RemovePlanMember(ctx, sharedPlan.ID, invitee.ID, joined.ID, audit("invitee-left", invitee.ID, sharedPlan.ID)); err != nil {
 		t.Fatal(err)

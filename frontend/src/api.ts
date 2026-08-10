@@ -12,6 +12,7 @@ import type {
   AuditEvent,
   AuthResult,
   CreatedAPIKey,
+  FastPolicyRule,
   CreatedInvite,
   Dashboard,
   InvitePreview,
@@ -80,6 +81,7 @@ export interface KeyConfigInput {
   name: string
   strategy: RouteStrategy
   routes: APIKeyRoute[]
+  fast_policy: FastPolicyRule[]
 }
 
 export interface RegistrationAgreementInput {

@@ -14,49 +14,56 @@ type FastPolicyBlockedError struct {
 
 func (e *FastPolicyBlockedError) Error() string { return e.Message }
 
-func ApplyFastPolicy(body []byte, metadata RequestBilling, rules []domain.FastPolicyRule, userID string) ([]byte, RequestBilling, error) {
+func ApplyFastPolicy(body []byte, metadata RequestBilling, accountRules, keyRules []domain.FastPolicyRule, userID string) ([]byte, RequestBilling, error) {
 	var payload map[string]any
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil, RequestBilling{}, fmt.Errorf("apply OpenAI Fast/Flex policy: %w", err)
 	}
 	value, exists := payload["service_tier"]
-	if !exists {
-		return body, metadata, nil
+	rawTier := ""
+	if exists {
+		serviceTier, ok := value.(string)
+		if !ok {
+			return nil, RequestBilling{}, fmt.Errorf("apply OpenAI Fast/Flex policy: service_tier must be a string")
+		}
+		rawTier = strings.ToLower(strings.TrimSpace(serviceTier))
 	}
-	serviceTier, ok := value.(string)
-	if !ok {
-		return nil, RequestBilling{}, fmt.Errorf("apply OpenAI Fast/Flex policy: service_tier must be a string")
-	}
-	rawTier := strings.TrimSpace(serviceTier)
-	if rawTier == "" {
-		return body, metadata, nil
-	}
-	tier := strings.ToLower(rawTier)
+	tier := rawTier
 	if tier == "fast" {
 		tier = "priority"
 	}
-	if tier != "priority" && tier != "flex" {
+	if tier != "" && tier != "priority" && tier != "flex" {
 		return body, metadata, nil
 	}
 
-	action, message := resolveFastPolicy(rules, userID, metadata.Model, tier)
-	if action == "block" {
-		if message == "" {
-			message = fmt.Sprintf("OpenAI service_tier=%s is not allowed for model %s", tier, metadata.Model)
+	changed := false
+	accountAction, accountMessage := resolveFastPolicy(accountRules, userID, metadata.Model, tier)
+	if accountAction != "pass" {
+		if err := fastPolicyBlockError(accountAction, accountMessage, tier, metadata.Model); err != nil {
+			return body, metadata, err
 		}
-		return body, metadata, &FastPolicyBlockedError{Message: message}
-	}
+		_, changed = applyFastPolicyAction(payload, &metadata, rawTier, accountAction, changed)
+	} else {
+		keyAction, keyMessage := resolveFastPolicy(keyRules, userID, metadata.Model, tier)
+		if err := fastPolicyBlockError(keyAction, keyMessage, tier, metadata.Model); err != nil {
+			return body, metadata, err
+		}
+		rawTier, changed = applyFastPolicyAction(payload, &metadata, rawTier, keyAction, changed)
 
-	switch action {
-	case "filter":
-		delete(payload, "service_tier")
-		metadata.ServiceTier = ""
-	case "force_priority":
-		payload["service_tier"] = "priority"
-		metadata.ServiceTier = "priority"
-	default:
-		payload["service_tier"] = tier
-		metadata.ServiceTier = tier
+		// Re-evaluate the account after a Key transformation so an account filter,
+		// block, or force rule remains the final authority over the resulting tier.
+		tier = rawTier
+		if tier == "fast" {
+			tier = "priority"
+		}
+		accountAction, accountMessage = resolveFastPolicy(accountRules, userID, metadata.Model, tier)
+		if err := fastPolicyBlockError(accountAction, accountMessage, tier, metadata.Model); err != nil {
+			return body, metadata, err
+		}
+		_, changed = applyFastPolicyAction(payload, &metadata, rawTier, accountAction, changed)
+	}
+	if !changed {
+		return body, metadata, nil
 	}
 	updated, err := json.Marshal(payload)
 	if err != nil {
@@ -65,22 +72,64 @@ func ApplyFastPolicy(body []byte, metadata RequestBilling, rules []domain.FastPo
 	return updated, metadata, nil
 }
 
+func fastPolicyBlockError(action, message, tier, model string) error {
+	if action != "block" {
+		return nil
+	}
+	if message == "" {
+		message = fmt.Sprintf("OpenAI service_tier=%s is not allowed for model %s", tier, model)
+	}
+	return &FastPolicyBlockedError{Message: message}
+}
+
+func applyFastPolicyAction(payload map[string]any, metadata *RequestBilling, rawTier, action string, changed bool) (string, bool) {
+	switch action {
+	case "filter":
+		if rawTier != "" {
+			delete(payload, "service_tier")
+			changed = true
+		}
+		metadata.ServiceTier = ""
+		return "", changed
+	case "force_priority":
+		payload["service_tier"] = "fast"
+		metadata.ServiceTier = "fast"
+		return "fast", changed || rawTier != "fast"
+	default:
+		return rawTier, changed
+	}
+}
+
 func resolveFastPolicy(rules []domain.FastPolicyRule, userID, model, tier string) (string, string) {
 	for _, userScoped := range []bool{true, false} {
 		for _, rule := range rules {
 			if (len(rule.UserIDs) > 0) != userScoped || !fastPolicyUserMatches(rule.UserIDs, userID) {
 				continue
 			}
+			if tier == "" {
+				if rule.ServiceTier != "all" && rule.ServiceTier != "priority" {
+					continue
+				}
+				action, message := fastPolicyModelAction(rule, model)
+				if action == "force_priority" {
+					return action, message
+				}
+				continue
+			}
 			if rule.ServiceTier != "all" && rule.ServiceTier != tier {
 				continue
 			}
-			if fastPolicyModelMatches(rule.ModelWhitelist, model) {
-				return rule.Action, rule.ErrorMessage
-			}
-			return rule.FallbackAction, rule.FallbackErrorMessage
+			return fastPolicyModelAction(rule, model)
 		}
 	}
 	return "pass", ""
+}
+
+func fastPolicyModelAction(rule domain.FastPolicyRule, model string) (string, string) {
+	if fastPolicyModelMatches(rule.ModelWhitelist, model) {
+		return rule.Action, rule.ErrorMessage
+	}
+	return rule.FallbackAction, rule.FallbackErrorMessage
 }
 
 func fastPolicyUserMatches(userIDs []string, userID string) bool {

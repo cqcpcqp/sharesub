@@ -464,26 +464,28 @@ func (s *Server) removeMember(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) createKey(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Name     string               `json:"name"`
-		Strategy string               `json:"strategy"`
-		Routes   []domain.APIKeyRoute `json:"routes"`
+		Name       string                  `json:"name"`
+		Strategy   string                  `json:"strategy"`
+		Routes     []domain.APIKeyRoute    `json:"routes"`
+		FastPolicy []domain.FastPolicyRule `json:"fast_policy"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	v, err := s.app.CreateAPIKey(r.Context(), currentUser(r).ID, input.Name, input.Strategy, input.Routes)
+	v, err := s.app.CreateAPIKey(r.Context(), currentUser(r).ID, input.Name, input.Strategy, input.Routes, input.FastPolicy)
 	writeResult(w, v, err)
 }
 func (s *Server) updateKey(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Name     string               `json:"name"`
-		Strategy string               `json:"strategy"`
-		Routes   []domain.APIKeyRoute `json:"routes"`
+		Name       string                  `json:"name"`
+		Strategy   string                  `json:"strategy"`
+		Routes     []domain.APIKeyRoute    `json:"routes"`
+		FastPolicy []domain.FastPolicyRule `json:"fast_policy"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	v, err := s.app.UpdateAPIKey(r.Context(), currentUser(r).ID, r.PathValue("keyID"), input.Name, input.Strategy, input.Routes)
+	v, err := s.app.UpdateAPIKey(r.Context(), currentUser(r).ID, r.PathValue("keyID"), input.Name, input.Strategy, input.Routes, input.FastPolicy)
 	writeResult(w, v, err)
 }
 func (s *Server) listKeys(w http.ResponseWriter, r *http.Request) {

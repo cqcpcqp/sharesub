@@ -14,6 +14,7 @@ function apiKey(overrides: Partial<APIKey> = {}): APIKey {
     key_available: false,
     key_prefix: 'sk-sharesub-old',
     strategy: 'balanced',
+    fast_policy: [],
     status: 'active',
     created_at: '2026-08-03T00:00:00Z',
     routes: [route],

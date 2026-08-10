@@ -15,8 +15,10 @@ func TestAccountCostMicrosUsesActualModelPricing(t *testing.T) {
 
 func TestAccountCostMicrosUsesPriorityPricing(t *testing.T) {
 	usage := domain.TokenUsage{InputTokens: 1_000_000, CachedTokens: 200_000, OutputTokens: 500_000}
-	if got, want := AccountCostMicros("gpt-5.3-codex", "priority", usage), int64(16_870_000); got != want {
-		t.Fatalf("priority account cost = %d, want %d", got, want)
+	for _, tier := range []string{"priority", "fast"} {
+		if got, want := AccountCostMicros("gpt-5.3-codex", tier, usage), int64(16_870_000); got != want {
+			t.Fatalf("%s account cost = %d, want %d", tier, got, want)
+		}
 	}
 }
 

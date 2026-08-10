@@ -15,10 +15,14 @@ import (
 	"github.com/sharesub/sharesub/backend/internal/security"
 )
 
-func (s *Service) CreateAPIKey(ctx context.Context, userID, name, strategy string, routes []domain.APIKeyRoute) (CreatedAPIKey, error) {
+func (s *Service) CreateAPIKey(ctx context.Context, userID, name, strategy string, routes []domain.APIKeyRoute, fastPolicy []domain.FastPolicyRule) (CreatedAPIKey, error) {
 	name = strings.TrimSpace(name)
 	if name == "" || len(name) > 100 || !validStrategy(strategy) || !validRoutes(routes) {
 		return CreatedAPIKey{}, domain.ErrInvalidInput
+	}
+	fastPolicy, err := normalizeFastPolicy(fastPolicy, false)
+	if err != nil {
+		return CreatedAPIKey{}, err
 	}
 	plain, err := security.NewOpaqueToken("sk-sharesub-")
 	if err != nil {
@@ -36,19 +40,23 @@ func (s *Service) CreateAPIKey(ctx context.Context, userID, name, strategy strin
 	if len(prefix) > 20 {
 		prefix = prefix[:20]
 	}
-	key := domain.APIKey{ID: id, UserID: userID, Name: name, Key: plain, KeyAvailable: true, KeyPrefix: prefix, KeyHash: s.security.HashToken(plain), KeyCiphertext: ciphertext, Strategy: strategy, Status: domain.StatusActive, CreatedAt: s.now(), Routes: routes}
+	key := domain.APIKey{ID: id, UserID: userID, Name: name, Key: plain, KeyAvailable: true, KeyPrefix: prefix, KeyHash: s.security.HashToken(plain), KeyCiphertext: ciphertext, Strategy: strategy, FastPolicy: fastPolicy, Status: domain.StatusActive, CreatedAt: s.now(), Routes: routes}
 	if err := s.store.CreateAPIKey(ctx, key, routes); err != nil {
 		return CreatedAPIKey{}, err
 	}
 	return CreatedAPIKey{APIKey: key, Key: plain}, nil
 }
 
-func (s *Service) UpdateAPIKey(ctx context.Context, userID, keyID, name, strategy string, routes []domain.APIKeyRoute) (domain.APIKey, error) {
+func (s *Service) UpdateAPIKey(ctx context.Context, userID, keyID, name, strategy string, routes []domain.APIKeyRoute, fastPolicy []domain.FastPolicyRule) (domain.APIKey, error) {
 	name = strings.TrimSpace(name)
 	if name == "" || len(name) > 100 || !validStrategy(strategy) || !validRoutes(routes) {
 		return domain.APIKey{}, domain.ErrInvalidInput
 	}
-	key, err := s.store.UpdateAPIKey(ctx, userID, domain.APIKey{ID: keyID, Name: name, Strategy: strategy}, routes)
+	fastPolicy, err := normalizeFastPolicy(fastPolicy, false)
+	if err != nil {
+		return domain.APIKey{}, err
+	}
+	key, err := s.store.UpdateAPIKey(ctx, userID, domain.APIKey{ID: keyID, Name: name, Strategy: strategy, FastPolicy: fastPolicy}, routes)
 	if err != nil {
 		return domain.APIKey{}, err
 	}

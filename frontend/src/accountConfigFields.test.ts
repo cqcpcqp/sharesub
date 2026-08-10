@@ -18,9 +18,23 @@ describe('AccountConfigFields', () => {
 
   it('explains the default, Fast, and Flex processing modes', () => {
     const wrapper = mount(AccountConfigFields, { props: { modelValue } })
-    expect(wrapper.text()).toContain('不会自动开启任何模式')
-    expect(wrapper.text()).toContain('更高倍率消耗 Codex 额度')
+    expect(wrapper.text()).toContain('命中“强制 Fast”时主动添加 service_tier')
+    expect(wrapper.text()).toContain('使用最新官方值 fast')
     expect(wrapper.text()).toContain('响应更慢且可能暂时无可用资源')
-    expect(wrapper.text()).toContain('OpenAI 默认处理')
+    expect(wrapper.text()).toContain('继续执行成员 Key 的规则')
+  })
+
+  it('defaults new account rules to filtering Fast requests', async () => {
+    const wrapper = mount(AccountConfigFields, { props: { modelValue } })
+
+    await wrapper.get('button.fast-policy-add').trigger('click')
+
+    expect(wrapper.emitted('update:modelValue')?.at(-1)?.[0]).toEqual({
+      ...modelValue,
+      fast_policy: [{
+        service_tier: 'priority', action: 'filter', user_ids: [], error_message: '',
+        model_whitelist: [], fallback_action: 'pass', fallback_error_message: '',
+      }],
+    })
   })
 })

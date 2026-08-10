@@ -188,19 +188,20 @@ type InvitePreview struct {
 }
 
 type APIKey struct {
-	ID            string        `json:"id"`
-	UserID        string        `json:"user_id"`
-	Name          string        `json:"name"`
-	Key           string        `json:"key"`
-	KeyAvailable  bool          `json:"key_available"`
-	KeyPrefix     string        `json:"key_prefix"`
-	KeyHash       []byte        `json:"-"`
-	KeyCiphertext []byte        `json:"-"`
-	Strategy      string        `json:"strategy"`
-	Status        string        `json:"status"`
-	LastUsedAt    *time.Time    `json:"last_used_at,omitempty"`
-	CreatedAt     time.Time     `json:"created_at"`
-	Routes        []APIKeyRoute `json:"routes"`
+	ID            string           `json:"id"`
+	UserID        string           `json:"user_id"`
+	Name          string           `json:"name"`
+	Key           string           `json:"key"`
+	KeyAvailable  bool             `json:"key_available"`
+	KeyPrefix     string           `json:"key_prefix"`
+	KeyHash       []byte           `json:"-"`
+	KeyCiphertext []byte           `json:"-"`
+	Strategy      string           `json:"strategy"`
+	FastPolicy    []FastPolicyRule `json:"fast_policy"`
+	Status        string           `json:"status"`
+	LastUsedAt    *time.Time       `json:"last_used_at,omitempty"`
+	CreatedAt     time.Time        `json:"created_at"`
+	Routes        []APIKeyRoute    `json:"routes"`
 }
 
 type APIKeyRoute struct {
@@ -415,6 +416,7 @@ type PlanDetail struct {
 type GatewayCredential struct {
 	APIKeyID               string
 	APIKeyStrategy         string
+	APIKeyFastPolicy       []FastPolicyRule
 	RoutePriority          int
 	UsageMicros            int64
 	AccountUsageMicros     int64

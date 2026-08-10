@@ -190,7 +190,7 @@ func TestAPIKeySecretIsEncryptedAndHydratedForOwner(t *testing.T) {
 	store := &apiKeyStore{}
 	service := &Service{store: store, security: manager, now: func() time.Time { return time.Unix(0, 0) }}
 
-	created, err := service.CreateAPIKey(context.Background(), "owner", "Codex", domain.RouteBalanced, []domain.APIKeyRoute{{PlanID: "plan", Priority: 1, Enabled: true}})
+	created, err := service.CreateAPIKey(context.Background(), "owner", "Codex", domain.RouteBalanced, []domain.APIKeyRoute{{PlanID: "plan", Priority: 1, Enabled: true}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,6 +277,20 @@ func TestNormalizeAccountConfigRejectsUnsupportedValues(t *testing.T) {
 		if _, err := normalizeAccountConfig(config); err != domain.ErrInvalidInput {
 			t.Fatalf("config %+v error = %v, want invalid input", config, err)
 		}
+	}
+}
+
+func TestNormalizeFastPolicyForAPIKeyRejectsMemberScope(t *testing.T) {
+	policy := []domain.FastPolicyRule{{ServiceTier: "priority", Action: "force_priority", UserIDs: []string{"other-user"}, FallbackAction: "pass"}}
+	if _, err := normalizeFastPolicy(policy, false); err != domain.ErrInvalidInput {
+		t.Fatalf("key policy member scope error = %v, want invalid input", err)
+	}
+	normalized, err := normalizeFastPolicy([]domain.FastPolicyRule{{ServiceTier: " PRIORITY ", Action: " FORCE_PRIORITY ", FallbackAction: " PASS "}}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if normalized[0].ServiceTier != "priority" || normalized[0].Action != "force_priority" || normalized[0].UserIDs == nil || normalized[0].ModelWhitelist == nil {
+		t.Fatalf("normalized key policy = %+v", normalized)
 	}
 }
 

@@ -365,6 +365,7 @@ export interface APIKey {
   key_available: boolean
   key_prefix: string
   strategy: RouteStrategy
+  fast_policy: FastPolicyRule[]
   status: string
   last_used_at?: string
   created_at: string
