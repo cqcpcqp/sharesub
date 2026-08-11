@@ -191,6 +191,9 @@
 .account-config-list dt { display: flex; align-items: center; gap: 7px; color: var(--muted-light); font-size: 11px; font-weight: 760; text-transform: uppercase; }
 .account-config-list dd { min-width: 0; overflow-wrap: anywhere; margin: 0; color: var(--ink); font-size: 11px; line-height: 1.55; }
 .account-config-list code { white-space: normal; }
+.account-limit-help { width: 20px; height: 20px; display: inline-grid; place-items: center; flex: 0 0 auto; margin: -2px 0 -2px -3px; padding: 0; border: 0; border-radius: 999px; background: transparent; color: var(--muted-light); cursor: help; }
+.account-limit-help:hover, .account-limit-help:focus-visible { background: var(--surface-hover); color: var(--ink); outline: none; }
+.account-limit-help-copy { display: block; max-width: 320px; line-height: 1.55; }
 .fast-policy-summary { display: grid; gap: 12px; margin-top: 20px; padding: 18px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); box-shadow: var(--shadow-xs); }
 .fast-policy-summary > header { display: flex; min-height: 40px; align-items: center; justify-content: space-between; gap: 14px; }
 .fast-policy-summary-title { display: flex; min-width: 0; align-items: center; gap: 11px; }

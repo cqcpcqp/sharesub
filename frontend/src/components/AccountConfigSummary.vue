@@ -9,8 +9,36 @@
       <div><dt><Sparkles :size="15" />套餐类型</dt><dd>{{ account.plan_type }}</dd></div>
       <div><dt><CalendarRange :size="15" />订阅有效期至</dt><dd>{{ account.subscription_expires_at ? formatDate(account.subscription_expires_at) : '暂无订阅有效期' }}</dd></div>
       <div><dt><Network :size="15" />账号代理</dt><dd><code>{{ account.proxy_url || '继承系统代理' }}</code></dd></div>
-      <div><dt><Gauge :size="15" />最大并发</dt><dd>{{ limitLabel(account.max_concurrency, '请求') }}</dd></div>
-      <div><dt><TimerReset :size="15" />RPM 上限</dt><dd>{{ limitLabel(account.rpm_limit, '次/分钟') }}</dd></div>
+      <div>
+        <dt>
+          <Gauge :size="15" />
+          <span>最大并发</span>
+          <NTooltip placement="top" trigger="hover">
+            <template #trigger>
+              <button type="button" class="account-limit-help" aria-label="查看最大并发说明">
+                <CircleHelp :size="13" />
+              </button>
+            </template>
+            <span class="account-limit-help-copy">同一时刻允许通过此账号执行的请求数。流式请求在结束前会一直占用一个名额；0 表示不限制。</span>
+          </NTooltip>
+        </dt>
+        <dd>{{ limitLabel(account.max_concurrency, '请求') }}</dd>
+      </div>
+      <div>
+        <dt>
+          <TimerReset :size="15" />
+          <span>RPM 上限</span>
+          <NTooltip placement="top" trigger="hover">
+            <template #trigger>
+              <button type="button" class="account-limit-help" aria-label="查看 RPM 上限说明">
+                <CircleHelp :size="13" />
+              </button>
+            </template>
+            <span class="account-limit-help-copy">此账号每个自然分钟最多可发起的请求数。达到上限后会尝试其他可用路由；0 表示不限制。</span>
+          </NTooltip>
+        </dt>
+        <dd>{{ limitLabel(account.rpm_limit, '次/分钟') }}</dd>
+      </div>
     </dl>
     <section class="fast-policy-summary">
       <header>
@@ -58,8 +86,8 @@
 </template>
 
 <script setup lang="ts">
-import { NAlert, NTag } from 'naive-ui'
-import { ArrowRight, Boxes, CalendarRange, Gauge, ListOrdered, Mail, Network, Sparkles, TimerReset, Users, Zap } from 'lucide-vue-next'
+import { NAlert, NTag, NTooltip } from 'naive-ui'
+import { ArrowRight, Boxes, CalendarRange, CircleHelp, Gauge, ListOrdered, Mail, Network, Sparkles, TimerReset, Users, Zap } from 'lucide-vue-next'
 import type { Account, FastPolicyAction, FastPolicyTier, Member } from '../types'
 import StatusBadge from './StatusBadge.vue'
 

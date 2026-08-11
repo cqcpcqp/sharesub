@@ -7,6 +7,7 @@ import type { Account, Member } from '../types'
 import AccountConfigSummary from './AccountConfigSummary.vue'
 
 const featureStyles = readFileSync('src/featureStyles.css', 'utf8')
+const summarySource = readFileSync('src/components/AccountConfigSummary.vue', 'utf8')
 
 const account: Account = {
   id: 'account', owner_user_id: 'owner', name: '团队账号', notes: '', email: 'openai@example.com',
@@ -24,6 +25,22 @@ const member: Member = {
 }
 
 describe('AccountConfigSummary', () => {
+  it('explains account concurrency and RPM limits on demand', () => {
+    const wrapper = mount(AccountConfigSummary, {
+      props: { account },
+      global: {
+        stubs: {
+          NTooltip: { template: '<div class="tooltip-stub"><slot name="trigger" /><slot /></div>' },
+        },
+      },
+    })
+
+    expect(wrapper.get('[aria-label="查看最大并发说明"]').attributes('type')).toBe('button')
+    expect(wrapper.get('[aria-label="查看 RPM 上限说明"]').attributes('type')).toBe('button')
+    expect(summarySource).toContain('同一时刻允许通过此账号执行的请求数')
+    expect(summarySource).toContain('此账号每个自然分钟最多可发起的请求数')
+  })
+
   it('shows Fast/Flex policy details with resolved member identity', () => {
     const wrapper = mount(AccountConfigSummary, { props: { account, members: [member] } })
     expect(wrapper.text()).toContain('OpenAI Fast/Flex 策略')
