@@ -51,12 +51,12 @@ func WriteStreamFailoverError(dst http.ResponseWriter, src *http.Response, failu
 			dst.Header().Set("Content-Type", "text/event-stream")
 		}
 		dst.WriteHeader(src.StatusCode)
-		_, err := dst.Write(failure.StreamBody)
+		_, err := dst.Write(sanitizeCapacityShedSSEForClient(failure.StreamBody))
 		return err
 	}
 	dst.Header().Set("Content-Type", "application/json")
 	dst.WriteHeader(failure.StatusCode)
-	_, err := dst.Write(failure.Response)
+	_, err := dst.Write(sanitizeCapacityShedResponseForClient(failure.Response))
 	return err
 }
 
@@ -129,7 +129,7 @@ func DrainResponse(src *http.Response, startedAt time.Time) (ProxyMetrics, []byt
 func WriteDrainedResponse(dst http.ResponseWriter, src *http.Response, body []byte) error {
 	copyResponseHeaders(dst.Header(), src.Header)
 	dst.WriteHeader(src.StatusCode)
-	_, err := dst.Write(body)
+	_, err := dst.Write(sanitizeCapacityShedResponseForClient(body))
 	return err
 }
 
@@ -176,7 +176,7 @@ func copySSEWithPendingLimit(dst http.ResponseWriter, src *http.Response, starte
 			dst.Header().Set("Content-Type", "text/event-stream")
 		}
 		dst.WriteHeader(src.StatusCode)
-		writeClient(pending)
+		writeClient(sanitizeCapacityShedSSEForClient(pending))
 		pending = pending[:0]
 	}
 	for {
@@ -214,7 +214,7 @@ func copySSEWithPendingLimit(dst http.ResponseWriter, src *http.Response, starte
 					startClientOutput()
 				}
 			} else {
-				writeClient(line)
+				writeClient(sanitizeCapacityShedSSELineForClient(line))
 			}
 		}
 		if err != nil {
@@ -338,7 +338,7 @@ func copyBufferedResponse(dst http.ResponseWriter, src *http.Response, startedAt
 		dst.Header().Set("Content-Type", "application/json")
 	}
 	dst.WriteHeader(src.StatusCode)
-	_, writeErr := dst.Write(body)
+	_, writeErr := dst.Write(sanitizeCapacityShedResponseForClient(body))
 	return proxyMetrics(startedAt, firstByteAt, time.Time{}, terminal, false), writeErr
 }
 
@@ -541,6 +541,118 @@ func retryableTerminalFailure(response terminalResponse) (int, bool) {
 	return status, status != http.StatusBadRequest
 }
 
+const capacityShedRetryableClientCode = "server_error"
+
+func isCapacityShedErrorCode(code string) bool {
+	switch strings.ToLower(strings.TrimSpace(code)) {
+	case "server_is_overloaded", "slow_down":
+		return true
+	default:
+		return false
+	}
+}
+
+func sanitizeCapacityShedSSEForClient(body []byte) []byte {
+	lines := bytes.SplitAfter(body, []byte("\n"))
+	for index, line := range lines {
+		lines[index] = sanitizeCapacityShedSSELineForClient(line)
+	}
+	return bytes.Join(lines, nil)
+}
+
+// Capacity-shed codes are fatal to Codex. Rewrite only the client copy so
+// metrics and account routing continue to use the original upstream error.
+func sanitizeCapacityShedSSELineForClient(line []byte) []byte {
+	payload, ok := ssePayload(line)
+	if !ok {
+		return line
+	}
+	var event map[string]json.RawMessage
+	if json.Unmarshal(payload, &event) != nil {
+		return line
+	}
+	var eventType string
+	if json.Unmarshal(event["type"], &eventType) != nil {
+		return line
+	}
+	changed := false
+	switch eventType {
+	case "error":
+		event["error"], changed = sanitizeCapacityShedErrorForClient(event["error"])
+	case "response.failed":
+		var response map[string]json.RawMessage
+		if json.Unmarshal(event["response"], &response) != nil {
+			return line
+		}
+		response["error"], changed = sanitizeCapacityShedErrorForClient(response["error"])
+		if changed {
+			updatedResponse, err := json.Marshal(response)
+			if err != nil {
+				return line
+			}
+			event["response"] = updatedResponse
+		}
+	}
+	if !changed {
+		return line
+	}
+	updatedPayload, err := json.Marshal(event)
+	if err != nil {
+		return line
+	}
+	return replaceSSEPayload(line, payload, updatedPayload)
+}
+
+func sanitizeCapacityShedResponseForClient(payload []byte) []byte {
+	var response map[string]json.RawMessage
+	if json.Unmarshal(payload, &response) != nil {
+		return payload
+	}
+	updatedError, changed := sanitizeCapacityShedErrorForClient(response["error"])
+	if !changed {
+		return payload
+	}
+	response["error"] = updatedError
+	updated, err := json.Marshal(response)
+	if err != nil {
+		return payload
+	}
+	return updated
+}
+
+func sanitizeCapacityShedErrorForClient(payload json.RawMessage) (json.RawMessage, bool) {
+	var upstreamError map[string]json.RawMessage
+	if json.Unmarshal(payload, &upstreamError) != nil {
+		return payload, false
+	}
+	var code string
+	if json.Unmarshal(upstreamError["code"], &code) != nil || !isCapacityShedErrorCode(code) {
+		return payload, false
+	}
+	updatedCode, err := json.Marshal(capacityShedRetryableClientCode)
+	if err != nil {
+		return payload, false
+	}
+	upstreamError["code"] = updatedCode
+	updated, err := json.Marshal(upstreamError)
+	if err != nil {
+		return payload, false
+	}
+	return updated, true
+}
+
+func replaceSSEPayload(line, payload, replacement []byte) []byte {
+	start := bytes.Index(line, payload)
+	if start < 0 {
+		return line
+	}
+	updated := make([]byte, 0, len(line)-len(payload)+len(replacement))
+	updated = append(updated, line[:start]...)
+	updated = append(updated, replacement...)
+	updated = append(updated, line[start+len(payload):]...)
+	return updated
+}
+
 func transientProcessingFailure(message string) bool {
 	return strings.Contains(message, "an error occurred while processing your request") ||
 		strings.Contains(message, "selected model is at capacity") ||
@@ -564,6 +676,18 @@ func isClientOutputEvent(line []byte) bool {
 	switch eventType {
 	case "response.created", "response.in_progress", "response.failed":
 		return false
+	case "error":
+		// Retryable upstream errors precede response.failed and must remain in
+		// the pending buffer so account failover is still safe.
+		payload, _ := ssePayload(line)
+		var event struct {
+			Error *responseError `json:"error"`
+		}
+		if json.Unmarshal(payload, &event) != nil || event.Error == nil {
+			return false
+		}
+		_, retryable := retryableTerminalFailure(terminalResponse{Error: event.Error})
+		return !retryable
 	default:
 		return !strings.HasPrefix(eventType, "rate_limits.")
 	}

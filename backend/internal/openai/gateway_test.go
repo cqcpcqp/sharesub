@@ -2,6 +2,7 @@ package openai
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -533,6 +534,9 @@ func TestIsClientOutputEventUsesSemanticOutputBoundary(t *testing.T) {
 		{name: "in progress preamble", line: `data: {"type":"response.in_progress"}`, want: false},
 		{name: "rate limit metadata", line: `data: {"type":"rate_limits.updated"}`, want: false},
 		{name: "failed terminal", line: `data: {"type":"response.failed"}`, want: false},
+		{name: "capacity error", line: `data: {"type":"error","error":{"code":"server_is_overloaded","message":"overloaded"}}`, want: false},
+		{name: "rate limit error", line: `data: {"type":"error","error":{"code":"rate_limit_exceeded","message":"limited"}}`, want: false},
+		{name: "policy error", line: `data: {"type":"error","error":{"code":"content_policy_violation","message":"not allowed by safety policy"}}`, want: true},
 		{name: "malformed", line: `data: {`, want: false},
 		{name: "comment", line: `: keep-alive`, want: false},
 	}
@@ -598,6 +602,142 @@ func TestCopyResponseReturnsSafeFailoverBeforeVisibleOutput(t *testing.T) {
 	}
 	if !strings.Contains(string(failure.StreamBody), "response.failed") {
 		t.Fatalf("failover body = %q", failure.StreamBody)
+	}
+}
+
+func TestCopyResponseCapacityErrorFrameBeforeFailedStillFailsOver(t *testing.T) {
+	body := "event: response.created\n" +
+		"data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\"}}\n\n" +
+		"event: response.in_progress\n" +
+		"data: {\"type\":\"response.in_progress\",\"response\":{\"id\":\"resp_1\"}}\n\n" +
+		"event: error\n" +
+		"data: {\"type\":\"error\",\"error\":{\"type\":\"service_unavailable_error\",\"code\":\"server_is_overloaded\",\"message\":\"Our servers are currently overloaded. Please try again later.\"}}\n\n" +
+		"event: response.failed\n" +
+		"data: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_1\",\"status\":\"failed\",\"error\":{\"code\":\"server_is_overloaded\",\"message\":\"Our servers are currently overloaded. Please try again later.\"}}}\n\n"
+	source := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}
+	recorder := httptest.NewRecorder()
+	metrics, err := CopyResponse(recorder, source, time.Now())
+	var failure *StreamFailoverError
+	if !errors.As(err, &failure) || failure.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("error = %#v", err)
+	}
+	if recorder.Body.Len() != 0 {
+		t.Fatalf("body was committed before failover: %q", recorder.Body.String())
+	}
+	if metrics.ErrorCode != "server_is_overloaded" || !strings.Contains(string(failure.StreamBody), "server_is_overloaded") {
+		t.Fatalf("metrics = %+v, failover body = %q", metrics, failure.StreamBody)
+	}
+
+	final := httptest.NewRecorder()
+	if err := WriteStreamFailoverError(final, source, failure, true); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(final.Body.String(), "server_is_overloaded") || strings.Count(final.Body.String(), `"code":"server_error"`) != 2 {
+		t.Fatalf("client body = %q", final.Body.String())
+	}
+}
+
+func TestCopyResponseRewritesCapacityErrorsAfterVisibleOutput(t *testing.T) {
+	body := "data: {\"type\":\"response.output_text.delta\",\"delta\":\"visible\"}\n\n" +
+		"data: {\"type\":\"error\",\"error\":{\"type\":\"service_unavailable_error\",\"code\":\"server_is_overloaded\",\"message\":\"overloaded\"}}\n\n" +
+		"data: {\"type\":\"response.failed\",\"response\":{\"status\":\"failed\",\"error\":{\"code\":\"server_is_overloaded\",\"message\":\"overloaded\"}}}\n\n"
+	source := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}
+	recorder := httptest.NewRecorder()
+	metrics, err := CopyResponse(recorder, source, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(recorder.Body.String(), "server_is_overloaded") || strings.Count(recorder.Body.String(), `"code":"server_error"`) != 2 {
+		t.Fatalf("client body = %q", recorder.Body.String())
+	}
+	if metrics.ErrorCode != "server_is_overloaded" || metrics.ErrorStatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("metrics = %+v", metrics)
+	}
+}
+
+func TestCapacityErrorRewriteHandlesOnlyCapacityCodes(t *testing.T) {
+	tests := []struct {
+		code string
+		want string
+	}{
+		{code: "server_is_overloaded", want: "server_error"},
+		{code: "slow_down", want: "server_error"},
+		{code: "rate_limit_exceeded", want: "rate_limit_exceeded"},
+	}
+	for _, test := range tests {
+		t.Run(test.code, func(t *testing.T) {
+			body := []byte("data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"code\":\"" + test.code + "\",\"message\":\"message\"}}}\n")
+			got := sanitizeCapacityShedSSEForClient(body)
+			if !bytes.Contains(got, []byte(`"code":"`+test.want+`"`)) {
+				t.Fatalf("body = %q", got)
+			}
+			if test.code == "rate_limit_exceeded" && !bytes.Equal(got, body) {
+				t.Fatalf("non-capacity body changed: %q", got)
+			}
+		})
+	}
+}
+
+func TestWriteStreamFailoverErrorRewritesNonStreamingCapacityCode(t *testing.T) {
+	failure := &StreamFailoverError{
+		StatusCode: http.StatusServiceUnavailable,
+		Response:   json.RawMessage(`{"id":"resp_1","error":{"code":"server_is_overloaded","message":"overloaded"}}`),
+	}
+	source := &http.Response{StatusCode: http.StatusOK, Header: make(http.Header)}
+	recorder := httptest.NewRecorder()
+	if err := WriteStreamFailoverError(recorder, source, failure, false); err != nil {
+		t.Fatal(err)
+	}
+	if recorder.Code != http.StatusServiceUnavailable || strings.Contains(recorder.Body.String(), "server_is_overloaded") || !strings.Contains(recorder.Body.String(), `"code":"server_error"`) {
+		t.Fatalf("status = %d, body = %q", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestCopyBufferedResponseRewritesCapacityCodeForClient(t *testing.T) {
+	body := `{"error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"overloaded"}}`
+	source := &http.Response{StatusCode: http.StatusServiceUnavailable, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(body))}
+	recorder := httptest.NewRecorder()
+	metrics, err := CopyResponse(recorder, source, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(recorder.Body.String(), "server_is_overloaded") || !strings.Contains(recorder.Body.String(), `"code":"server_error"`) {
+		t.Fatalf("client body = %q", recorder.Body.String())
+	}
+	if metrics.ErrorCode != "server_is_overloaded" || metrics.ErrorStatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("metrics = %+v", metrics)
+	}
+}
+
+func TestWriteDrainedResponseRewritesCapacityCodeForClient(t *testing.T) {
+	body := []byte(`{"error":{"code":"slow_down","message":"overloaded"}}`)
+	source := &http.Response{StatusCode: http.StatusServiceUnavailable, Header: http.Header{"Content-Type": []string{"application/json"}}}
+	recorder := httptest.NewRecorder()
+	if err := WriteDrainedResponse(recorder, source, body); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(recorder.Body.String(), "slow_down") || !strings.Contains(recorder.Body.String(), `"code":"server_error"`) {
+		t.Fatalf("client body = %q", recorder.Body.String())
+	}
+	if !bytes.Contains(body, []byte(`"code":"slow_down"`)) {
+		t.Fatalf("original body changed: %q", body)
+	}
+}
+
+func TestCopyResponseSanitizesPendingCapacityErrorAtBufferLimit(t *testing.T) {
+	capacityError := "data: {\"type\":\"error\",\"error\":{\"code\":\"server_is_overloaded\",\"message\":\"overloaded\"}}\n\n"
+	failure := "data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"code\":\"server_is_overloaded\",\"message\":\"overloaded\"}}}\n\n"
+	source := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(capacityError + failure))}
+	recorder := httptest.NewRecorder()
+	metrics, err := copySSEWithPendingLimit(recorder, source, time.Now(), len(capacityError)+1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(recorder.Body.String(), "server_is_overloaded") || strings.Count(recorder.Body.String(), `"code":"server_error"`) != 2 {
+		t.Fatalf("client body = %q", recorder.Body.String())
+	}
+	if metrics.ErrorCode != "server_is_overloaded" {
+		t.Fatalf("metrics = %+v", metrics)
 	}
 }
 
