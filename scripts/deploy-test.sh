@@ -7,7 +7,15 @@ assert_rejected() {
   local expected="$1"
   shift
   local output exit_code=0
-  output="$(env "$@" "$ROOT/scripts/deploy.sh" deploy 2>&1)" || exit_code=$?
+  output="$(env \
+    -u GITHUB_ACTIONS \
+    -u GITHUB_WORKFLOW_REF \
+    -u GITHUB_SHA \
+    -u SHARESUB_DEPLOY_HOST \
+    -u SHARESUB_DEPLOY_DIR \
+    -u SHARESUB_DEPLOY_VIA_GITHUB_ACTIONS \
+    -u SHARESUB_DEPLOY_ALLOW_MIGRATIONS \
+    "$@" "$ROOT/scripts/deploy.sh" deploy 2>&1)" || exit_code=$?
   [[ "$exit_code" -ne 0 ]] || {
     printf '部署脚本错误接受了未授权调用\n' >&2
     exit 1
