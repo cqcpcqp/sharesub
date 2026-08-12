@@ -45,6 +45,10 @@ type ImagesRequest struct {
 
 func (r ImagesRequest) IsEdit() bool { return r.Endpoint == imagesEditsEndpoint }
 
+func (r ImagesRequest) sessionSeed() string {
+	return strings.Join([]string{"openai-images", r.Endpoint, r.Model, r.Size, r.Prompt}, "|")
+}
+
 // PrepareImagesRequest validates an Images request and converts it to the
 // hosted image_generation tool request accepted by the ChatGPT Responses API.
 func PrepareImagesRequest(body []byte, contentType, path string) ([]byte, ImagesRequest, RequestBilling, error) {
@@ -78,7 +82,7 @@ func PrepareImagesRequest(body []byte, contentType, path string) ([]byte, Images
 	if err != nil {
 		return nil, ImagesRequest{}, RequestBilling{}, err
 	}
-	return forward, request, RequestBilling{Model: request.Model, Stream: request.Stream}, nil
+	return forward, request, RequestBilling{Model: request.Model, PromptCacheKey: request.sessionSeed(), Stream: request.Stream}, nil
 }
 
 func normalizeImagesEndpoint(path string) string {
@@ -292,24 +296,38 @@ type imagesResult struct {
 }
 
 type imagesTerminalEvent struct {
-	Type string `json:"type"`
-	Item struct {
-		ID   string `json:"id"`
-		Type string `json:"type"`
+	Type  string         `json:"type"`
+	Error *responseError `json:"error"`
+	Item  struct {
+		ID      string `json:"id"`
+		Type    string `json:"type"`
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
 		imagesResult
 	} `json:"item"`
 	Response struct {
-		CreatedAt int64  `json:"created_at"`
-		Model     string `json:"model"`
+		ID                string `json:"id"`
+		CreatedAt         int64  `json:"created_at"`
+		Model             string `json:"model"`
+		IncompleteDetails struct {
+			Reason string `json:"reason"`
+		} `json:"incomplete_details"`
 		ToolUsage struct {
 			ImageGen responseUsage `json:"image_gen"`
 		} `json:"tool_usage"`
 		Output []struct {
-			Type string `json:"type"`
+			Type    string `json:"type"`
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
 			imagesResult
 		} `json:"output"`
 		Error *responseError `json:"error"`
 	} `json:"response"`
+	Delta             string `json:"delta"`
 	PartialImageB64   string `json:"partial_image_b64"`
 	PartialImageIndex int64  `json:"partial_image_index"`
 }
@@ -328,6 +346,7 @@ func CopyImagesResponse(dst http.ResponseWriter, src *http.Response, startedAt t
 	firstTokenAt := time.Time{}
 	streamStarted := false
 	createdAt := int64(0)
+	var refusal strings.Builder
 	flusher, _ := dst.(http.Flusher)
 	for {
 		line, err := readLimitedLine(reader)
@@ -344,6 +363,8 @@ func CopyImagesResponse(dst http.ResponseWriter, src *http.Response, startedAt t
 				switch event.Type {
 				case "response.created", "response.in_progress":
 					createdAt = event.Response.CreatedAt
+				case "response.output_text.delta":
+					appendImagesRefusalText(&refusal, event.Delta)
 				case "response.image_generation_call.partial_image":
 					if request.Stream {
 						if firstTokenAt.IsZero() {
@@ -367,37 +388,42 @@ func CopyImagesResponse(dst http.ResponseWriter, src *http.Response, startedAt t
 				case "response.output_item.done":
 					if event.Item.Type == "image_generation_call" && event.Item.Result != "" {
 						outputItemResults = append(outputItemResults, event.Item.imagesResult)
+					} else if event.Item.Type == "message" {
+						appendImagesContentText(&refusal, event.Item.Content)
 					}
 				case "response.completed":
 					completed = &event
 					createdAt = event.Response.CreatedAt
 					terminal = terminalFromImagesEvent(event)
+					for _, item := range event.Response.Output {
+						if item.Type == "message" {
+							appendImagesContentText(&refusal, item.Content)
+						}
+					}
+				case "error":
+					if event.Error != nil {
+						terminal.Error = event.Error
+						return finishImagesFailure(dst, src, request, startedAt, firstByteAt, firstTokenAt, terminal, streamStarted, event.Response)
+					}
 				case "response.failed":
 					terminal = terminalFromImagesEvent(event)
-					status, retryable := retryableTerminalFailure(terminal)
-					if status == 0 {
-						status = http.StatusBadGateway
+					if terminal.Error == nil {
+						terminal.Error = &responseError{Type: "server_error", Code: "response_failed", Message: "Upstream image generation failed"}
 					}
-					if !streamStarted && retryable {
-						response, _ := json.Marshal(event.Response)
-						return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), &StreamFailoverError{StatusCode: status, Response: response}
-					}
-					if request.Stream {
-						if !streamStarted {
-							copyResponseHeaders(dst.Header(), src.Header)
-							dst.Header().Set("Content-Type", "text/event-stream")
-							dst.WriteHeader(src.StatusCode)
-						}
-						_ = writeImagesStreamError(dst, terminal.Error)
-					} else {
-						writeImagesError(dst, status, terminal.Error)
-					}
-					return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), nil
+					return finishImagesFailure(dst, src, request, startedAt, firstByteAt, firstTokenAt, terminal, streamStarted, event.Response)
+				case "response.incomplete":
+					terminal = terminalFromImagesEvent(event)
+					terminal.Error = imagesIncompleteError(event.Response.IncompleteDetails.Reason)
+					return finishImagesFailure(dst, src, request, startedAt, firstByteAt, firstTokenAt, terminal, streamStarted, event.Response)
 				}
 			}
 		}
 		if err != nil {
 			if err != io.EOF {
+				if !streamStarted {
+					terminal.Error = &responseError{Type: "server_error", Code: "upstream_stream_read_error", Message: "Upstream image response stream could not be read"}
+					return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), &StreamFailoverError{StatusCode: http.StatusBadGateway}
+				}
 				return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), err
 			}
 			break
@@ -405,6 +431,7 @@ func CopyImagesResponse(dst http.ResponseWriter, src *http.Response, startedAt t
 	}
 	if completed == nil {
 		if !streamStarted {
+			terminal.Error = &responseError{Type: "server_error", Code: "upstream_stream_incomplete", Message: ErrIncompleteStream.Error()}
 			return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), &StreamFailoverError{StatusCode: http.StatusBadGateway}
 		}
 		_ = writeImagesStreamError(dst, &responseError{Code: "upstream_error", Message: ErrIncompleteStream.Error()})
@@ -420,7 +447,12 @@ func CopyImagesResponse(dst http.ResponseWriter, src *http.Response, startedAt t
 		results = outputItemResults
 	}
 	if len(results) == 0 {
+		if message := strings.TrimSpace(refusal.String()); message != "" {
+			terminal.Error = &responseError{Type: "image_generation_user_error", Code: "content_policy_violation", Message: message}
+			return finishImagesFailure(dst, src, request, startedAt, firstByteAt, firstTokenAt, terminal, streamStarted, completed.Response)
+		}
 		if !streamStarted {
+			terminal.Error = &responseError{Type: "server_error", Code: "no_image_output", Message: "Upstream completed without image output"}
 			return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), &StreamFailoverError{StatusCode: http.StatusBadGateway}
 		}
 		resultErr := fmt.Errorf("upstream completed without image output")
@@ -490,6 +522,61 @@ func CopyImagesResponse(dst http.ResponseWriter, src *http.Response, startedAt t
 	metrics.ImageCount = int64(len(results))
 	metrics.ImageSize = imageSize
 	return metrics, writeErr
+}
+
+func appendImagesRefusalText(dst *strings.Builder, value string) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return
+	}
+	if dst.Len() > 0 {
+		dst.WriteByte(' ')
+	}
+	dst.WriteString(value)
+}
+
+func appendImagesContentText(dst *strings.Builder, content []struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}) {
+	for _, part := range content {
+		if part.Type == "output_text" {
+			appendImagesRefusalText(dst, part.Text)
+		}
+	}
+}
+
+func imagesIncompleteError(reason string) *responseError {
+	reason = strings.TrimSpace(reason)
+	err := &responseError{Type: "incomplete_error", Code: "response_incomplete", Message: "Upstream did not complete image generation"}
+	if reason != "" {
+		err.Message = "Upstream image generation incomplete: " + reason
+	}
+	lower := strings.ToLower(reason)
+	if strings.Contains(lower, "content_filter") || strings.Contains(lower, "moderation") {
+		err.Type = "image_generation_user_error"
+		err.Code = "content_policy_violation"
+	}
+	return err
+}
+
+func finishImagesFailure(dst http.ResponseWriter, src *http.Response, request ImagesRequest, startedAt, firstByteAt, firstTokenAt time.Time, terminal terminalResponse, streamStarted bool, response any) (ProxyMetrics, error) {
+	status, retryable := retryableTerminalFailure(terminal)
+	if !streamStarted && retryable {
+		body, _ := json.Marshal(response)
+		return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), &StreamFailoverError{StatusCode: status, Response: body}
+	}
+	if request.Stream {
+		if !streamStarted {
+			copyResponseHeaders(dst.Header(), src.Header)
+			dst.Header().Set("Content-Type", "text/event-stream")
+			dst.WriteHeader(src.StatusCode)
+		}
+		_ = writeImagesStreamError(dst, terminal.Error)
+	} else {
+		writeImagesError(dst, status, terminal.Error)
+	}
+	return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), nil
 }
 
 func terminalFromImagesEvent(event imagesTerminalEvent) terminalResponse {

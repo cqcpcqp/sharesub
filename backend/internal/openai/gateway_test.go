@@ -411,13 +411,23 @@ func TestForwardOverridesMultipartContentTypeAfterBodyNormalization(t *testing.T
 	inbound := httptest.NewRequest(http.MethodPost, "http://gateway.test/v1/images/edits", nil)
 	inbound.Header.Set("Content-Type", "multipart/form-data; boundary=original")
 
-	response, err := NewGateway(client).Forward(context.Background(), inbound, []byte(`{"model":"gpt-5.4-mini"}`), RequestBilling{Model: "gpt-image-2"}, "access", "account", "key", "")
+	metadata := RequestBilling{Model: "gpt-image-2", PromptCacheKey: "openai-images|edit"}
+	response, err := NewGateway(client).Forward(context.Background(), inbound, []byte(`{"model":"gpt-5.4-mini"}`), metadata, "access", "account", "key", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	response.Body.Close()
 	if got := captured.Header.Get("Content-Type"); got != "application/json" {
 		t.Fatalf("Content-Type = %q, want application/json", got)
+	}
+	if captured.Header.Get("OpenAI-Beta") != "" || captured.Header.Get("Accept") != "text/event-stream" || captured.Header.Get("Version") != codexProbeVersion {
+		t.Fatalf("images headers = %#v", captured.Header)
+	}
+	if got, want := captured.Header.Get("Session_Id"), isolateSession("key", metadata.PromptCacheKey); got != want {
+		t.Fatalf("session_id = %q, want %q", got, want)
+	}
+	if got, want := captured.Header.Get("Conversation_Id"), isolateSession("key", metadata.PromptCacheKey); got != want {
+		t.Fatalf("conversation_id = %q, want %q", got, want)
 	}
 }
 

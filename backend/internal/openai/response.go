@@ -509,6 +509,8 @@ func terminalFailureStatus(response terminalResponse) int {
 	}
 	combined := strings.ToLower(strings.TrimSpace(response.Error.Type + " " + response.Error.Code + " " + response.Error.Message))
 	switch {
+	case response.Error.Type == "image_generation_user_error" || strings.Contains(combined, "content_policy") || strings.Contains(combined, "policy_violation") || strings.Contains(combined, "safety_violation") || strings.Contains(combined, "content_filter") || strings.Contains(combined, "moderation_blocked"):
+		return http.StatusBadRequest
 	case strings.Contains(combined, "context_length") || strings.Contains(combined, "context window") || strings.Contains(combined, "invalid_request"):
 		if response.Error.Code == "server_is_overloaded" || response.Error.Code == "slow_down" || transientProcessingFailure(combined) {
 			return http.StatusServiceUnavailable

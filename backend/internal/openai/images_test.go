@@ -21,6 +21,9 @@ func TestPrepareImagesGenerationRequest(t *testing.T) {
 	if request.Model != "gpt-image-2" || request.N != 2 || request.ResponseFormat != "url" || metadata.Model != "gpt-image-2" {
 		t.Fatalf("request = %+v, metadata = %+v", request, metadata)
 	}
+	if metadata.PromptCacheKey != "openai-images|/v1/images/generations|gpt-image-2|2048x1152|draw a cat" {
+		t.Fatalf("prompt cache key = %q", metadata.PromptCacheKey)
+	}
 	var payload struct {
 		Model      string `json:"model"`
 		Stream     bool   `json:"stream"`
@@ -173,5 +176,81 @@ func TestCopyImagesResponseReturnsFailoverForRetryableTerminalFailure(t *testing
 	}
 	if recorder.Body.Len() != 0 {
 		t.Fatalf("body = %s", recorder.Body.String())
+	}
+}
+
+func TestCopyImagesResponseReturnsFailoverForErrorEvent(t *testing.T) {
+	body := `data: {"type":"error","error":{"type":"server_error","code":"upstream_error","message":"temporary image failure"}}` + "\n\n"
+	source := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}
+	recorder := httptest.NewRecorder()
+	metrics, err := CopyImagesResponse(recorder, source, time.Now(), ImagesRequest{Endpoint: imagesGenerationsEndpoint, Model: "gpt-image-2"})
+	failover, ok := err.(*StreamFailoverError)
+	if !ok || failover.StatusCode != http.StatusBadGateway {
+		t.Fatalf("error = %#v", err)
+	}
+	if metrics.ErrorCode != "upstream_error" || metrics.ErrorMessage != "temporary image failure" || recorder.Body.Len() != 0 {
+		t.Fatalf("metrics = %+v, body = %q", metrics, recorder.Body.String())
+	}
+}
+
+func TestCopyImagesResponseClassifiesIncompleteEvent(t *testing.T) {
+	tests := []struct {
+		name       string
+		reason     string
+		wantStatus int
+		wantRetry  bool
+	}{
+		{name: "generation truncated", reason: "max_output_tokens", wantStatus: http.StatusBadGateway, wantRetry: true},
+		{name: "content filter", reason: "content_filter", wantStatus: http.StatusBadRequest},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			body := `data: {"type":"response.incomplete","response":{"id":"resp_1","incomplete_details":{"reason":"` + test.reason + `"}}}` + "\n\n"
+			source := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}
+			recorder := httptest.NewRecorder()
+			metrics, err := CopyImagesResponse(recorder, source, time.Now(), ImagesRequest{Endpoint: imagesGenerationsEndpoint, Model: "gpt-image-2"})
+			var failover *StreamFailoverError
+			if test.wantRetry {
+				var ok bool
+				failover, ok = err.(*StreamFailoverError)
+				if !ok || failover.StatusCode != test.wantStatus || recorder.Body.Len() != 0 {
+					t.Fatalf("error = %#v, body = %q", err, recorder.Body.String())
+				}
+			} else {
+				if err != nil || recorder.Code != test.wantStatus || !strings.Contains(recorder.Body.String(), "content_policy_violation") {
+					t.Fatalf("error = %#v, status = %d, body = %q", err, recorder.Code, recorder.Body.String())
+				}
+			}
+			if metrics.ErrorCode == "" || metrics.ErrorMessage == "" {
+				t.Fatalf("metrics = %+v", metrics)
+			}
+		})
+	}
+}
+
+func TestCopyImagesResponseTreatsTextRefusalAsClientError(t *testing.T) {
+	body := `data: {"type":"response.completed","response":{"created_at":1710000000,"model":"gpt-5.4-mini","output":[{"type":"message","content":[{"type":"output_text","text":"This image request was rejected by policy."}]}]}}` + "\n\n"
+	source := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}
+	recorder := httptest.NewRecorder()
+	metrics, err := CopyImagesResponse(recorder, source, time.Now(), ImagesRequest{Endpoint: imagesGenerationsEndpoint, Model: "gpt-image-2"})
+	if err != nil || recorder.Code != http.StatusBadRequest {
+		t.Fatalf("error = %#v, status = %d, body = %q", err, recorder.Code, recorder.Body.String())
+	}
+	if metrics.ErrorCode != "content_policy_violation" || !strings.Contains(recorder.Body.String(), "rejected by policy") {
+		t.Fatalf("metrics = %+v, body = %q", metrics, recorder.Body.String())
+	}
+}
+
+func TestCopyImagesResponseRecordsStructuredNoOutputError(t *testing.T) {
+	body := `data: {"type":"response.completed","response":{"created_at":1710000000,"model":"gpt-5.4-mini","output":[]}}` + "\n\n"
+	source := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}
+	recorder := httptest.NewRecorder()
+	metrics, err := CopyImagesResponse(recorder, source, time.Now(), ImagesRequest{Endpoint: imagesGenerationsEndpoint, Model: "gpt-image-2"})
+	failover, ok := err.(*StreamFailoverError)
+	if !ok || failover.StatusCode != http.StatusBadGateway {
+		t.Fatalf("error = %#v", err)
+	}
+	if metrics.ErrorCode != "no_image_output" || metrics.ErrorMessage != "Upstream completed without image output" {
+		t.Fatalf("metrics = %+v", metrics)
 	}
 }

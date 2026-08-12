@@ -267,6 +267,7 @@ func hasCompleteQuotaWindows(signals []domain.QuotaSignal) bool {
 
 func (g *Gateway) Forward(ctx context.Context, inbound *http.Request, body []byte, metadata RequestBilling, accessToken, accountID, apiKeyID, proxyURL string) (*http.Response, error) {
 	compact := isCompactRequestPath(inbound.URL.Path)
+	images := normalizeImagesEndpoint(inbound.URL.Path) != ""
 	targetURL := codexResponsesURL
 	if compact {
 		targetURL = codexCompactURL
@@ -286,7 +287,11 @@ func (g *Gateway) Forward(ctx context.Context, inbound *http.Request, body []byt
 			req.Header.Add(key, value)
 		}
 	}
-	req.Header.Set("OpenAI-Beta", "responses=experimental")
+	if !images {
+		req.Header.Set("OpenAI-Beta", "responses=experimental")
+	} else {
+		req.Header.Del("OpenAI-Beta")
+	}
 	if req.Header.Get("Originator") == "" {
 		req.Header.Set("Originator", "codex_cli_rs")
 	}
@@ -295,6 +300,11 @@ func (g *Gateway) Forward(ctx context.Context, inbound *http.Request, body []byt
 	req.Header.Set("Content-Type", "application/json")
 	if compact {
 		req.Header.Set("Accept", "application/json")
+		if req.Header.Get("Version") == "" {
+			req.Header.Set("Version", codexProbeVersion)
+		}
+	} else if images {
+		req.Header.Set("Accept", "text/event-stream")
 		if req.Header.Get("Version") == "" {
 			req.Header.Set("Version", codexProbeVersion)
 		}
