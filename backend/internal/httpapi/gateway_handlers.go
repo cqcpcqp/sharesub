@@ -93,14 +93,14 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 	gatewayRequestID := gatewayRequestID(r)
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxGatewayBody))
 	if err != nil {
-		s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, "", openai.RequestBilling{}, http.StatusRequestEntityTooLarge, domain.GatewayErrorSourceRequest, "request_too_large", gatewayBodyTooLargeMessage, 0))
+		s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, "", openai.RequestBilling{}, http.StatusRequestEntityTooLarge, domain.GatewayErrorSourceRequest, "request_too_large", gatewayBodyTooLargeMessage, 0), time.Now())
 		writeGatewayErrorStatus(w, http.StatusRequestEntityTooLarge, "request_too_large", gatewayBodyTooLargeMessage)
 		return
 	}
 	compact := strings.HasSuffix(strings.TrimRight(r.URL.Path, "/"), "/responses/compact")
 	forwardBody, billingMetadata, err := openai.PrepareRequest(body, compact)
 	if err != nil {
-		s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, "", openai.RequestBilling{}, http.StatusBadRequest, domain.GatewayErrorSourceRequest, "invalid_request_error", err.Error(), 0))
+		s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, "", openai.RequestBilling{}, http.StatusBadRequest, domain.GatewayErrorSourceRequest, "invalid_request_error", err.Error(), 0), time.Now())
 		writeGatewayErrorStatus(w, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return
 	}
@@ -116,11 +116,11 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		}
 		if policyErr != nil {
 			if blocked, ok := policyErr.(*openai.FastPolicyBlockedError); ok {
-				s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, billingMetadata.Model, billingMetadata, http.StatusForbidden, domain.GatewayErrorSourceRequest, "permission_error", blocked.Message, time.Since(attemptStartedAt)))
+				s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, billingMetadata.Model, billingMetadata, http.StatusForbidden, domain.GatewayErrorSourceRequest, "permission_error", blocked.Message, time.Since(attemptStartedAt)), attemptStartedAt)
 				writeGatewayErrorStatus(w, http.StatusForbidden, "permission_error", blocked.Message)
 				return
 			}
-			s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, billingMetadata.Model, billingMetadata, http.StatusInternalServerError, domain.GatewayErrorSourceGateway, "policy_error", policyErr.Error(), time.Since(attemptStartedAt)))
+			s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, billingMetadata.Model, billingMetadata, http.StatusInternalServerError, domain.GatewayErrorSourceGateway, "policy_error", policyErr.Error(), time.Since(attemptStartedAt)), attemptStartedAt)
 			writeGatewayErrorStatus(w, http.StatusInternalServerError, "policy_error", policyErr.Error())
 			return
 		}
@@ -129,10 +129,10 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			cancelAttempt()
 			if r.Context().Err() != nil {
-				s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, billingMetadata.Model, policyMetadata, clientClosedRequestStatus, domain.GatewayErrorSourceRequest, "client_disconnected", "client disconnected before response completed", time.Since(attemptStartedAt)))
+				s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, billingMetadata.Model, policyMetadata, clientClosedRequestStatus, domain.GatewayErrorSourceRequest, "client_disconnected", "client disconnected before response completed", time.Since(attemptStartedAt)), attemptStartedAt)
 				return
 			}
-			s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, billingMetadata.Model, policyMetadata, http.StatusBadGateway, domain.GatewayErrorSourceUpstream, "upstream_unavailable", err.Error(), time.Since(attemptStartedAt)))
+			s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, billingMetadata.Model, policyMetadata, http.StatusBadGateway, domain.GatewayErrorSourceUpstream, "upstream_unavailable", err.Error(), time.Since(attemptStartedAt)), attemptStartedAt)
 			if switches < maxUpstreamAccountSwitches {
 				excludedAccountIDs = append(excludedAccountIDs, access.Credential.Account.ID)
 				releaseGatewayAccess(&access)
@@ -148,10 +148,7 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		}
 
 		requestID := upstreamRequestID(upstream, gatewayRequestID)
-		if upstream.StatusCode >= 200 && upstream.StatusCode < 300 {
-			s.recordGatewayUsage(r.Context(), access, upstream.Header, requestID)
-		}
-
+		quotaObservedAt := time.Now()
 		if shouldSwitchUpstreamAccount(upstream.StatusCode) {
 			metrics, rejectedBody, drainErr := openai.DrainResponse(upstream, attemptStartedAt)
 			_ = upstream.Body.Close()
@@ -159,8 +156,8 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 			if drainErr != nil {
 				s.logger.Warn("drain rejected upstream response", "request_id", requestID, "error", drainErr)
 			}
-			s.recordGatewayMetric(r.Context(), access, gatewayMetric(requestID, billingMetadata.Model, r.URL.Path, policyMetadata, upstream.StatusCode, metrics))
-			if err := s.recordGatewayAccountQuota(r.Context(), access, upstream.Header); err != nil {
+			s.recordGatewayMetric(r.Context(), access, gatewayMetric(requestID, billingMetadata.Model, r.URL.Path, policyMetadata, upstream.StatusCode, metrics), attemptStartedAt)
+			if err := s.recordGatewayAccountQuota(r.Context(), access, upstream.Header, quotaObservedAt); err != nil {
 				s.logger.Debug("upstream rejection did not include Codex quota signal", "account_id", access.Credential.Account.ID, "status", upstream.StatusCode)
 			}
 			if r.Context().Err() != nil {
@@ -202,7 +199,10 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 			metric.ErrorCode = "upstream_error"
 			metric.ErrorMessage = copyErr.Error()
 		}
-		s.recordGatewayMetric(r.Context(), access, metric)
+		metricErr := s.recordGatewayMetric(r.Context(), access, metric, attemptStartedAt)
+		if metricErr == nil && upstream.StatusCode >= 200 && upstream.StatusCode < 300 {
+			s.recordGatewayUsage(r.Context(), access, upstream.Header, requestID, quotaObservedAt)
+		}
 
 		if errors.As(copyErr, &failoverErr) && switches < maxUpstreamAccountSwitches && r.Context().Err() == nil {
 			excludedAccountIDs = append(excludedAccountIDs, access.Credential.Account.ID)
@@ -239,13 +239,13 @@ func (s *Server) images(w http.ResponseWriter, r *http.Request) {
 
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxGatewayBody))
 	if err != nil {
-		s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, "", openai.RequestBilling{}, http.StatusRequestEntityTooLarge, domain.GatewayErrorSourceRequest, "request_too_large", gatewayBodyTooLargeMessage, 0))
+		s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, "", openai.RequestBilling{}, http.StatusRequestEntityTooLarge, domain.GatewayErrorSourceRequest, "request_too_large", gatewayBodyTooLargeMessage, 0), time.Now())
 		writeGatewayErrorStatus(w, http.StatusRequestEntityTooLarge, "request_too_large", gatewayBodyTooLargeMessage)
 		return
 	}
 	forwardBody, imageRequest, billingMetadata, err := openai.PrepareImagesRequest(body, r.Header.Get("Content-Type"), r.URL.Path)
 	if err != nil {
-		s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, "", openai.RequestBilling{}, http.StatusBadRequest, domain.GatewayErrorSourceRequest, "invalid_request_error", err.Error(), 0))
+		s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, "", openai.RequestBilling{}, http.StatusBadRequest, domain.GatewayErrorSourceRequest, "invalid_request_error", err.Error(), 0), time.Now())
 		writeGatewayErrorStatus(w, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return
 	}
@@ -258,12 +258,12 @@ func (s *Server) images(w http.ResponseWriter, r *http.Request) {
 		if forwardErr != nil {
 			cancelAttempt()
 			if r.Context().Err() != nil {
-				s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, imageRequest.Model, billingMetadata, clientClosedRequestStatus, domain.GatewayErrorSourceRequest, "client_disconnected", "client disconnected before response completed", time.Since(attemptStartedAt)))
+				s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, imageRequest.Model, billingMetadata, clientClosedRequestStatus, domain.GatewayErrorSourceRequest, "client_disconnected", "client disconnected before response completed", time.Since(attemptStartedAt)), attemptStartedAt)
 				return
 			}
 			metric := gatewayErrorMetric(gatewayRequestID, r.URL.Path, imageRequest.Model, billingMetadata, http.StatusBadGateway, domain.GatewayErrorSourceUpstream, "upstream_unavailable", forwardErr.Error(), time.Since(attemptStartedAt))
 			metric.UpstreamModel = imageRequest.Model
-			s.recordGatewayMetric(r.Context(), access, metric)
+			s.recordGatewayMetric(r.Context(), access, metric, attemptStartedAt)
 			if switches < maxUpstreamAccountSwitches {
 				excludedAccountIDs = append(excludedAccountIDs, access.Credential.Account.ID)
 				releaseGatewayAccess(&access)
@@ -279,9 +279,7 @@ func (s *Server) images(w http.ResponseWriter, r *http.Request) {
 		}
 
 		requestID := upstreamRequestID(upstream, gatewayRequestID)
-		if upstream.StatusCode >= 200 && upstream.StatusCode < 300 {
-			s.recordGatewayUsage(r.Context(), access, upstream.Header, requestID)
-		}
+		quotaObservedAt := time.Now()
 		if shouldSwitchUpstreamAccount(upstream.StatusCode) {
 			metrics, rejectedBody, drainErr := openai.DrainResponse(upstream, attemptStartedAt)
 			metrics.UpstreamModel = imageRequest.Model
@@ -290,8 +288,8 @@ func (s *Server) images(w http.ResponseWriter, r *http.Request) {
 			if drainErr != nil {
 				s.logger.Warn("drain rejected images response", "request_id", requestID, "error", drainErr)
 			}
-			s.recordGatewayMetric(r.Context(), access, gatewayMetric(requestID, imageRequest.Model, r.URL.Path, billingMetadata, upstream.StatusCode, metrics))
-			if err := s.recordGatewayAccountQuota(r.Context(), access, upstream.Header); err != nil {
+			s.recordGatewayMetric(r.Context(), access, gatewayMetric(requestID, imageRequest.Model, r.URL.Path, billingMetadata, upstream.StatusCode, metrics), attemptStartedAt)
+			if err := s.recordGatewayAccountQuota(r.Context(), access, upstream.Header, quotaObservedAt); err != nil {
 				s.logger.Debug("upstream image rejection did not include Codex quota signal", "account_id", access.Credential.Account.ID, "status", upstream.StatusCode)
 			}
 			if switches >= maxUpstreamAccountSwitches {
@@ -327,7 +325,10 @@ func (s *Server) images(w http.ResponseWriter, r *http.Request) {
 			metric.ErrorCode = "upstream_error"
 			metric.ErrorMessage = copyErr.Error()
 		}
-		s.recordGatewayMetric(r.Context(), access, metric)
+		metricErr := s.recordGatewayMetric(r.Context(), access, metric, attemptStartedAt)
+		if metricErr == nil && upstream.StatusCode >= 200 && upstream.StatusCode < 300 {
+			s.recordGatewayUsage(r.Context(), access, upstream.Header, requestID, quotaObservedAt)
+		}
 
 		if errors.As(copyErr, &failoverErr) && switches < maxUpstreamAccountSwitches && r.Context().Err() == nil {
 			excludedAccountIDs = append(excludedAccountIDs, access.Credential.Account.ID)
@@ -437,26 +438,28 @@ func metricContext(parent context.Context) (context.Context, context.CancelFunc)
 	return context.WithTimeout(context.WithoutCancel(parent), gatewayMetricWriteTimeout)
 }
 
-func (s *Server) recordGatewayMetric(parent context.Context, access application.GatewayAccess, metric domain.GatewayMetric) {
+func (s *Server) recordGatewayMetric(parent context.Context, access application.GatewayAccess, metric domain.GatewayMetric, recordedAt time.Time) error {
 	ctx, cancel := metricContext(parent)
 	defer cancel()
-	if err := s.app.RecordGatewayMetric(ctx, access, metric); err != nil {
+	if err := s.app.RecordGatewayMetric(ctx, access, metric, recordedAt); err != nil {
 		s.logger.Warn("record gateway metric", "request_id", metric.RequestID, "error", err)
+		return err
 	}
+	return nil
 }
 
-func (s *Server) recordGatewayUsage(parent context.Context, access application.GatewayAccess, headers http.Header, requestID string) {
+func (s *Server) recordGatewayUsage(parent context.Context, access application.GatewayAccess, headers http.Header, requestID string, observedAt time.Time) {
 	ctx, cancel := metricContext(parent)
 	defer cancel()
-	if err := s.app.RecordGatewayUsage(ctx, access, headers, requestID); err != nil {
+	if err := s.app.RecordGatewayUsage(ctx, access, headers, observedAt); err != nil {
 		s.logger.Warn("record Codex quota signal", "request_id", requestID, "account_id", access.Credential.Account.ID, "error", err)
 	}
 }
 
-func (s *Server) recordGatewayAccountQuota(parent context.Context, access application.GatewayAccess, headers http.Header) error {
+func (s *Server) recordGatewayAccountQuota(parent context.Context, access application.GatewayAccess, headers http.Header, observedAt time.Time) error {
 	ctx, cancel := metricContext(parent)
 	defer cancel()
-	return s.app.RecordGatewayAccountQuota(ctx, access, headers)
+	return s.app.RecordGatewayAccountQuota(ctx, access, headers, observedAt)
 }
 
 func releaseGatewayAccess(access *application.GatewayAccess) {

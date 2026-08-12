@@ -14,7 +14,6 @@ func gatewayMetricCutoff(now time.Time, retention time.Duration) time.Time {
 
 type RetentionPolicy struct {
 	GatewayMetrics    time.Duration
-	QuotaEvents       time.Duration
 	AuditEvents       time.Duration
 	ReadNotifications time.Duration
 	TerminalRecords   time.Duration
@@ -22,7 +21,6 @@ type RetentionPolicy struct {
 
 type CleanupResult struct {
 	GatewayMetrics    int64
-	QuotaEvents       int64
 	AuditEvents       int64
 	ReadNotifications int64
 	Sessions          int64
@@ -41,7 +39,7 @@ func (s *Store) CleanupResources(ctx context.Context, now time.Time, policy Rete
 		tag, err := s.pool.Exec(ctx, `
 			WITH candidates AS (
 				SELECT g.id,(g.created_at AT TIME ZONE 'UTC')::date AS usage_day,
-					m.user_id,g.plan_id,g.account_id,g.member_id,g.status_code,
+					m.user_id,g.plan_id,g.account_id,g.member_id,g.account_binding_generation,g.status_code,
 					g.input_tokens,g.output_tokens,g.cached_tokens,g.cache_creation_tokens,
 					g.image_input_tokens,g.image_output_tokens,g.image_count,g.web_search_calls,g.estimated_cost_micros
 				FROM gateway_request_metrics g
@@ -52,17 +50,17 @@ func (s *Store) CleanupResources(ctx context.Context, now time.Time, policy Rete
 				FOR UPDATE OF g SKIP LOCKED
 			), rollup AS (
 				INSERT INTO gateway_metric_daily_rollups(
-					usage_day,user_id,plan_id,account_id,member_id,request_count,success_count,
+					usage_day,user_id,plan_id,account_id,member_id,account_binding_generation,request_count,success_count,
 					input_tokens,output_tokens,cached_tokens,cache_creation_tokens,image_input_tokens,image_output_tokens,
 					image_count,web_search_calls,estimated_cost_micros
 				)
-				SELECT usage_day,user_id,plan_id,account_id,member_id,count(*),
+				SELECT usage_day,user_id,plan_id,account_id,member_id,account_binding_generation,count(*),
 					count(*) FILTER (WHERE status_code BETWEEN 200 AND 299),
 					sum(input_tokens),sum(output_tokens),sum(cached_tokens),sum(cache_creation_tokens),
 					sum(image_input_tokens),sum(image_output_tokens),sum(image_count),sum(web_search_calls),sum(estimated_cost_micros)
 				FROM candidates
-				GROUP BY usage_day,user_id,plan_id,account_id,member_id
-				ON CONFLICT(usage_day,user_id,plan_id,account_id,member_id) DO UPDATE SET
+				GROUP BY usage_day,user_id,plan_id,account_id,member_id,account_binding_generation
+				ON CONFLICT(usage_day,user_id,plan_id,account_id,member_id,account_binding_generation) DO UPDATE SET
 					request_count=gateway_metric_daily_rollups.request_count+EXCLUDED.request_count,
 					success_count=gateway_metric_daily_rollups.success_count+EXCLUDED.success_count,
 					input_tokens=gateway_metric_daily_rollups.input_tokens+EXCLUDED.input_tokens,
@@ -91,7 +89,6 @@ func (s *Store) CleanupResources(ctx context.Context, now time.Time, policy Rete
 		query  string
 		args   []any
 	}{
-		{&result.QuotaEvents, `WITH candidates AS (SELECT ctid FROM quota_usage_events WHERE created_at<$1 LIMIT $2 FOR UPDATE SKIP LOCKED) DELETE FROM quota_usage_events t USING candidates c WHERE t.ctid=c.ctid`, []any{now.Add(-policy.QuotaEvents)}},
 		{&result.AuditEvents, `WITH candidates AS (SELECT ctid FROM audit_events WHERE created_at<$1 LIMIT $2 FOR UPDATE SKIP LOCKED) DELETE FROM audit_events t USING candidates c WHERE t.ctid=c.ctid`, []any{now.Add(-policy.AuditEvents)}},
 		{&result.ReadNotifications, `WITH candidates AS (SELECT ctid FROM notifications WHERE read_at IS NOT NULL AND created_at<$1 LIMIT $2 FOR UPDATE SKIP LOCKED) DELETE FROM notifications t USING candidates c WHERE t.ctid=c.ctid`, []any{now.Add(-policy.ReadNotifications)}},
 		{&result.Sessions, `WITH candidates AS (SELECT ctid FROM user_sessions WHERE expires_at<$1 LIMIT $2 FOR UPDATE SKIP LOCKED) DELETE FROM user_sessions t USING candidates c WHERE t.ctid=c.ctid`, []any{now}},

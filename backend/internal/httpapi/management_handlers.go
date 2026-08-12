@@ -287,11 +287,12 @@ func (s *Server) listPlanAuditEvents(w http.ResponseWriter, r *http.Request) {
 func (s *Server) manualQuotaRefresh(w http.ResponseWriter, r *http.Request) {
 	userID := currentUser(r).ID
 	planID := r.PathValue("planID")
-	probe, shouldProbe, err := s.prepareQuotaRefresh(r, userID, planID)
+	probe, shouldProbe, release, err := s.prepareQuotaRefresh(r, userID, planID)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
+	defer release()
 	if !shouldProbe {
 		writeJSON(w, http.StatusOK, map[string]any{"account_id": probe.AccountID, "signals": []domain.QuotaSignal{}})
 		return
@@ -302,26 +303,26 @@ func (s *Server) manualQuotaRefresh(w http.ResponseWriter, r *http.Request) {
 		writeErrorStatus(w, http.StatusBadGateway, "quota_probe_failed", "OpenAI quota query failed")
 		return
 	}
-	if err := s.recordQuotaRefresh(r, userID, planID, signals); err != nil {
+	if err := s.recordQuotaRefresh(r, probe, signals); err != nil {
 		writeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"account_id": probe.AccountID, "signals": signals})
 }
 
-func (s *Server) recordQuotaRefresh(r *http.Request, userID, planID string, signals []domain.QuotaSignal) error {
+func (s *Server) recordQuotaRefresh(r *http.Request, probe application.PlanQuotaProbe, signals []domain.QuotaSignal) error {
 	if r.URL.Query().Get("automatic") == "true" {
-		return s.app.RecordAutomaticQuotaSignals(r.Context(), userID, planID, signals)
+		return s.app.RecordAutomaticQuotaSignals(r.Context(), probe, signals)
 	}
-	return s.app.RecordManualQuotaSignals(r.Context(), userID, planID, signals)
+	return s.app.RecordManualQuotaSignals(r.Context(), probe, signals)
 }
 
-func (s *Server) prepareQuotaRefresh(r *http.Request, userID, planID string) (application.PlanQuotaProbe, bool, error) {
+func (s *Server) prepareQuotaRefresh(r *http.Request, userID, planID string) (application.PlanQuotaProbe, bool, func(), error) {
 	if r.URL.Query().Get("automatic") == "true" {
 		return s.app.PrepareAutomaticPlanQuotaProbe(r.Context(), userID, planID)
 	}
-	probe, err := s.app.PreparePlanQuotaProbe(r.Context(), userID, planID)
-	return probe, true, err
+	probe, release, err := s.app.ReservePlanQuotaProbe(r.Context(), userID, planID)
+	return probe, true, release, err
 }
 
 func (s *Server) planQuotaResetCredits(w http.ResponseWriter, r *http.Request) {
@@ -344,11 +345,12 @@ func (s *Server) planQuotaResetCredits(w http.ResponseWriter, r *http.Request) {
 func (s *Server) resetPlanQuota(w http.ResponseWriter, r *http.Request) {
 	userID := currentUser(r).ID
 	planID := r.PathValue("planID")
-	probe, err := s.app.PreparePlanQuotaProbe(r.Context(), userID, planID)
+	probe, release, err := s.app.QuiescePlanQuota(r.Context(), userID, planID)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
+	defer release()
 	reset, err := s.gateway.ConsumeQuotaResetCredit(r.Context(), probe.AccessToken, probe.ChatGPTAccountID, probe.ProxyURL)
 	if err != nil {
 		s.logger.Error("reset OpenAI quota", "error", err, "plan_id", planID)
@@ -365,7 +367,7 @@ func (s *Server) resetPlanQuota(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, result)
 		return
 	}
-	if err := s.app.RecordResetQuotaSignals(r.Context(), userID, planID, signals); err != nil {
+	if err := s.app.RecordResetQuotaSignals(r.Context(), probe, signals); err != nil {
 		s.logger.Error("record OpenAI quota after reset", "error", err, "plan_id", planID)
 		writeJSON(w, http.StatusOK, result)
 		return

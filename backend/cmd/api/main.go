@@ -67,7 +67,9 @@ func main() {
 		},
 	}
 	oauthClient := openai.NewOAuthClient(cfg.OutboundProxy)
-	app := application.NewService(store, securityManager, oauthClient, cfg.SessionTTL, cfg.OAuthRedirect, cfg.PublicURL)
+	gateway := openai.NewGateway(httpClient)
+	defer gateway.Close()
+	app := application.NewService(store, securityManager, oauthClient, cfg.SessionTTL, cfg.OAuthRedirect, cfg.PublicURL, gateway)
 	bootstrapAdmin, err := app.EnsureBootstrapAdmin(ctx)
 	if err != nil {
 		logger.Error("bootstrap admin", "error", err)
@@ -76,8 +78,6 @@ func main() {
 	if bootstrapAdmin != nil {
 		logger.Warn("bootstrap admin created; change this temporary password after login", "email", bootstrapAdmin.Email, "temporary_password", bootstrapAdmin.TemporaryPassword)
 	}
-	gateway := openai.NewGateway(httpClient)
-	defer gateway.Close()
 	api := httpapi.New(app, gateway, logger)
 	server := &http.Server{
 		Addr: cfg.HTTPAddr, Handler: api.Handler(),
@@ -85,8 +85,8 @@ func main() {
 		IdleTimeout: 120 * time.Second, MaxHeaderBytes: 64 << 10,
 	}
 	retention := postgres.RetentionPolicy{
-		GatewayMetrics: cfg.GatewayMetricRetention, QuotaEvents: cfg.QuotaEventRetention,
-		AuditEvents: cfg.AuditEventRetention, ReadNotifications: cfg.ReadNotificationRetention,
+		GatewayMetrics: cfg.GatewayMetricRetention,
+		AuditEvents:    cfg.AuditEventRetention, ReadNotifications: cfg.ReadNotificationRetention,
 		TerminalRecords: cfg.TerminalRecordRetention,
 	}
 	go runResourceCleanup(ctx, store, retention, cfg.CleanupInterval, logger)
@@ -142,7 +142,7 @@ func runResourceCleanup(ctx context.Context, store *postgres.Store, policy postg
 			}
 			return
 		}
-		logger.Info("resource cleanup completed", "gateway_metrics", result.GatewayMetrics, "quota_events", result.QuotaEvents, "audit_events", result.AuditEvents, "read_notifications", result.ReadNotifications, "sessions", result.Sessions, "oauth_flows", result.OAuthFlows, "invites", result.Invites, "applications", result.Applications, "api_keys", result.APIKeys)
+		logger.Info("resource cleanup completed", "gateway_metrics", result.GatewayMetrics, "audit_events", result.AuditEvents, "read_notifications", result.ReadNotifications, "sessions", result.Sessions, "oauth_flows", result.OAuthFlows, "invites", result.Invites, "applications", result.Applications, "api_keys", result.APIKeys)
 	}
 	cleanup()
 	ticker := time.NewTicker(interval)

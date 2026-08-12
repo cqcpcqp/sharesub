@@ -21,13 +21,13 @@ func (s *Server) alphaSearch(w http.ResponseWriter, r *http.Request) {
 
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxTextGatewayBody))
 	if err != nil {
-		s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(requestID, r.URL.Path, "", openai.RequestBilling{}, http.StatusRequestEntityTooLarge, domain.GatewayErrorSourceRequest, "request_too_large", textGatewayBodyTooLargeMessage, 0))
+		s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(requestID, r.URL.Path, "", openai.RequestBilling{}, http.StatusRequestEntityTooLarge, domain.GatewayErrorSourceRequest, "request_too_large", textGatewayBodyTooLargeMessage, 0), time.Now())
 		writeGatewayErrorStatus(w, http.StatusRequestEntityTooLarge, "request_too_large", textGatewayBodyTooLargeMessage)
 		return
 	}
 	forwardBody, metadata, err := openai.PrepareAlphaSearchRequest(body)
 	if err != nil {
-		s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(requestID, r.URL.Path, "", openai.RequestBilling{}, http.StatusBadRequest, domain.GatewayErrorSourceRequest, "invalid_request_error", err.Error(), 0))
+		s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(requestID, r.URL.Path, "", openai.RequestBilling{}, http.StatusBadRequest, domain.GatewayErrorSourceRequest, "invalid_request_error", err.Error(), 0), time.Now())
 		writeGatewayErrorStatus(w, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return
 	}
@@ -40,10 +40,10 @@ func (s *Server) alphaSearch(w http.ResponseWriter, r *http.Request) {
 		if forwardErr != nil {
 			cancelAttempt()
 			if r.Context().Err() != nil {
-				s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(requestID, r.URL.Path, metadata.Model, metadata, clientClosedRequestStatus, domain.GatewayErrorSourceRequest, "client_disconnected", "client disconnected before response completed", time.Since(attemptStartedAt)))
+				s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(requestID, r.URL.Path, metadata.Model, metadata, clientClosedRequestStatus, domain.GatewayErrorSourceRequest, "client_disconnected", "client disconnected before response completed", time.Since(attemptStartedAt)), attemptStartedAt)
 				return
 			}
-			s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(requestID, r.URL.Path, metadata.Model, metadata, http.StatusBadGateway, domain.GatewayErrorSourceUpstream, "upstream_unavailable", forwardErr.Error(), time.Since(attemptStartedAt)))
+			s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(requestID, r.URL.Path, metadata.Model, metadata, http.StatusBadGateway, domain.GatewayErrorSourceUpstream, "upstream_unavailable", forwardErr.Error(), time.Since(attemptStartedAt)), attemptStartedAt)
 			if switches < maxUpstreamAccountSwitches {
 				excludedAccountIDs = append(excludedAccountIDs, access.Credential.Account.ID)
 				releaseGatewayAccess(&access)
@@ -59,9 +59,7 @@ func (s *Server) alphaSearch(w http.ResponseWriter, r *http.Request) {
 		}
 
 		selectedRequestID := upstreamRequestID(upstream, requestID)
-		if upstream.StatusCode >= http.StatusOK && upstream.StatusCode < http.StatusMultipleChoices {
-			s.recordGatewayUsage(r.Context(), access, upstream.Header, selectedRequestID)
-		}
+		quotaObservedAt := time.Now()
 		if shouldSwitchUpstreamAccount(upstream.StatusCode) {
 			metrics, rejectedBody, drainErr := openai.DrainResponse(upstream, attemptStartedAt)
 			_ = upstream.Body.Close()
@@ -69,8 +67,8 @@ func (s *Server) alphaSearch(w http.ResponseWriter, r *http.Request) {
 			if drainErr != nil {
 				s.logger.Warn("drain rejected alpha search response", "request_id", selectedRequestID, "error", drainErr)
 			}
-			s.recordGatewayMetric(r.Context(), access, gatewayMetric(selectedRequestID, metadata.Model, r.URL.Path, metadata, upstream.StatusCode, metrics))
-			if err := s.recordGatewayAccountQuota(r.Context(), access, upstream.Header); err != nil {
+			s.recordGatewayMetric(r.Context(), access, gatewayMetric(selectedRequestID, metadata.Model, r.URL.Path, metadata, upstream.StatusCode, metrics), attemptStartedAt)
+			if err := s.recordGatewayAccountQuota(r.Context(), access, upstream.Header, quotaObservedAt); err != nil {
 				s.logger.Debug("upstream alpha search rejection did not include Codex quota signal", "account_id", access.Credential.Account.ID, "status", upstream.StatusCode)
 			}
 			if r.Context().Err() != nil {
@@ -107,7 +105,10 @@ func (s *Server) alphaSearch(w http.ResponseWriter, r *http.Request) {
 			metric.ErrorCode = "upstream_error"
 			metric.ErrorMessage = copyErr.Error()
 		}
-		s.recordGatewayMetric(r.Context(), access, metric)
+		metricErr := s.recordGatewayMetric(r.Context(), access, metric, attemptStartedAt)
+		if metricErr == nil && upstream.StatusCode >= http.StatusOK && upstream.StatusCode < http.StatusMultipleChoices {
+			s.recordGatewayUsage(r.Context(), access, upstream.Header, selectedRequestID, quotaObservedAt)
+		}
 		if copyErr != nil {
 			s.logger.Warn("copy upstream alpha search response", "request_id", selectedRequestID, "error", copyErr)
 		}

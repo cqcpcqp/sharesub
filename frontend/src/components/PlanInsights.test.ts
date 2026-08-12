@@ -1,9 +1,12 @@
 // @vitest-environment happy-dom
 
 import { mount } from '@vue/test-utils'
+import { readFileSync } from 'node:fs'
 import { NSelect } from 'naive-ui'
 import { describe, expect, it } from 'vitest'
 import PlanInsights from './PlanInsights.vue'
+
+const planInsightsSource = readFileSync('src/components/PlanInsights.vue', 'utf8')
 
 describe('PlanInsights performance period', () => {
   it('offers today and the four fixed periods and emits a selection change', async () => {
@@ -102,12 +105,40 @@ describe('PlanInsights performance period', () => {
     })
 
     expect(wrapper.get('button[aria-label="查看成员估算额度口径"]').attributes('aria-label')).toBe('查看成员估算额度口径')
+    expect(planInsightsSource).toContain('max（账号当前已用额度 − 本次 Plan–账号绑定的当前窗口基线，0）× 成员同期请求费用 ÷ 全部成员同期请求费用')
+    expect(planInsightsSource).not.toContain('账号当前已用额度 × 成员账号费用')
     expect(wrapper.findAll('.member-share-window')).toHaveLength(2)
     const memberWindows = wrapper.findAll('.member-windows').map(item => item.text())
     expect(memberWindows[0]).toContain('5h16.0%')
     expect(memberWindows[0]).toContain('7d19.8%')
     expect(memberWindows[1]).toContain('5h4.0%')
     expect(memberWindows[1]).toContain('7d13.2%')
+  })
+
+  it('labels account_lifecycle as the current Plan account binding period', () => {
+    const wrapper = mount(PlanInsights, {
+      props: {
+        planId: 'plan',
+        insights: {
+          account_windows: [],
+          member_quotas: [],
+          performance: { request_count: 0, success_count: 0, average_ttft_ms: 0, p95_ttft_ms: 0, average_duration_ms: 0, p95_duration_ms: 0 },
+          window_usage: [],
+          member_ranking: [],
+          member_rankings: [
+            { period: 'today', window_start: '2026-08-04T00:00:00Z', window_end: '2026-08-04T10:00:00Z', members: [] },
+            { period: 'account_lifecycle', window_start: '2026-08-01T00:00:00Z', window_end: '2026-08-04T10:00:00Z', members: [] },
+          ],
+          model_usage: [], token_trend: [], recent_usage: [],
+        },
+        members: [],
+        allocationMode: 'shared',
+        theme: 'light',
+      },
+    })
+
+    const rankingSelect = wrapper.findAllComponents(NSelect).find(select => (select.props('options') as Array<{ value: string }>).some(option => option.value === 'account_lifecycle'))!
+    expect(rankingSelect.props('options')).toContainEqual({ value: 'account_lifecycle', label: '本次账号绑定以来' })
   })
 
   it('shows total tokens before the token breakdown in every quota card', () => {

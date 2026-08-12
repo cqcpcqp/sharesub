@@ -138,18 +138,20 @@ type FastPolicyRule struct {
 }
 
 type Plan struct {
-	ID                     string     `json:"id"`
-	OwnerUserID            string     `json:"owner_user_id"`
-	AccountID              string     `json:"account_id"`
-	Name                   string     `json:"name"`
-	Description            string     `json:"description"`
-	Status                 string     `json:"status"`
-	Visibility             string     `json:"visibility"`
-	PublicSlots            int        `json:"public_slots"`
-	PublicShareBasisPoints int        `json:"public_share_basis_points"`
-	AllocationMode         string     `json:"allocation_mode"`
-	CreatedAt              time.Time  `json:"created_at"`
-	ArchivedAt             *time.Time `json:"archived_at,omitempty"`
+	ID                       string     `json:"id"`
+	OwnerUserID              string     `json:"owner_user_id"`
+	AccountID                string     `json:"account_id"`
+	Name                     string     `json:"name"`
+	Description              string     `json:"description"`
+	Status                   string     `json:"status"`
+	Visibility               string     `json:"visibility"`
+	PublicSlots              int        `json:"public_slots"`
+	PublicShareBasisPoints   int        `json:"public_share_basis_points"`
+	AllocationMode           string     `json:"allocation_mode"`
+	CreatedAt                time.Time  `json:"created_at"`
+	ArchivedAt               *time.Time `json:"archived_at,omitempty"`
+	AccountBindingGeneration int64      `json:"-"`
+	AccountBoundAt           *time.Time `json:"-"`
 }
 
 type Member struct {
@@ -414,19 +416,20 @@ type PlanDetail struct {
 }
 
 type GatewayCredential struct {
-	APIKeyID               string
-	APIKeyStrategy         string
-	APIKeyFastPolicy       []FastPolicyRule
-	RoutePriority          int
-	UsageMicros            int64
-	AccountUsageMicros     int64
-	Member                 Member
-	Plan                   Plan
-	Account                Account
-	AccessTokenCiphertext  []byte
-	RefreshTokenCiphertext []byte
-	ProxyURLCiphertext     []byte
-	TokenExpiresAt         time.Time
+	APIKeyID                 string
+	APIKeyStrategy           string
+	APIKeyFastPolicy         []FastPolicyRule
+	RoutePriority            int
+	UsageMicros              int64
+	AccountUsageMicros       int64
+	Member                   Member
+	Plan                     Plan
+	Account                  Account
+	AccessTokenCiphertext    []byte
+	RefreshTokenCiphertext   []byte
+	ProxyURLCiphertext       []byte
+	TokenExpiresAt           time.Time
+	AccountBindingGeneration int64
 }
 
 type GatewayRouteSet struct {
@@ -435,31 +438,32 @@ type GatewayRouteSet struct {
 }
 
 type GatewayMetric struct {
-	RequestID         string
-	APIKeyID          string
-	PlanID            string
-	AccountID         string
-	MemberID          string
-	Model             string
-	RequestedModel    string
-	UpstreamModel     string
-	BillingModel      string
-	ServiceTier       string
-	Endpoint          string
-	IsStream          bool
-	StatusCode        int
-	ErrorSource       string
-	ErrorCode         string
-	ErrorMessage      string
-	TTFT              time.Duration
-	Duration          time.Duration
-	TokenUsage        TokenUsage
-	ImageCount        int64
-	ImageSize         string
-	WebSearchCalls    int64
-	CostBreakdown     CostBreakdown
-	AccountCostMicros int64
-	CreatedAt         time.Time
+	RequestID                string
+	APIKeyID                 string
+	PlanID                   string
+	AccountID                string
+	MemberID                 string
+	Model                    string
+	RequestedModel           string
+	UpstreamModel            string
+	BillingModel             string
+	ServiceTier              string
+	Endpoint                 string
+	IsStream                 bool
+	StatusCode               int
+	ErrorSource              string
+	ErrorCode                string
+	ErrorMessage             string
+	TTFT                     time.Duration
+	Duration                 time.Duration
+	TokenUsage               TokenUsage
+	ImageCount               int64
+	ImageSize                string
+	WebSearchCalls           int64
+	CostBreakdown            CostBreakdown
+	AccountCostMicros        int64
+	CreatedAt                time.Time
+	AccountBindingGeneration int64
 }
 
 type QuotaSignal struct {
@@ -504,15 +508,15 @@ type PlanQuotaResetResult struct {
 }
 
 type PlanQuotaCredential struct {
-	PlanID                 string
-	AccountID              string
-	OwnerMemberID          string
-	AccountOwnerUserID     string
-	ChatGPTAccountID       string
-	AccessTokenCiphertext  []byte
-	RefreshTokenCiphertext []byte
-	ProxyURLCiphertext     []byte
-	TokenExpiresAt         time.Time
+	PlanID                   string
+	AccountID                string
+	AccountBindingGeneration int64
+	AccountOwnerUserID       string
+	ChatGPTAccountID         string
+	AccessTokenCiphertext    []byte
+	RefreshTokenCiphertext   []byte
+	ProxyURLCiphertext       []byte
+	TokenExpiresAt           time.Time
 }
 
 type AuditEvent struct {

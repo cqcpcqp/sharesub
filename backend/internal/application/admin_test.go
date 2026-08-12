@@ -58,7 +58,15 @@ func (s *adminStore) UpdateAccountConfig(_ context.Context, _ string, account do
 func (s *adminStore) AdminListPlans(context.Context, time.Time) ([]domain.AdminPlan, error) {
 	return s.plans, nil
 }
-func (s *adminStore) RebindPlanAccount(_ context.Context, planID, ownerID, accountID string, event domain.AuditEvent) (domain.Plan, error) {
+func (s *adminStore) PlanBinding(_ context.Context, planID, ownerID string) (domain.Plan, error) {
+	for _, plan := range s.plans {
+		if plan.ID == planID && plan.OwnerUserID == ownerID {
+			return plan.Plan, nil
+		}
+	}
+	return domain.Plan{}, domain.ErrNotFound
+}
+func (s *adminStore) RebindPlanAccount(_ context.Context, planID, ownerID, accountID string, _ []domain.QuotaSignal, _ time.Time, event domain.AuditEvent) (domain.Plan, error) {
 	s.planOwnerID, s.planAccountID, s.planEvent = ownerID, accountID, event
 	return domain.Plan{ID: planID, OwnerUserID: ownerID, AccountID: accountID}, nil
 }
@@ -126,8 +134,18 @@ func TestAdminCanUpdateAnotherUsersAccountConfig(t *testing.T) {
 }
 
 func TestAdminCanBindPlanOwnersAvailableAccount(t *testing.T) {
-	store := &adminStore{plans: []domain.AdminPlan{{Plan: domain.Plan{ID: "plan", OwnerUserID: "owner"}}}}
-	service := NewService(store, nil, nil, 0, "", "")
+	now := time.Date(2026, 8, 6, 10, 0, 0, 0, time.UTC)
+	manager := testSecurityManager(t)
+	access, err := manager.Encrypt("access", []byte("owner:chatgpt:access"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &adminStore{
+		plans:   []domain.AdminPlan{{Plan: domain.Plan{ID: "plan", OwnerUserID: "owner"}}},
+		account: domain.Account{ID: "account", OwnerUserID: "owner", ChatGPTAccountID: "chatgpt", AccessTokenCiphertext: access, TokenExpiresAt: now.Add(time.Hour), Status: domain.StatusActive},
+	}
+	service := NewService(store, manager, nil, 0, "", "", &staticQuotaProber{signals: completeQuotaSignals(now)})
+	service.now = func() time.Time { return now }
 	admin := service.decorateUser(domain.User{ID: "admin", Role: domain.RoleAdmin})
 	updated, err := service.AdminRebindPlanAccount(context.Background(), admin, "plan", "account")
 	if err != nil || updated.AccountID != "account" || store.planOwnerID != "owner" || store.planAccountID != "account" || store.planEvent.ActorUserID != admin.ID {

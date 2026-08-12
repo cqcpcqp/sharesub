@@ -83,6 +83,29 @@ func TestProbeQuotaReturnsStatusErrorWithoutSignals(t *testing.T) {
 	}
 }
 
+func TestProbeQuotaRejectsIncompleteSignals(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		headers := make(http.Header)
+		headers.Set("x-codex-primary-used-percent", "2.5")
+		headers.Set("x-codex-primary-reset-after-seconds", "120")
+		headers.Set("x-codex-primary-window-minutes", "300")
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     headers,
+			Body:       io.NopCloser(strings.NewReader("incomplete quota headers")),
+			Request:    req,
+		}, nil
+	})}
+
+	signals, err := NewGateway(client).ProbeQuota(context.Background(), "access-token", "account-id", "")
+	if err == nil || !strings.Contains(err.Error(), "without complete quota signals") {
+		t.Fatalf("error = %v, want incomplete quota signals", err)
+	}
+	if signals != nil {
+		t.Fatalf("signals = %#v, want nil", signals)
+	}
+}
+
 func assertProbeRequest(t *testing.T, req *http.Request) {
 	t.Helper()
 	if req == nil {

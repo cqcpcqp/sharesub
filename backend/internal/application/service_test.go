@@ -3,7 +3,10 @@ package application
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,12 +16,42 @@ import (
 
 type createPlanStore struct {
 	Store
-	account        domain.Account
-	detail         domain.PlanDetail
-	created        bool
-	accountLookups int
-	createdPlan    domain.Plan
-	createdMember  domain.Member
+	account           domain.Account
+	detail            domain.PlanDetail
+	created           bool
+	accountLookups    int
+	createdPlan       domain.Plan
+	createdMember     domain.Member
+	createdSignals    []domain.QuotaSignal
+	bindingObservedAt time.Time
+}
+
+type rebindPlanStore struct {
+	Store
+	plan domain.Plan
+	err  error
+}
+
+func (s *rebindPlanStore) PlanBinding(context.Context, string, string) (domain.Plan, error) {
+	return s.plan, s.err
+}
+
+type staticQuotaProber struct {
+	signals []domain.QuotaSignal
+	err     error
+	calls   int
+}
+
+func completeQuotaSignals(now time.Time) []domain.QuotaSignal {
+	return []domain.QuotaSignal{
+		{WindowType: domain.Window5H, WindowStart: now.Add(-time.Hour), ResetAt: now.Add(4 * time.Hour)},
+		{WindowType: domain.Window7D, WindowStart: now.Add(-24 * time.Hour), ResetAt: now.Add(6 * 24 * time.Hour)},
+	}
+}
+
+func (p *staticQuotaProber) ProbeQuota(context.Context, string, string, string) ([]domain.QuotaSignal, error) {
+	p.calls++
+	return p.signals, p.err
 }
 
 type dashboardStore struct {
@@ -106,11 +139,19 @@ type avatarStore struct {
 
 type quotaProbeStore struct {
 	Store
+	mu                    sync.Mutex
 	credential            domain.PlanQuotaCredential
 	updatedAt             time.Time
 	resetAccountID        string
+	resetPlanID           string
+	resetGeneration       int64
 	resetSignals          []domain.QuotaSignal
 	resetRecordedAt       time.Time
+	recordedPlanID        string
+	recordedAccountID     string
+	recordedGeneration    int64
+	recordedSignals       []domain.QuotaSignal
+	recordedAt            time.Time
 	ownerCredentialCalls  int
 	memberCredentialCalls int
 	memberPlanID          string
@@ -120,6 +161,14 @@ type quotaProbeStore struct {
 func (s *quotaProbeStore) PlanQuotaCredential(context.Context, string, string) (domain.PlanQuotaCredential, error) {
 	s.ownerCredentialCalls++
 	return s.credential, nil
+}
+
+func (s *quotaProbeStore) PlanBinding(context.Context, string, string) (domain.Plan, error) {
+	return domain.Plan{
+		ID:                       s.credential.PlanID,
+		AccountID:                s.credential.AccountID,
+		AccountBindingGeneration: s.credential.AccountBindingGeneration,
+	}, nil
 }
 
 func (s *quotaProbeStore) PlanQuotaCredentialForMember(_ context.Context, planID, userID string) (domain.PlanQuotaCredential, error) {
@@ -133,10 +182,25 @@ func (s *quotaProbeStore) AccountQuotaUpdatedAt(context.Context, string) (time.T
 	return s.updatedAt, nil
 }
 
-func (s *quotaProbeStore) RecordQuotaResetSignals(_ context.Context, accountID string, signals []domain.QuotaSignal, recordedAt time.Time) error {
+func (s *quotaProbeStore) RecordQuotaResetSignals(_ context.Context, planID, accountID string, generation int64, signals []domain.QuotaSignal, recordedAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.resetPlanID = planID
 	s.resetAccountID = accountID
+	s.resetGeneration = generation
 	s.resetSignals = signals
 	s.resetRecordedAt = recordedAt
+	return nil
+}
+
+func (s *quotaProbeStore) RecordAccountQuotaSignals(_ context.Context, planID, accountID string, generation int64, signals []domain.QuotaSignal, recordedAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.recordedPlanID = planID
+	s.recordedAccountID = accountID
+	s.recordedGeneration = generation
+	s.recordedSignals = signals
+	s.recordedAt = recordedAt
 	return nil
 }
 
@@ -399,10 +463,11 @@ func TestPrepareAutomaticPlanQuotaProbeSkipsFreshSnapshot(t *testing.T) {
 	}
 	service := &Service{store: store, now: func() time.Time { return now }}
 
-	probe, shouldProbe, err := service.PrepareAutomaticPlanQuotaProbe(context.Background(), "owner", "plan")
+	probe, shouldProbe, release, err := service.PrepareAutomaticPlanQuotaProbe(context.Background(), "owner", "plan")
 	if err != nil {
 		t.Fatal(err)
 	}
+	release()
 	if shouldProbe || probe.AccountID != "account" {
 		t.Fatalf("probe = %+v, shouldProbe = %v, want fresh snapshot skip", probe, shouldProbe)
 	}
@@ -435,12 +500,12 @@ func TestPrepareAutomaticPlanQuotaProbePreparesStaleSnapshot(t *testing.T) {
 	now := time.Date(2026, 8, 4, 10, 0, 0, 0, time.UTC)
 	manager := testSecurityManager(t)
 	credential := domain.PlanQuotaCredential{
-		PlanID:             "plan",
-		AccountID:          "account",
-		OwnerMemberID:      "member",
-		AccountOwnerUserID: "owner",
-		ChatGPTAccountID:   "chatgpt",
-		TokenExpiresAt:     now.Add(time.Hour),
+		PlanID:                   "plan",
+		AccountID:                "account",
+		AccountBindingGeneration: 2,
+		AccountOwnerUserID:       "owner",
+		ChatGPTAccountID:         "chatgpt",
+		TokenExpiresAt:           now.Add(time.Hour),
 	}
 	var err error
 	credential.AccessTokenCiphertext, err = manager.Encrypt("access-token", []byte("owner:chatgpt:access"))
@@ -450,10 +515,11 @@ func TestPrepareAutomaticPlanQuotaProbePreparesStaleSnapshot(t *testing.T) {
 	store := &quotaProbeStore{credential: credential, updatedAt: now.Add(-automaticQuotaProbeTTL)}
 	service := &Service{store: store, security: manager, now: func() time.Time { return now }}
 
-	probe, shouldProbe, err := service.PrepareAutomaticPlanQuotaProbe(context.Background(), "owner", "plan")
+	probe, shouldProbe, release, err := service.PrepareAutomaticPlanQuotaProbe(context.Background(), "owner", "plan")
 	if err != nil {
 		t.Fatal(err)
 	}
+	release()
 	if !shouldProbe || probe.AccessToken != "access-token" || probe.AccountID != "account" {
 		t.Fatalf("probe = %+v, shouldProbe = %v, want prepared stale snapshot probe", probe, shouldProbe)
 	}
@@ -461,16 +527,156 @@ func TestPrepareAutomaticPlanQuotaProbePreparesStaleSnapshot(t *testing.T) {
 
 func TestRecordResetQuotaSignalsUsesOwnerAccountAndForcedResetStorePath(t *testing.T) {
 	now := time.Date(2026, 8, 6, 11, 30, 0, 0, time.UTC)
-	store := &quotaProbeStore{credential: domain.PlanQuotaCredential{AccountID: "account"}}
+	store := &quotaProbeStore{}
 	service := &Service{store: store, now: func() time.Time { return now }}
-	signals := []domain.QuotaSignal{{
-		WindowType: domain.Window7D, WindowStart: now, ResetAt: now.Add(7 * 24 * time.Hour), AccountUsedMicros: 0,
-	}}
-	if err := service.RecordResetQuotaSignals(context.Background(), "owner", "plan", signals); err != nil {
+	signals := completeQuotaSignals(now)
+	probe := PlanQuotaProbe{PlanID: "plan", AccountID: "account", AccountBindingGeneration: 2}
+	if err := service.RecordResetQuotaSignals(context.Background(), probe, signals); err != nil {
 		t.Fatal(err)
 	}
-	if store.resetAccountID != "account" || len(store.resetSignals) != 1 || !store.resetRecordedAt.Equal(now) {
+	if store.resetPlanID != "plan" || store.resetAccountID != "account" || store.resetGeneration != 2 || len(store.resetSignals) != 2 || !store.resetRecordedAt.Equal(now) {
 		t.Fatalf("reset recording = account %q signals %+v at %v", store.resetAccountID, store.resetSignals, store.resetRecordedAt)
+	}
+}
+
+func TestQuotaProbeReservationDrainsBeforeResetAndCannotOverwriteIt(t *testing.T) {
+	now := time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
+	manager := testSecurityManager(t)
+	credential := domain.PlanQuotaCredential{
+		PlanID:                   "plan",
+		AccountID:                "account",
+		AccountBindingGeneration: 2,
+		AccountOwnerUserID:       "owner",
+		ChatGPTAccountID:         "chatgpt",
+		TokenExpiresAt:           now.Add(time.Hour),
+	}
+	credential.AccessTokenCiphertext, _ = manager.Encrypt("access", []byte("owner:chatgpt:access"))
+	store := &quotaProbeStore{credential: credential}
+	service := &Service{store: store, security: manager, traffic: newAccountTrafficController(), now: func() time.Time { return now }}
+
+	probe, releaseProbe, err := service.ReservePlanQuotaProbe(context.Background(), "owner", "plan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	type resetResult struct {
+		probe   PlanQuotaProbe
+		release func()
+		err     error
+	}
+	resetDone := make(chan resetResult, 1)
+	go func() {
+		resetProbe, release, resetErr := service.QuiescePlanQuota(context.Background(), "owner", "plan")
+		resetDone <- resetResult{probe: resetProbe, release: release, err: resetErr}
+	}()
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		service.traffic.mu.Lock()
+		quiescing := service.traffic.states["account"].quiescing
+		service.traffic.mu.Unlock()
+		if quiescing {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("reset never started draining the in-flight quota probe")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	select {
+	case <-resetDone:
+		t.Fatal("reset acquired the account before the quota probe finished")
+	default:
+	}
+
+	highSignals := completeQuotaSignals(now)
+	highSignals[0].AccountUsedMicros = 91_000_000
+	highSignals[1].AccountUsedMicros = 87_000_000
+	if err := service.RecordManualQuotaSignals(context.Background(), probe, highSignals); err != nil {
+		t.Fatal(err)
+	}
+	releaseProbe()
+
+	reset := <-resetDone
+	if reset.err != nil {
+		t.Fatal(reset.err)
+	}
+	if reset.probe.AccountID != "account" || reset.probe.AccountBindingGeneration != 2 {
+		t.Fatalf("reset probe = %+v", reset.probe)
+	}
+	resetSignals := completeQuotaSignals(now.Add(time.Minute))
+	resetSignals[0].AccountUsedMicros = 4_000_000
+	resetSignals[1].AccountUsedMicros = 9_000_000
+	if err := service.RecordResetQuotaSignals(context.Background(), reset.probe, resetSignals); err != nil {
+		t.Fatal(err)
+	}
+	reset.release()
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.recordedSignals) != 2 || store.recordedSignals[0].AccountUsedMicros != 91_000_000 {
+		t.Fatalf("old probe signals = %+v", store.recordedSignals)
+	}
+	if len(store.resetSignals) != 2 || store.resetSignals[0].AccountUsedMicros != 4_000_000 || store.resetSignals[1].AccountUsedMicros != 9_000_000 {
+		t.Fatalf("final reset signals = %+v", store.resetSignals)
+	}
+}
+
+func TestQuotaSignalRecordingUsesPreparedBindingTuple(t *testing.T) {
+	now := time.Date(2026, 8, 6, 11, 30, 0, 0, time.UTC)
+	store := &quotaProbeStore{}
+	service := &Service{store: store, now: func() time.Time { return now }}
+	probe := PlanQuotaProbe{PlanID: "old-plan", AccountID: "old-account", AccountBindingGeneration: 7}
+	signals := completeQuotaSignals(now)
+
+	for _, record := range []struct {
+		name string
+		call func() error
+	}{
+		{name: "manual", call: func() error { return service.RecordManualQuotaSignals(context.Background(), probe, signals) }},
+		{name: "automatic", call: func() error { return service.RecordAutomaticQuotaSignals(context.Background(), probe, signals) }},
+	} {
+		t.Run(record.name, func(t *testing.T) {
+			store.recordedPlanID = ""
+			if err := record.call(); err != nil {
+				t.Fatal(err)
+			}
+			if store.recordedPlanID != probe.PlanID || store.recordedAccountID != probe.AccountID || store.recordedGeneration != probe.AccountBindingGeneration || len(store.recordedSignals) != 2 || !store.recordedAt.Equal(now) {
+				t.Fatalf("recorded tuple = %q/%q/%d, signals = %d, at = %s", store.recordedPlanID, store.recordedAccountID, store.recordedGeneration, len(store.recordedSignals), store.recordedAt)
+			}
+		})
+	}
+}
+
+func TestProbeAccountQuotaRequiresBothUniqueWindows(t *testing.T) {
+	now := time.Date(2026, 8, 6, 11, 30, 0, 0, time.UTC)
+	manager := testSecurityManager(t)
+	account := domain.Account{
+		ID: "account", OwnerUserID: "owner", ChatGPTAccountID: "chatgpt", Status: domain.StatusActive,
+		TokenExpiresAt: now.Add(time.Hour),
+	}
+	account.AccessTokenCiphertext, _ = manager.Encrypt("access", []byte("owner:chatgpt:access"))
+	tests := []struct {
+		name    string
+		signals []domain.QuotaSignal
+		wantErr bool
+	}{
+		{name: "complete", signals: completeQuotaSignals(now)},
+		{name: "missing 7d", signals: completeQuotaSignals(now)[:1], wantErr: true},
+		{name: "duplicate 5h", signals: []domain.QuotaSignal{completeQuotaSignals(now)[0], completeQuotaSignals(now)[0]}, wantErr: true},
+		{name: "unknown", signals: []domain.QuotaSignal{{WindowType: "30d"}, completeQuotaSignals(now)[1]}, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := &createPlanStore{account: account}
+			service := &Service{store: store, security: manager, quotaProber: &staticQuotaProber{signals: test.signals}, now: func() time.Time { return now }}
+			_, _, _, err := service.probeAccountQuota(context.Background(), "owner", "account")
+			if test.wantErr && err != domain.ErrAccountUnavailable {
+				t.Fatalf("error = %v, want account unavailable", err)
+			}
+			if !test.wantErr && err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 
@@ -496,6 +702,38 @@ func TestAccountTrafficControllerEnforcesConcurrencyAndRPM(t *testing.T) {
 	}
 	if _, err := controller.acquire("account", 1, 2, now.Add(time.Minute)); err != nil {
 		t.Fatalf("new minute did not reset RPM: %v", err)
+	}
+}
+
+func TestQuiescePlanBindingPreservesBindingErrors(t *testing.T) {
+	for _, wantErr := range []error{domain.ErrNotFound, domain.ErrForbidden} {
+		t.Run(wantErr.Error(), func(t *testing.T) {
+			service := &Service{
+				store:   &rebindPlanStore{err: wantErr},
+				traffic: newAccountTrafficController(),
+			}
+			if _, _, err := service.quiescePlanBinding(context.Background(), "owner", "plan"); err != wantErr {
+				t.Fatalf("quiesce plan binding error = %v, want %v", err, wantErr)
+			}
+		})
+	}
+}
+
+func TestQuiescePlanBindingMapsCanceledDrainToAccountUnavailable(t *testing.T) {
+	traffic := newAccountTrafficController()
+	releaseRequest, err := traffic.acquire("account", 0, 0, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseRequest()
+	service := &Service{
+		store:   &rebindPlanStore{plan: domain.Plan{ID: "plan", AccountID: "account"}},
+		traffic: traffic,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, _, err := service.quiescePlanBinding(ctx, "owner", "plan"); err != domain.ErrAccountUnavailable {
+		t.Fatalf("canceled drain error = %v, want account unavailable", err)
 	}
 }
 
@@ -548,10 +786,12 @@ func (s *createPlanStore) AccountByID(context.Context, string) (domain.Account, 
 	return s.account, nil
 }
 
-func (s *createPlanStore) CreatePlan(_ context.Context, plan domain.Plan, member domain.Member, _ domain.AuditEvent) error {
+func (s *createPlanStore) CreatePlan(_ context.Context, plan domain.Plan, member domain.Member, signals []domain.QuotaSignal, observedAt time.Time, _ domain.AuditEvent) error {
 	s.created = true
 	s.createdPlan = plan
 	s.createdMember = member
+	s.createdSignals = signals
+	s.bindingObservedAt = observedAt
 	return nil
 }
 
@@ -572,7 +812,14 @@ func TestCreatePlanReturnsStoredDetail(t *testing.T) {
 			Invites: []domain.Invite{},
 		},
 	}
-	service := &Service{store: store, now: func() time.Time { return time.Unix(0, 0) }}
+	manager := testSecurityManager(t)
+	now := time.Unix(0, 0)
+	store.account.ChatGPTAccountID = "chatgpt"
+	store.account.TokenExpiresAt = now.Add(time.Hour)
+	store.account.AccessTokenCiphertext, _ = manager.Encrypt("access", []byte("owner-id:chatgpt:access"))
+	signals := completeQuotaSignals(now)
+	signals[0].AccountUsedMicros = 10_000_000
+	service := &Service{store: store, security: manager, quotaProber: &staticQuotaProber{signals: signals}, now: func() time.Time { return now }}
 
 	detail, err := service.CreatePlan(context.Background(), "owner-id", "account-id", "共享方案", domain.AllocationFixed, 6000)
 	if err != nil {
@@ -587,6 +834,9 @@ func TestCreatePlanReturnsStoredDetail(t *testing.T) {
 	if store.createdPlan.AllocationMode != domain.AllocationFixed || store.createdMember.ShareBasisPoints != 6000 {
 		t.Fatalf("created fixed plan = %+v, member = %+v", store.createdPlan, store.createdMember)
 	}
+	if len(store.createdSignals) != 2 || store.createdSignals[0].AccountUsedMicros != 10_000_000 || !store.bindingObservedAt.Equal(now) {
+		t.Fatalf("binding baseline = %+v at %v", store.createdSignals, store.bindingObservedAt)
+	}
 }
 
 func TestCreateSharedPlanUsesZeroMemberShare(t *testing.T) {
@@ -594,7 +844,12 @@ func TestCreateSharedPlanUsesZeroMemberShare(t *testing.T) {
 		account: domain.Account{ID: "account-id", OwnerUserID: "owner-id", Status: domain.StatusActive},
 		detail:  domain.PlanDetail{},
 	}
-	service := &Service{store: store, now: func() time.Time { return time.Unix(0, 0) }}
+	manager := testSecurityManager(t)
+	now := time.Unix(0, 0)
+	store.account.ChatGPTAccountID = "chatgpt"
+	store.account.TokenExpiresAt = now.Add(time.Hour)
+	store.account.AccessTokenCiphertext, _ = manager.Encrypt("access", []byte("owner-id:chatgpt:access"))
+	service := &Service{store: store, security: manager, quotaProber: &staticQuotaProber{signals: completeQuotaSignals(now)}, now: func() time.Time { return now }}
 
 	if _, err := service.CreatePlan(context.Background(), "owner-id", "account-id", "共享方案", domain.AllocationShared, 0); err != nil {
 		t.Fatal(err)
@@ -609,7 +864,12 @@ func TestCreateFixedPlanAllowsZeroOwnerShare(t *testing.T) {
 		account: domain.Account{ID: "account-id", OwnerUserID: "owner-id", Status: domain.StatusActive},
 		detail:  domain.PlanDetail{},
 	}
-	service := &Service{store: store, now: func() time.Time { return time.Unix(0, 0) }}
+	manager := testSecurityManager(t)
+	now := time.Unix(0, 0)
+	store.account.ChatGPTAccountID = "chatgpt"
+	store.account.TokenExpiresAt = now.Add(time.Hour)
+	store.account.AccessTokenCiphertext, _ = manager.Encrypt("access", []byte("owner-id:chatgpt:access"))
+	service := &Service{store: store, security: manager, quotaProber: &staticQuotaProber{signals: completeQuotaSignals(now)}, now: func() time.Time { return now }}
 
 	if _, err := service.CreatePlan(context.Background(), "owner-id", "account-id", "只读方案", domain.AllocationFixed, 0); err != nil {
 		t.Fatal(err)
@@ -748,20 +1008,28 @@ func TestValidRoutes(t *testing.T) {
 
 type gatewayStore struct {
 	Store
-	routes           domain.GatewayRouteSet
-	exhausted        map[string]bool
-	accountExhausted map[string]bool
-	memberChecks     []string
-	accountChecks    []string
-	touched          []string
+	routes             domain.GatewayRouteSet
+	exhausted          map[string]bool
+	accountExhausted   map[string]bool
+	memberChecks       []string
+	memberCheckKeys    []string
+	accountChecks      []string
+	touched            []string
+	recordedPlanID     string
+	recordedAccountID  string
+	recordedGeneration int64
+	recordedSignals    []domain.QuotaSignal
+	recordedAt         time.Time
+	recordedMetric     domain.GatewayMetric
 }
 
 func (s *gatewayStore) ResolveGatewayRoutes(context.Context, []byte, time.Time) (domain.GatewayRouteSet, error) {
 	return s.routes, nil
 }
 
-func (s *gatewayStore) MemberQuotaExhausted(_ context.Context, memberID, _ string, _ int, _ time.Time) (bool, error) {
+func (s *gatewayStore) MemberQuotaExhausted(_ context.Context, memberID, planID, accountID string, generation int64, _ int, _ time.Time) (bool, error) {
 	s.memberChecks = append(s.memberChecks, memberID)
+	s.memberCheckKeys = append(s.memberCheckKeys, fmt.Sprintf("%s/%s/%d/%s", planID, accountID, generation, memberID))
 	return s.exhausted[memberID], nil
 }
 
@@ -772,6 +1040,20 @@ func (s *gatewayStore) AccountQuotaExhausted(_ context.Context, accountID string
 
 func (s *gatewayStore) TouchAPIKey(_ context.Context, keyID string, _ time.Time) error {
 	s.touched = append(s.touched, keyID)
+	return nil
+}
+
+func (s *gatewayStore) RecordAccountQuotaSignals(_ context.Context, planID, accountID string, generation int64, signals []domain.QuotaSignal, recordedAt time.Time) error {
+	s.recordedPlanID = planID
+	s.recordedAccountID = accountID
+	s.recordedGeneration = generation
+	s.recordedSignals = signals
+	s.recordedAt = recordedAt
+	return nil
+}
+
+func (s *gatewayStore) RecordGatewayMetric(_ context.Context, metric domain.GatewayMetric) error {
+	s.recordedMetric = metric
 	return nil
 }
 
@@ -793,6 +1075,67 @@ func TestResolveGatewayAccessBalancesByShareUsage(t *testing.T) {
 	}
 	if access.Credential.Plan.ID != "plan-b" {
 		t.Fatalf("selected plan = %q, want plan-b", access.Credential.Plan.ID)
+	}
+}
+
+func TestGatewayQuotaSignalsKeepResolvedBindingTuple(t *testing.T) {
+	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
+	credential := domain.GatewayCredential{
+		Plan:                     domain.Plan{ID: "plan"},
+		Account:                  domain.Account{ID: "account"},
+		AccountBindingGeneration: 9,
+	}
+	store := &gatewayStore{}
+	service := &Service{store: store, now: func() time.Time { return now }}
+	access := GatewayAccess{Credential: credential}
+	headers := http.Header{}
+	headers.Set("x-codex-primary-used-percent", "10")
+	headers.Set("x-codex-primary-reset-after-seconds", "600")
+	headers.Set("x-codex-primary-window-minutes", "300")
+
+	for _, record := range []struct {
+		name string
+		call func() error
+	}{
+		{name: "success", call: func() error { return service.RecordGatewayUsage(context.Background(), access, headers, now) }},
+		{name: "rejection", call: func() error { return service.RecordGatewayAccountQuota(context.Background(), access, headers, now) }},
+	} {
+		t.Run(record.name, func(t *testing.T) {
+			if err := record.call(); err != nil {
+				t.Fatal(err)
+			}
+			if store.recordedPlanID != "plan" || store.recordedAccountID != "account" || store.recordedGeneration != 9 || len(store.recordedSignals) != 1 || !store.recordedAt.Equal(now) {
+				t.Fatalf("recorded tuple = %q/%q/%d, signals = %d, at = %s", store.recordedPlanID, store.recordedAccountID, store.recordedGeneration, len(store.recordedSignals), store.recordedAt)
+			}
+		})
+	}
+}
+
+func TestRecordGatewayMetricKeepsResolvedBindingAndRequestStart(t *testing.T) {
+	requestStartedAt := time.Date(2026, 7, 31, 11, 59, 58, 123, time.UTC)
+	serviceNow := requestStartedAt.Add(10 * time.Second)
+	store := &gatewayStore{}
+	service := &Service{store: store, now: func() time.Time { return serviceNow }}
+	access := GatewayAccess{Credential: domain.GatewayCredential{
+		APIKeyID:                 "key",
+		Plan:                     domain.Plan{ID: "plan"},
+		Account:                  domain.Account{ID: "account"},
+		Member:                   domain.Member{ID: "member"},
+		AccountBindingGeneration: 9,
+	}}
+
+	if err := service.RecordGatewayMetric(context.Background(), access, domain.GatewayMetric{
+		RequestID: "request",
+		CreatedAt: serviceNow.Add(time.Hour),
+	}, requestStartedAt); err != nil {
+		t.Fatal(err)
+	}
+	metric := store.recordedMetric
+	if metric.APIKeyID != "key" || metric.PlanID != "plan" || metric.AccountID != "account" || metric.MemberID != "member" || metric.AccountBindingGeneration != 9 {
+		t.Fatalf("recorded metric binding = key %q, plan %q, account %q, member %q, generation %d", metric.APIKeyID, metric.PlanID, metric.AccountID, metric.MemberID, metric.AccountBindingGeneration)
+	}
+	if !metric.CreatedAt.Equal(requestStartedAt) {
+		t.Fatalf("recorded metric time = %s, want request start %s (service now %s)", metric.CreatedAt, requestStartedAt, serviceNow)
 	}
 }
 

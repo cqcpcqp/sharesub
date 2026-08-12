@@ -35,7 +35,7 @@
           <div class="demo-window" aria-hidden="true">
             <header><span><i /><i /><i /></span><small>PLAN OVERVIEW</small></header>
             <div class="demo-plan-heading"><span><Layers3 :size="20" /></span><div><small>共享方案</small><strong>Codex Team Plan</strong></div><b>运行中</b></div>
-            <div class="demo-quota"><div><span>5 小时窗口</span><strong>62%</strong></div><i><b /></i><small>成员用量实时归属，额度边界清晰可见</small></div>
+            <div class="demo-quota"><div><span>5 小时窗口</span><strong>62%</strong></div><i><b /></i><small>成员估算额度按同期请求费用分摊</small></div>
             <div class="demo-members">
               <div v-for="member in demoMembers" :key="member.name"><span :style="{ background: member.color }">{{ member.name.slice(0, 1) }}</span><div><strong>{{ member.name }}</strong><small>{{ member.role }}</small></div><b>{{ member.share }}</b></div>
             </div>
@@ -106,7 +106,7 @@ const trustItems = [
 ]
 const faq = [
   { question: 'ShareSub 是 OpenAI 官方产品吗？', answer: '不是。ShareSub 是独立开发的共享管理平台，与 OpenAI 无隶属、授权或代理关系。' },
-  { question: '平台会保存我的对话内容吗？', answer: '不会。系统记录额度归属与性能指标，但不把请求或响应正文写入数据库或性能记录。' },
+  { question: '平台会保存我的对话内容吗？', answer: '不会。系统记录账号额度状态、成员估算用量与性能指标，但不把请求或响应正文写入数据库或性能记录。' },
   { question: '任何 OpenAI 账号都可以接入吗？', answer: '你只能接入自己拥有或已获得明确授权使用的账号，并需要遵守 OpenAI 条款及 ShareSub 使用规范。' },
   { question: '公开 Plan 是直接加入吗？', answer: '不是。用户申请公开招募名额后，仍需由 Plan 房主批准或拒绝。' },
   { question: '成员之间会共用同一个 API Key 吗？', answer: '不会。API Key 归创建它的用户所有，每位成员独立创建、配置和撤销自己的 Key。' },

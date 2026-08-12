@@ -177,7 +177,7 @@
                     <CircleHelp :size="14" />
                   </button>
                 </template>
-                <span class="metric-help-copy">分别按当前 5h 和 7d 窗口计算：账号当前已用额度 × 成员账号费用 ÷ 全部成员账号费用。固定分配模式使用该结果判断成员额度。</span>
+                <span class="metric-help-copy">分别按当前 5h 和 7d 窗口计算：max（账号当前已用额度 − 本次 Plan–账号绑定的当前窗口基线，0）× 成员同期请求费用 ÷ 全部成员同期请求费用。固定分配模式使用该结果判断成员额度。</span>
               </NTooltip>
             </div>
           </div>
@@ -315,7 +315,7 @@ const rankingPeriodLabels: Record<MemberRankingPeriodID, string> = {
   today: '本日',
   last_7_days: '最近 7 天',
   account_7d: '当前账号 7d 周期',
-  account_lifecycle: '账号生命周期（接入以来）',
+  account_lifecycle: '本次账号绑定以来',
 }
 const rankingPeriodOptions = computed(() => props.insights.member_rankings.map(period => ({ label: rankingPeriodLabels[period.period], value: period.period })))
 const rankingPeriod = computed(() => props.insights.member_rankings.find(period => period.period === rankingPeriodID.value)!)

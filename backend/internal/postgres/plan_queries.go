@@ -8,7 +8,7 @@ import (
 	"github.com/sharesub/sharesub/backend/internal/domain"
 )
 
-func (s *Store) CreatePlan(ctx context.Context, plan domain.Plan, owner domain.Member, event domain.AuditEvent) error {
+func (s *Store) CreatePlan(ctx context.Context, plan domain.Plan, owner domain.Member, signals []domain.QuotaSignal, observedAt time.Time, event domain.AuditEvent) error {
 	if plan.AllocationMode == domain.AllocationFixed && (owner.ShareBasisPoints < 0 || owner.ShareBasisPoints > domain.MaxShareBPS) {
 		return domain.ErrInvalidInput
 	}
@@ -21,6 +21,9 @@ func (s *Store) CreatePlan(ctx context.Context, plan domain.Plan, owner domain.M
 	}
 	defer tx.Rollback(ctx)
 	if plan.AccountID != "" {
+		if len(signals) == 0 || observedAt.IsZero() {
+			return domain.ErrInvalidInput
+		}
 		var accountOwner, accountStatus string
 		if err = tx.QueryRow(ctx, `SELECT owner_user_id,status FROM openai_accounts WHERE id=$1 FOR UPDATE`, plan.AccountID).Scan(&accountOwner, &accountStatus); err != nil {
 			return mapError(err)
@@ -43,9 +46,20 @@ func (s *Store) CreatePlan(ctx context.Context, plan domain.Plan, owner domain.M
 	if plan.AccountID != "" {
 		accountID = plan.AccountID
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO shared_plans(id,owner_user_id,account_id,name,description,status,visibility,public_slots,public_share_basis_points,allocation_mode,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11)`, plan.ID, plan.OwnerUserID, accountID, plan.Name, plan.Description, plan.Status, plan.Visibility, plan.PublicSlots, plan.PublicShareBasisPoints, plan.AllocationMode, plan.CreatedAt)
+	bindingGeneration := int64(0)
+	var accountBoundAt any
+	if plan.AccountID != "" {
+		bindingGeneration = 1
+		accountBoundAt = observedAt
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO shared_plans(id,owner_user_id,account_id,name,description,status,visibility,public_slots,public_share_basis_points,allocation_mode,account_binding_generation,account_bound_at,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13)`, plan.ID, plan.OwnerUserID, accountID, plan.Name, plan.Description, plan.Status, plan.Visibility, plan.PublicSlots, plan.PublicShareBasisPoints, plan.AllocationMode, bindingGeneration, accountBoundAt, plan.CreatedAt)
 	if err != nil {
 		return mapError(err)
+	}
+	if plan.AccountID != "" {
+		if err := initializePlanAccountBinding(ctx, tx, plan.ID, plan.AccountID, bindingGeneration, signals, observedAt); err != nil {
+			return err
+		}
 	}
 	_, err = tx.Exec(ctx, `INSERT INTO plan_members(id,plan_id,user_id,role,status,share_basis_points,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$7)`, owner.ID, owner.PlanID, owner.UserID, owner.Role, owner.Status, owner.ShareBasisPoints, owner.CreatedAt)
 	if err != nil {
@@ -74,6 +88,14 @@ func (s *Store) ListPlans(ctx context.Context, userID string) ([]domain.Plan, er
 	return out, rows.Err()
 }
 
+func (s *Store) PlanBinding(ctx context.Context, planID, ownerID string) (domain.Plan, error) {
+	return scanPlanWithBinding(s.pool.QueryRow(ctx, `
+		SELECT id,owner_user_id,account_id,name,description,status,visibility,public_slots,public_share_basis_points,
+			allocation_mode,created_at,archived_at,account_binding_generation,account_bound_at
+		FROM shared_plans
+		WHERE id=$1 AND owner_user_id=$2`, planID, ownerID))
+}
+
 func (s *Store) PlanDetail(ctx context.Context, planID, userID string, todayStart, now time.Time) (domain.PlanDetail, error) {
 	out := domain.PlanDetail{
 		Members:      make([]domain.Member, 0),
@@ -90,7 +112,7 @@ func (s *Store) PlanDetail(ctx context.Context, planID, userID string, todayStar
 			RecentUsage:    make([]domain.MemberUsageTrend, 0),
 		},
 	}
-	plan, err := scanPlan(s.pool.QueryRow(ctx, `SELECT p.id,p.owner_user_id,p.account_id,p.name,p.description,p.status,p.visibility,p.public_slots,p.public_share_basis_points,p.allocation_mode,p.created_at,p.archived_at FROM shared_plans p JOIN plan_members viewer ON viewer.plan_id=p.id AND viewer.user_id=$2 AND viewer.status='active' WHERE p.id=$1`, planID, userID))
+	plan, err := scanPlanWithBinding(s.pool.QueryRow(ctx, `SELECT p.id,p.owner_user_id,p.account_id,p.name,p.description,p.status,p.visibility,p.public_slots,p.public_share_basis_points,p.allocation_mode,p.created_at,p.archived_at,p.account_binding_generation,p.account_bound_at FROM shared_plans p JOIN plan_members viewer ON viewer.plan_id=p.id AND viewer.user_id=$2 AND viewer.status='active' WHERE p.id=$1`, planID, userID))
 	if err != nil {
 		return out, mapError(err)
 	}
@@ -134,7 +156,7 @@ func (s *Store) PlanDetail(ctx context.Context, planID, userID string, todayStar
 		out.Applications = applications
 	}
 	if out.Account != nil {
-		insights, err := s.planInsights(ctx, planID, userID, out.Plan.AccountID, out.Account.CreatedAt, out.Members, todayStart, now)
+		insights, err := s.planInsights(ctx, planID, userID, out.Plan.AccountID, out.Plan.AccountBindingGeneration, out.Plan.AccountBoundAt, out.Members, todayStart, now)
 		if err != nil {
 			return out, err
 		}
@@ -143,7 +165,7 @@ func (s *Store) PlanDetail(ctx context.Context, planID, userID string, todayStar
 	return out, nil
 }
 
-func (s *Store) planInsights(ctx context.Context, planID, userID, accountID string, accountCreatedAt time.Time, members []domain.Member, todayStart, now time.Time) (domain.PlanInsights, error) {
+func (s *Store) planInsights(ctx context.Context, planID, userID, accountID string, generation int64, accountBoundAt *time.Time, members []domain.Member, todayStart, now time.Time) (domain.PlanInsights, error) {
 	out := domain.PlanInsights{
 		AccountWindows: make([]domain.QuotaWindow, 0),
 		MemberQuotas:   make([]domain.MemberQuota, 0, len(members)),
@@ -160,7 +182,7 @@ func (s *Store) planInsights(ctx context.Context, planID, userID, accountID stri
 		out.MemberQuotas = append(out.MemberQuotas, domain.MemberQuota{MemberID: member.ID, Windows: make([]domain.QuotaWindow, 0)})
 	}
 
-	rows, err := s.pool.Query(ctx, `SELECT window_type,used_micros,used_micros,reset_at FROM account_quota_snapshots WHERE account_id=$1 AND reset_at>now() ORDER BY window_type`, accountID)
+	rows, err := s.pool.Query(ctx, `SELECT window_type,used_micros,used_micros,reset_at FROM account_quota_snapshots WHERE account_id=$1 AND reset_at>$2 ORDER BY window_type`, accountID, now)
 	if err != nil {
 		return out, err
 	}
@@ -177,20 +199,25 @@ func (s *Store) planInsights(ctx context.Context, planID, userID, accountID stri
 	rows, err = s.pool.Query(ctx, `
 		SELECT m.id,q.window_type,
 			CASE WHEN costs.total_cost_micros=0 THEN 0::bigint
-				ELSE floor(costs.member_cost_micros::numeric*q.used_micros/costs.total_cost_micros)::bigint END,
+				ELSE floor(costs.member_cost_micros::numeric*GREATEST(q.used_micros-b.baseline_used_micros,0)/costs.total_cost_micros)::bigint END,
 			q.used_micros,q.reset_at
 		FROM account_quota_snapshots q
 		JOIN plan_members m ON m.plan_id=$1 AND m.status='active'
+		JOIN plan_account_quota_baselines b ON b.plan_id=$1 AND b.account_id=q.account_id
+			AND b.account_binding_generation=$3 AND b.window_type=q.window_type
+			AND b.reset_at BETWEEN q.reset_at - INTERVAL '2 minutes' AND q.reset_at + INTERVAL '2 minutes'
 		CROSS JOIN LATERAL (
 			SELECT
 				COALESCE(sum(g.estimated_cost_micros) FILTER (WHERE g.member_id=m.id),0)::bigint AS member_cost_micros,
 				COALESCE(sum(g.estimated_cost_micros),0)::bigint AS total_cost_micros
 			FROM gateway_request_metrics g
 			WHERE g.plan_id=$1 AND g.account_id=q.account_id
-				AND g.created_at>=q.window_start AND g.created_at<q.reset_at
+				AND g.account_binding_generation=$3
+				AND g.created_at>=GREATEST(q.window_start,b.accounting_started_at)
+				AND g.created_at<LEAST($4,q.reset_at)
 		) costs
-		WHERE q.account_id=$2 AND q.reset_at>now()
-		ORDER BY m.id,q.window_type`, planID, accountID)
+		WHERE q.account_id=$2 AND q.reset_at>$4
+		ORDER BY m.id,q.window_type`, planID, accountID, generation, now)
 	if err != nil {
 		return out, err
 	}
@@ -213,10 +240,16 @@ func (s *Store) planInsights(ctx context.Context, planID, userID, accountID stri
 			COALESCE(sum(g.cache_creation_tokens),0),COALESCE(sum(g.image_input_tokens),0),COALESCE(sum(g.image_output_tokens),0),
 			COALESCE(sum(g.image_count),0),COALESCE(sum(g.web_search_calls),0),COALESCE(sum(g.estimated_cost_micros),0)
 		FROM account_quota_snapshots q
-		LEFT JOIN gateway_request_metrics g ON g.plan_id=$1 AND g.account_id=q.account_id AND g.created_at>=q.window_start AND g.created_at<q.reset_at
-		WHERE q.account_id=$2 AND q.reset_at>now()
+		JOIN plan_account_quota_baselines b ON b.plan_id=$1 AND b.account_id=q.account_id
+			AND b.account_binding_generation=$3 AND b.window_type=q.window_type
+			AND b.reset_at BETWEEN q.reset_at - INTERVAL '2 minutes' AND q.reset_at + INTERVAL '2 minutes'
+		LEFT JOIN gateway_request_metrics g ON g.plan_id=$1 AND g.account_id=q.account_id
+			AND g.account_binding_generation=$3
+			AND g.created_at>=GREATEST(q.window_start,b.accounting_started_at)
+			AND g.created_at<LEAST($4,q.reset_at)
+		WHERE q.account_id=$2 AND q.reset_at>$4
 		GROUP BY q.window_type,q.window_start,q.reset_at
-		ORDER BY q.window_type`, planID, accountID)
+		ORDER BY q.window_type`, planID, accountID, generation, now)
 	if err != nil {
 		return out, err
 	}
@@ -253,9 +286,19 @@ func (s *Store) planInsights(ctx context.Context, planID, userID, accountID stri
 			break
 		}
 	}
-	rankingWindows = append(rankingWindows, rankingWindow{period: "account_lifecycle", start: accountCreatedAt, end: now})
+	bindingStartedAt := now
+	if accountBoundAt != nil {
+		bindingStartedAt = *accountBoundAt
+	}
+	rankingWindows = append(rankingWindows, rankingWindow{period: "account_lifecycle", start: bindingStartedAt, end: now})
 	for _, window := range rankingWindows {
-		ranking, err := s.memberUsageRanking(ctx, planID, window.start, window.end)
+		var ranking []domain.MemberUsageRank
+		var err error
+		if window.period == "account_7d" || window.period == "account_lifecycle" {
+			ranking, err = s.memberBindingUsageRanking(ctx, planID, accountID, generation, window.start, window.end)
+		} else {
+			ranking, err = s.memberUsageRanking(ctx, planID, window.start, window.end)
+		}
 		if err != nil {
 			return out, err
 		}
@@ -508,6 +551,49 @@ func (s *Store) memberUsageRanking(ctx context.Context, planID string, windowSta
 		JOIN users u ON u.id=m.user_id
 		GROUP BY m.id,u.username
 		ORDER BY COALESCE(sum(g.input_tokens+g.output_tokens),0) DESC,COALESCE(sum(g.request_count),0) DESC,u.username`, planID, windowStart, windowEnd)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]domain.MemberUsageRank, 0)
+	for rows.Next() {
+		var rank domain.MemberUsageRank
+		if err := rows.Scan(&rank.MemberID, &rank.Username, &rank.RequestCount,
+			&rank.TokenUsage.InputTokens, &rank.TokenUsage.OutputTokens, &rank.TokenUsage.CachedTokens,
+			&rank.TokenUsage.CacheCreationTokens, &rank.TokenUsage.ImageInputTokens, &rank.TokenUsage.ImageOutputTokens,
+			&rank.TokenUsage.ImageCount, &rank.WebSearchCalls, &rank.EstimatedCostMicros); err != nil {
+			return nil, err
+		}
+		rank.TokenUsage.TotalTokens = rank.TokenUsage.InputTokens + rank.TokenUsage.OutputTokens
+		out = append(out, rank)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) memberBindingUsageRanking(ctx context.Context, planID, accountID string, generation int64, windowStart, windowEnd time.Time) ([]domain.MemberUsageRank, error) {
+	rows, err := s.pool.Query(ctx, `
+		WITH usage AS (
+			SELECT g.member_id,1::bigint AS request_count,g.input_tokens,g.output_tokens,g.cached_tokens,g.cache_creation_tokens,
+				g.image_input_tokens,g.image_output_tokens,g.image_count,g.web_search_calls,g.estimated_cost_micros
+			FROM gateway_request_metrics g
+			WHERE g.plan_id=$1 AND g.account_id=$2 AND g.account_binding_generation=$3
+				AND g.created_at>=$4 AND g.created_at<$5
+			UNION ALL
+			SELECT r.member_id,r.request_count,r.input_tokens,r.output_tokens,r.cached_tokens,r.cache_creation_tokens,
+				r.image_input_tokens,r.image_output_tokens,r.image_count,r.web_search_calls,r.estimated_cost_micros
+			FROM gateway_metric_daily_rollups r
+			WHERE r.plan_id=$1 AND r.account_id=$2 AND r.account_binding_generation=$3
+				AND r.usage_day>=($4 AT TIME ZONE 'UTC')::date
+				AND r.usage_day<=($5 AT TIME ZONE 'UTC')::date
+		)
+		SELECT m.id,u.username,COALESCE(sum(g.request_count),0),COALESCE(sum(g.input_tokens),0),COALESCE(sum(g.output_tokens),0),COALESCE(sum(g.cached_tokens),0),
+			COALESCE(sum(g.cache_creation_tokens),0),COALESCE(sum(g.image_input_tokens),0),COALESCE(sum(g.image_output_tokens),0),
+			COALESCE(sum(g.image_count),0),COALESCE(sum(g.web_search_calls),0),COALESCE(sum(g.estimated_cost_micros),0)
+		FROM usage g
+		JOIN plan_members m ON m.id=g.member_id
+		JOIN users u ON u.id=m.user_id
+		GROUP BY m.id,u.username
+		ORDER BY COALESCE(sum(g.input_tokens+g.output_tokens),0) DESC,COALESCE(sum(g.request_count),0) DESC,u.username`, planID, accountID, generation, windowStart, windowEnd)
 	if err != nil {
 		return nil, err
 	}

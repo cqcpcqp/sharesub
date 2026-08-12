@@ -244,14 +244,18 @@ func (s *Service) CompleteOpenAIConnect(ctx context.Context, userID, state, code
 	if err := s.setAccountProxy(&account, config.ProxyURL); err != nil {
 		return domain.Account{}, err
 	}
+	subscriptionObserved := false
 	if subscriptionExpiresAt, queryErr := s.oauth.SubscriptionExpiresAt(ctx, token.AccessToken, token.ChatGPTAccountID, account.ProxyURL); queryErr == nil {
 		account.SubscriptionExpiresAt = subscriptionExpiresAt
+		subscriptionObserved = true
 	}
-	stored, err := s.store.UpsertAccount(ctx, account)
+	stored, err := s.store.CreateOrRotateAccountAuthorization(ctx, account, subscriptionObserved)
 	if err != nil {
 		return domain.Account{}, err
 	}
-	stored.ProxyURL = config.ProxyURL
+	if err := s.hydrateAccountProxy(&stored); err != nil {
+		return domain.Account{}, err
+	}
 	return stored, nil
 }
 

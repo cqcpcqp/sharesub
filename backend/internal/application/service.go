@@ -15,6 +15,7 @@ type Service struct {
 	store       Store
 	security    *security.Manager
 	oauth       OpenAIOAuth
+	quotaProber QuotaProber
 	sessionTTL  time.Duration
 	redirectURI string
 	publicURL   string
@@ -52,8 +53,12 @@ type AccountConfigInput struct {
 	Status         string                  `json:"status"`
 }
 
-func NewService(store Store, securityManager *security.Manager, oauth OpenAIOAuth, sessionTTL time.Duration, redirectURI, publicURL string) *Service {
-	return &Service{store: store, security: securityManager, oauth: oauth, sessionTTL: sessionTTL, redirectURI: redirectURI, publicURL: strings.TrimRight(publicURL, "/"), now: time.Now, traffic: newAccountTrafficController()}
+func NewService(store Store, securityManager *security.Manager, oauth OpenAIOAuth, sessionTTL time.Duration, redirectURI, publicURL string, quotaProber ...QuotaProber) *Service {
+	service := &Service{store: store, security: securityManager, oauth: oauth, sessionTTL: sessionTTL, redirectURI: redirectURI, publicURL: strings.TrimRight(publicURL, "/"), now: time.Now, traffic: newAccountTrafficController()}
+	if len(quotaProber) > 0 {
+		service.quotaProber = quotaProber[0]
+	}
+	return service
 }
 
 func (s *Service) decorateUser(user domain.User) domain.User {

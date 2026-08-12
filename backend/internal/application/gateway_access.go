@@ -148,7 +148,15 @@ func (s *Service) ResolveGatewayAccess(ctx context.Context, apiKey string, exclu
 			if credential.Member.ShareBasisPoints == 0 {
 				exhausted = true
 			} else {
-				exhausted, err = s.store.MemberQuotaExhausted(ctx, credential.Member.ID, credential.Account.ID, credential.Member.ShareBasisPoints, s.now())
+				exhausted, err = s.store.MemberQuotaExhausted(
+					ctx,
+					credential.Member.ID,
+					credential.Plan.ID,
+					credential.Account.ID,
+					credential.AccountBindingGeneration,
+					credential.Member.ShareBasisPoints,
+					s.now(),
+				)
 			}
 		}
 		if err != nil {
@@ -181,19 +189,23 @@ func (s *Service) ResolveGatewayAccess(ctx context.Context, apiKey string, exclu
 	}
 	var accountErr, limitErr error
 	for _, credential := range available {
-		access, err := s.resolveCredential(ctx, credential)
-		if err != nil {
-			accountErr = err
-			continue
-		}
+		var release func()
 		if s.traffic != nil {
-			release, err := s.traffic.acquire(credential.Account.ID, credential.Account.MaxConcurrency, credential.Account.RPMLimit, s.now())
+			release, err = s.traffic.acquire(credential.Account.ID, credential.Account.MaxConcurrency, credential.Account.RPMLimit, s.now())
 			if err != nil {
 				limitErr = err
 				continue
 			}
-			access.Release = release
 		}
+		access, err := s.resolveCredential(ctx, credential)
+		if err != nil {
+			if release != nil {
+				release()
+			}
+			accountErr = err
+			continue
+		}
+		access.Release = release
 		return access, nil
 	}
 	if limitErr != nil {
@@ -240,35 +252,49 @@ func (s *Service) resolveCredential(ctx context.Context, credential domain.Gatew
 	return GatewayAccess{Credential: credential, AccessToken: accessToken, ProxyURL: proxyURL}, nil
 }
 
-func (s *Service) RecordGatewayUsage(ctx context.Context, access GatewayAccess, headers http.Header, requestID string) error {
-	signals := ParseCodexQuotaHeaders(headers, s.now())
+func (s *Service) RecordGatewayUsage(ctx context.Context, access GatewayAccess, headers http.Header, observedAt time.Time) error {
+	signals := ParseCodexQuotaHeaders(headers, observedAt)
 	if len(signals) == 0 {
 		return errors.New("Codex response did not contain complete 5h or 7d quota signals")
 	}
-	return s.store.RecordQuotaSignals(ctx, access.Credential.Account.ID, access.Credential.Member.ID, signals, requestID, s.now())
+	return s.store.RecordAccountQuotaSignals(
+		ctx,
+		access.Credential.Plan.ID,
+		access.Credential.Account.ID,
+		access.Credential.AccountBindingGeneration,
+		signals,
+		observedAt,
+	)
 }
 
-// RecordGatewayAccountQuota records an observed account limit without
-// attributing quota delta to the member whose rejected request exposed it.
-func (s *Service) RecordGatewayAccountQuota(ctx context.Context, access GatewayAccess, headers http.Header) error {
-	signals := ParseCodexQuotaHeaders(headers, s.now())
+// RecordGatewayAccountQuota records an observed account quota snapshot.
+func (s *Service) RecordGatewayAccountQuota(ctx context.Context, access GatewayAccess, headers http.Header, observedAt time.Time) error {
+	signals := ParseCodexQuotaHeaders(headers, observedAt)
 	if len(signals) == 0 {
 		return errors.New("Codex response did not contain complete 5h or 7d quota signals")
 	}
-	return s.store.RecordAccountQuotaSignals(ctx, access.Credential.Account.ID, signals, s.now())
+	return s.store.RecordAccountQuotaSignals(
+		ctx,
+		access.Credential.Plan.ID,
+		access.Credential.Account.ID,
+		access.Credential.AccountBindingGeneration,
+		signals,
+		observedAt,
+	)
 }
 
-func (s *Service) RecordGatewayMetric(ctx context.Context, access GatewayAccess, metric domain.GatewayMetric) error {
+func (s *Service) RecordGatewayMetric(ctx context.Context, access GatewayAccess, metric domain.GatewayMetric, recordedAt time.Time) error {
 	metric.APIKeyID = access.Credential.APIKeyID
 	metric.PlanID = access.Credential.Plan.ID
 	metric.AccountID = access.Credential.Account.ID
 	metric.MemberID = access.Credential.Member.ID
+	metric.AccountBindingGeneration = access.Credential.AccountBindingGeneration
 	metric.Endpoint = truncateGatewayMetricText(metric.Endpoint, 160)
 	metric.ErrorCode = truncateGatewayMetricText(metric.ErrorCode, 120)
 	metric.ErrorMessage = truncateGatewayErrorMessage(metric.ErrorMessage, 2000)
 	metric.CostBreakdown = billing.AccountCostForImageSize(metric.BillingModel, metric.ServiceTier, metric.TokenUsage, metric.WebSearchCalls, metric.ImageSize)
 	metric.AccountCostMicros = metric.CostBreakdown.TotalMicros
-	metric.CreatedAt = s.now()
+	metric.CreatedAt = recordedAt
 	return s.store.RecordGatewayMetric(ctx, metric)
 }
 

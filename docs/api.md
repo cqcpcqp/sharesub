@@ -123,7 +123,7 @@ Plan 响应固定包含 `description` 字符串。描述允许为空，最多 20
 
 固定分配模式发布公开 Plan、创建邀请和修改成员份额时，有效成员、未过期邀请和未占用公开席位的预留份额总和不能超过 `10000`。共享模式不分配个人份额。
 
-Plan 详情的 `insights.window_usage` 按当前 OpenAI 账号实际返回的 5h/7d 窗口汇总请求数、完整的 `token_usage`、`web_search_calls` 和 `estimated_cost_micros`；`token_usage` 固定包含 Input/Output/Cached/Cache Creation/Image Input/Image Output Token、图片数与总 Token。`insights.member_quotas[].windows[].used_micros` 复用百分比微单位表示当前 5h/7d 窗口内成员请求账号费用占全体当前成员请求账号费用的比例；有费用的窗口合计固定为 `100000000`，无费用时全部为 `0`。`insights.performance`、`model_usage`、`token_trend` 与 `recent_usage` 默认为最近 24 小时，前端通过同一个 performance 接口统一切换本日、最近 30 分钟、6 小时、12 小时或 24 小时。本日从请求时区的 00:00 开始计算。后三项分别返回按模型汇总的请求/完整 Token 用量/Web Search 调用/账号费用，包含完整 Token、图片和 Web Search 字段的趋势，以及按 Token 排名前 12 位成员的使用趋势；固定时段的趋势粒度依次为 1 分钟、15 分钟、30 分钟和 1 小时，本日根据已过去时长选择相同层级。`member_ranking` 为兼容保留的最近 7 天成员用量排行。`member_rankings` 返回本日、最近 7 天、当前账号 7d 配额周期（存在有效 7d 快照时）以及本次账号生命周期四种固定口径，每项包含准确的 `window_start`、`window_end` 与成员排行。请求中的 `timezone` 用于确定“本日”边界。`estimated_cost_micros` 为兼容保留的字段名，值表示账号计费（micro-USD）：按每次请求的实际模型、服务层级和同 sub2api 的 LiteLLM 模型价格表计算，Responses Web Search 的按次费用会与同次请求的 Token 费用相加。
+Plan 详情的 `insights.window_usage` 按当前 OpenAI 账号实际返回的 5h/7d 窗口汇总请求数、完整的 `token_usage`、`web_search_calls` 和 `estimated_cost_micros`；`token_usage` 固定包含 Input/Output/Cached/Cache Creation/Image Input/Image Output Token、图片数与总 Token。`insights.member_quotas[].windows[].used_micros` 复用百分比微单位，计算公式为 `max(账号当前已用额度 - 本次 Plan–账号绑定的当前窗口基线, 0) × 成员同期请求费用 ÷ 全部成员同期请求费用`；成员同期请求费用只统计当前绑定代次和对应额度窗口内的 `estimated_cost_micros`。有费用时成员合计约等于扣除基线后的账号用量，可能存在整数向下取整误差；无费用时全部为 `0`。`insights.performance`、`model_usage`、`token_trend` 与 `recent_usage` 默认为最近 24 小时，前端通过同一个 performance 接口统一切换本日、最近 30 分钟、6 小时、12 小时或 24 小时。本日从请求时区的 00:00 开始计算。后三项分别返回按模型汇总的请求/完整 Token 用量/Web Search 调用/账号费用，包含完整 Token、图片和 Web Search 字段的趋势，以及按 Token 排名前 12 位成员的使用趋势；固定时段的趋势粒度依次为 1 分钟、15 分钟、30 分钟和 1 小时，本日根据已过去时长选择相同层级。`member_ranking` 为兼容保留的最近 7 天成员用量排行。`member_rankings` 返回本日、最近 7 天、当前账号 7d 配额周期（存在有效 7d 快照时）以及本次 Plan–账号绑定以来四种固定口径，每项包含准确的 `window_start`、`window_end` 与成员排行。请求中的 `timezone` 用于确定“本日”边界。`estimated_cost_micros` 为兼容保留的字段名，值表示账号计费（micro-USD）：按每次请求的实际模型、服务层级和同 sub2api 的 LiteLLM 模型价格表计算，Responses Web Search 的按次费用会与同次请求的 Token 费用相加。
 
 额度重置机会查询允许绑定账号的有效 Plan 成员调用，消耗重置机会只允许房主调用。查询响应结构固定为：
 
@@ -138,7 +138,7 @@ Plan 详情的 `insights.window_usage` 按当前 OpenAI 账号实际返回的 5h
 }
 ```
 
-重置会消耗一个 OpenAI `codex_rate_limits` 类型的可用机会，并尝试立即查询最新额度。响应固定包含 `code`、`credit`、`windows_reset`、`quota_refreshed` 和 `signals`；`credit` 没有返回时为 `null`。`quota_refreshed` 为 `false` 表示重置已经成功，但后续额度查询或本地同步失败，客户端不得将其描述为重置失败或提示用户再次重置。同步成功时会强制覆盖同一 `reset_at` 下的账号窗口快照，并清除对应的固定成员窗口记录，避免官方重置后本地仍判定额度耗尽。
+重置会消耗一个 OpenAI `codex_rate_limits` 类型的可用机会，并尝试立即查询最新额度。响应固定包含 `code`、`credit`、`windows_reset`、`quota_refreshed` 和 `signals`；`credit` 没有返回时为 `null`。`quota_refreshed` 为 `false` 表示重置已经成功，但后续额度查询或本地同步失败，客户端不得将其描述为重置失败或提示用户再次重置。同步成功时会强制覆盖同一 `reset_at` 下的账号窗口快照，并以重置后的当前值和同步时间重建该绑定代次的窗口基线，避免重置前用量继续参与成员估算额度。
 
 ```json
 {
@@ -222,7 +222,7 @@ Plan 详情的 `insights.window_usage` 按当前 OpenAI 账号实际返回的 5h
 
 Responses 与图片端点的请求体上限为 256 MiB；纯文本 Alpha Search 端点的请求体上限为 32 MiB。`priority` 按数字从小到大选路，并在请求发出前跳过不可用路由；`balanced` 在固定分配模式按当前成员消耗占个人份额的比例选择，在共享模式按账号总额度使用比例选择。Responses 上游明确返回 `429` 或 `529` 时最多切换 3 个账号；models manifest 在连接失败或上游返回 `401`、`429`、`5xx` 时最多切换 3 个账号。Alpha Search 请求体必须包含固定字符串字段 `model`，其余 SearchClient 字段按原协议转发；成功的 2xx 响应计为一次 Web Search，非 2xx 不计费。
 
-固定分配模式分别汇总成员在账号 5 小时和 7 天窗口内的 `estimated_cost_micros`，并用“账号窗口当前已用额度 × 成员费用 ÷ 窗口内全部成员费用”估算成员已用额度。候选成员份额为 0，或任一窗口的估算已用额度达到个人份额后不可用；共享模式不限制个人用量，但账号任一有效窗口达到 100% 后不可用。所有候选都不可用时返回 `429 quota_exhausted`；没有有效路由时返回 `503 no_route_available`。只有完整额度响应头会更新额度快照；额度头缺失不会篡改或拦截上游成功响应。指标记录状态码、TTFT、总耗时、终止事件中的 Input/Output/Cached/Image Token、图片数量与关联成员，不记录请求或响应内容。图片按 sub2api 默认档位计费：1K、2K、4K 每张分别为 134000、201000、268000 micro-USD，优先采用上游输出尺寸，尺寸缺失时按 2K。
+固定分配模式分别计算成员在账号 5 小时和 7 天窗口内的估算用量：`max(账号当前已用额度 - 本次 Plan–账号绑定的当前窗口基线, 0) × 成员同期请求费用 ÷ 全部成员同期请求费用`。同期请求费用只统计当前绑定代次和对应额度窗口内的 `estimated_cost_micros`。候选成员份额为 0，或任一窗口的估算用量达到个人份额后不可用；共享模式不限制个人用量，但账号任一有效窗口达到 100% 后不可用。所有候选都不可用时返回 `429 quota_exhausted`；没有有效路由时返回 `503 no_route_available`。只有完整额度响应头会更新额度快照；额度头缺失不会篡改或拦截上游成功响应。指标记录状态码、TTFT、总耗时、终止事件中的 Input/Output/Cached/Image Token、图片数量与关联成员，不记录请求或响应内容。图片按 sub2api 默认档位计费：1K、2K、4K 每张分别为 134000、201000、268000 micro-USD，优先采用上游输出尺寸，尺寸缺失时按 2K。
 
 ## 常见错误码
 

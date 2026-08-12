@@ -250,10 +250,19 @@ func (g *Gateway) ProbeQuota(ctx context.Context, accessToken, chatgptAccountID,
 	defer resp.Body.Close()
 
 	signals := application.ParseCodexQuotaHeaders(resp.Header, time.Now())
-	if len(signals) > 0 {
+	if hasCompleteQuotaWindows(signals) {
 		return signals, nil
 	}
 	return nil, fmt.Errorf("probe Codex quota returned status %d without complete quota signals", resp.StatusCode)
+}
+
+func hasCompleteQuotaWindows(signals []domain.QuotaSignal) bool {
+	if len(signals) != 2 {
+		return false
+	}
+	first, second := signals[0].WindowType, signals[1].WindowType
+	return (first == domain.Window5H && second == domain.Window7D) ||
+		(first == domain.Window7D && second == domain.Window5H)
 }
 
 func (g *Gateway) Forward(ctx context.Context, inbound *http.Request, body []byte, metadata RequestBilling, accessToken, accountID, apiKeyID, proxyURL string) (*http.Response, error) {

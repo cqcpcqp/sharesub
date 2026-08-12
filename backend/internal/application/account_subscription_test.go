@@ -11,17 +11,23 @@ import (
 
 type accountSubscriptionStore struct {
 	Store
-	flow    OAuthFlow
-	account domain.Account
-	stored  domain.Account
+	flow                       OAuthFlow
+	account                    domain.Account
+	stored                     domain.Account
+	storedSubscriptionObserved bool
+	createOrRotateResult       domain.Account
 }
 
 func (s *accountSubscriptionStore) ConsumeOAuthFlow(context.Context, []byte, time.Time) (OAuthFlow, error) {
 	return s.flow, nil
 }
 
-func (s *accountSubscriptionStore) UpsertAccount(_ context.Context, account domain.Account) (domain.Account, error) {
+func (s *accountSubscriptionStore) CreateOrRotateAccountAuthorization(_ context.Context, account domain.Account, subscriptionObserved bool) (domain.Account, error) {
 	s.stored = account
+	s.storedSubscriptionObserved = subscriptionObserved
+	if s.createOrRotateResult.ID != "" {
+		return s.createOrRotateResult, nil
+	}
 	return account, nil
 }
 
@@ -82,6 +88,9 @@ func TestCompleteOpenAIConnectStoresSubscriptionExpiry(t *testing.T) {
 	}
 	if oauth.accountID != "chatgpt-account" || oauth.proxyURL != "socks5://proxy.example:1080" {
 		t.Fatalf("subscription query account = %q, proxy = %q", oauth.accountID, oauth.proxyURL)
+	}
+	if !store.storedSubscriptionObserved {
+		t.Fatal("successful subscription query was not propagated to the store")
 	}
 }
 
@@ -144,6 +153,42 @@ func TestCompleteOpenAIConnectPersistsAccountWhenSubscriptionQueryFails(t *testi
 	}
 	if store.stored.SubscriptionExpiresAt != nil {
 		t.Fatalf("stored subscription expiry = %v, want nil", store.stored.SubscriptionExpiresAt)
+	}
+	if store.storedSubscriptionObserved {
+		t.Fatal("failed subscription query was marked as observed")
+	}
+}
+
+func TestCompleteOpenAIConnectReturnsRotatedAccountConfiguration(t *testing.T) {
+	now := time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC)
+	manager := testSecurityManager(t)
+	proxyCiphertext, err := manager.Encrypt("https://preserved-proxy.example", []byte("owner:chatgpt-account:proxy"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &accountSubscriptionStore{
+		flow: OAuthFlow{UserID: "owner", Purpose: "connect"},
+		createOrRotateResult: domain.Account{
+			ID: "existing-account", OwnerUserID: "owner", Name: "保留名称", Notes: "保留备注",
+			ChatGPTAccountID: "chatgpt-account", ProxyURLCiphertext: proxyCiphertext,
+			MaxConcurrency: 7, RPMLimit: 88, FastPolicy: []domain.FastPolicyRule{{Action: "fast"}},
+		},
+	}
+	oauth := &accountSubscriptionOAuth{token: OAuthToken{
+		AccessToken: "new-access", RefreshToken: "new-refresh", Email: "new@example.com",
+		ChatGPTAccountID: "chatgpt-account", PlanType: "pro", ExpiresAt: now.Add(time.Hour),
+	}}
+	service := &Service{store: store, security: manager, oauth: oauth, now: func() time.Time { return now }}
+
+	got, err := service.CompleteOpenAIConnect(context.Background(), "owner", "state", "code", AccountConfigInput{
+		Name: "不得覆盖名称", Notes: "不得覆盖备注", ProxyURL: "https://new-proxy.example",
+		MaxConcurrency: 1, RPMLimit: 2, Status: domain.StatusActive,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != "existing-account" || got.Name != "保留名称" || got.Notes != "保留备注" || got.ProxyURL != "https://preserved-proxy.example" || got.MaxConcurrency != 7 || got.RPMLimit != 88 || len(got.FastPolicy) != 1 {
+		t.Fatalf("rotated account configuration = %+v", got)
 	}
 }
 

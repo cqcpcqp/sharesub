@@ -21,17 +21,20 @@ func (s *Service) CreatePlan(ctx context.Context, userID, accountID, name, alloc
 	if allocationMode == domain.AllocationShared && ownerShareBPS != 0 {
 		return domain.PlanDetail{}, domain.ErrInvalidInput
 	}
+	var signals []domain.QuotaSignal
+	var bindingObservedAt time.Time
 	if accountID != "" {
-		account, err := s.store.AccountByID(ctx, accountID)
+		release, err := s.quiesceAccounts(ctx, accountID)
 		if err != nil {
 			return domain.PlanDetail{}, err
 		}
-		if account.OwnerUserID != userID {
-			return domain.PlanDetail{}, domain.ErrForbidden
+		defer release()
+		_, probedSignals, probedAt, err := s.probeAccountQuota(ctx, userID, accountID)
+		if err != nil {
+			return domain.PlanDetail{}, err
 		}
-		if account.Status != domain.StatusActive {
-			return domain.PlanDetail{}, domain.ErrAccountUnavailable
-		}
+		signals = probedSignals
+		bindingObservedAt = probedAt
 	}
 	planID, err := security.NewID()
 	if err != nil {
@@ -48,7 +51,7 @@ func (s *Service) CreatePlan(ctx context.Context, userID, accountID, name, alloc
 	if err != nil {
 		return domain.PlanDetail{}, err
 	}
-	if err := s.store.CreatePlan(ctx, plan, owner, event); err != nil {
+	if err := s.store.CreatePlan(ctx, plan, owner, signals, bindingObservedAt, event); err != nil {
 		return domain.PlanDetail{}, err
 	}
 	return s.PlanDetail(ctx, userID, planID, "UTC")

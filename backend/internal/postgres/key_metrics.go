@@ -12,6 +12,70 @@ import (
 
 const quotaWindowResetTolerance = 2 * time.Minute
 
+func initializePlanAccountBinding(ctx context.Context, tx pgx.Tx, planID, accountID string, generation int64, signals []domain.QuotaSignal, observedAt time.Time) error {
+	orderedSignals, ok := orderedBindingQuotaSignals(signals)
+	if !ok {
+		return domain.ErrInvalidInput
+	}
+	for _, signal := range orderedSignals {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO account_quota_snapshots(account_id,window_type,window_start,reset_at,used_micros,updated_at)
+			VALUES($1,$2,$3,$4,$5,$6)
+			ON CONFLICT(account_id,window_type) DO UPDATE SET
+				window_start=EXCLUDED.window_start,reset_at=EXCLUDED.reset_at,
+				used_micros=EXCLUDED.used_micros,updated_at=EXCLUDED.updated_at`,
+			accountID, signal.WindowType, signal.WindowStart, signal.ResetAt, signal.AccountUsedMicros, observedAt); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO plan_account_quota_baselines(
+				plan_id,account_id,account_binding_generation,window_type,window_start,reset_at,
+				baseline_used_micros,accounting_started_at,updated_at
+			) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$8)`,
+			planID, accountID, generation, signal.WindowType, signal.WindowStart, signal.ResetAt, signal.AccountUsedMicros, observedAt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func hasCompleteBindingQuotaSignals(signals []domain.QuotaSignal) bool {
+	_, ok := orderedBindingQuotaSignals(signals)
+	return ok
+}
+
+// orderedBindingQuotaSignals both validates the fixed two-window contract and
+// gives every binding/reset transaction the same row-lock order.
+func orderedBindingQuotaSignals(signals []domain.QuotaSignal) ([]domain.QuotaSignal, bool) {
+	if len(signals) != 2 {
+		return nil, false
+	}
+	var fiveHour, sevenDay domain.QuotaSignal
+	has5H, has7D := false, false
+	for _, signal := range signals {
+		switch signal.WindowType {
+		case domain.Window5H:
+			if has5H {
+				return nil, false
+			}
+			has5H = true
+			fiveHour = signal
+		case domain.Window7D:
+			if has7D {
+				return nil, false
+			}
+			has7D = true
+			sevenDay = signal
+		default:
+			return nil, false
+		}
+	}
+	if !has5H || !has7D {
+		return nil, false
+	}
+	return []domain.QuotaSignal{fiveHour, sevenDay}, true
+}
+
 func (s *Store) CreateAPIKey(ctx context.Context, key domain.APIKey, routes []domain.APIKeyRoute) error {
 	if key.FastPolicy == nil {
 		key.FastPolicy = make([]domain.FastPolicyRule, 0)
@@ -157,19 +221,24 @@ func (s *Store) ResolveGatewayRoutes(ctx context.Context, hash []byte, now time.
 	rows, err := s.pool.Query(ctx, `
 		SELECT k.id,k.strategy,k.fast_policy,r.priority,
 			m.id,m.plan_id,m.user_id,u.username,u.email,m.role,m.status,m.share_basis_points,m.created_at,
-			p.id,p.owner_user_id,p.account_id,p.name,p.status,p.visibility,p.public_slots,p.public_share_basis_points,p.allocation_mode,p.created_at,
+			p.id,p.owner_user_id,p.account_id,p.name,p.status,p.visibility,p.public_slots,p.public_share_basis_points,p.allocation_mode,p.created_at,p.account_binding_generation,
 			a.id,a.owner_user_id,a.name,a.notes,a.email,a.chatgpt_account_id,a.plan_type,a.subscription_expires_at,a.access_token_ciphertext,a.refresh_token_ciphertext,a.proxy_url_ciphertext,a.max_concurrency,a.rpm_limit,a.fast_policy,a.token_expires_at,a.status,a.last_error,a.created_at,
 			COALESCE((
 				SELECT max(CASE WHEN costs.total_cost_micros=0 THEN 0::bigint
-					ELSE floor(costs.member_cost_micros::numeric*q.used_micros/costs.total_cost_micros)::bigint END)
+					ELSE floor(costs.member_cost_micros::numeric*GREATEST(q.used_micros-b.baseline_used_micros,0)/costs.total_cost_micros)::bigint END)
 				FROM account_quota_snapshots q
+				JOIN plan_account_quota_baselines b ON b.plan_id=p.id AND b.account_id=a.id
+					AND b.account_binding_generation=p.account_binding_generation AND b.window_type=q.window_type
+					AND b.reset_at BETWEEN q.reset_at - INTERVAL '2 minutes' AND q.reset_at + INTERVAL '2 minutes'
 				CROSS JOIN LATERAL (
 					SELECT
 						COALESCE(sum(g.estimated_cost_micros) FILTER (WHERE g.member_id=m.id),0)::bigint AS member_cost_micros,
 						COALESCE(sum(g.estimated_cost_micros),0)::bigint AS total_cost_micros
 					FROM gateway_request_metrics g
 					WHERE g.plan_id=p.id AND g.account_id=a.id
-						AND g.created_at>=q.window_start AND g.created_at<q.reset_at
+						AND g.account_binding_generation=p.account_binding_generation
+						AND g.created_at>=GREATEST(q.window_start,b.accounting_started_at)
+						AND g.created_at<LEAST($2,q.reset_at)
 				) costs
 				WHERE q.account_id=a.id AND q.reset_at>$2
 			),0),
@@ -190,7 +259,7 @@ func (s *Store) ResolveGatewayRoutes(ctx context.Context, hash []byte, now time.
 		var credential domain.GatewayCredential
 		err := rows.Scan(&credential.APIKeyID, &credential.APIKeyStrategy, &credential.APIKeyFastPolicy, &credential.RoutePriority,
 			&credential.Member.ID, &credential.Member.PlanID, &credential.Member.UserID, &credential.Member.Username, &credential.Member.Email, &credential.Member.Role, &credential.Member.Status, &credential.Member.ShareBasisPoints, &credential.Member.CreatedAt,
-			&credential.Plan.ID, &credential.Plan.OwnerUserID, &credential.Plan.AccountID, &credential.Plan.Name, &credential.Plan.Status, &credential.Plan.Visibility, &credential.Plan.PublicSlots, &credential.Plan.PublicShareBasisPoints, &credential.Plan.AllocationMode, &credential.Plan.CreatedAt,
+			&credential.Plan.ID, &credential.Plan.OwnerUserID, &credential.Plan.AccountID, &credential.Plan.Name, &credential.Plan.Status, &credential.Plan.Visibility, &credential.Plan.PublicSlots, &credential.Plan.PublicShareBasisPoints, &credential.Plan.AllocationMode, &credential.Plan.CreatedAt, &credential.AccountBindingGeneration,
 			&credential.Account.ID, &credential.Account.OwnerUserID, &credential.Account.Name, &credential.Account.Notes, &credential.Account.Email, &credential.Account.ChatGPTAccountID, &credential.Account.PlanType, &credential.Account.SubscriptionExpiresAt, &credential.AccessTokenCiphertext, &credential.RefreshTokenCiphertext, &credential.ProxyURLCiphertext, &credential.Account.MaxConcurrency, &credential.Account.RPMLimit, &credential.Account.FastPolicy, &credential.TokenExpiresAt, &credential.Account.Status, &credential.Account.LastError, &credential.Account.CreatedAt,
 			&credential.UsageMicros, &credential.AccountUsageMicros)
 		if err != nil {
@@ -206,7 +275,7 @@ func (s *Store) TouchAPIKey(ctx context.Context, keyID string, now time.Time) er
 	return err
 }
 
-func (s *Store) MemberQuotaExhausted(ctx context.Context, memberID, accountID string, shareBPS int, now time.Time) (bool, error) {
+func (s *Store) MemberQuotaExhausted(ctx context.Context, memberID, planID, accountID string, generation int64, shareBPS int, now time.Time) (bool, error) {
 	if shareBPS == 0 {
 		return true, nil
 	}
@@ -216,19 +285,23 @@ func (s *Store) MemberQuotaExhausted(ctx context.Context, memberID, accountID st
 		SELECT EXISTS(
 			SELECT 1
 			FROM plan_members m
-			JOIN shared_plans p ON p.id=m.plan_id AND p.account_id=$2
-			JOIN account_quota_snapshots q ON q.account_id=$2 AND q.reset_at>$3
+			JOIN account_quota_snapshots q ON q.account_id=$3 AND q.reset_at>$5
+			JOIN plan_account_quota_baselines b ON b.plan_id=$2 AND b.account_id=q.account_id
+				AND b.account_binding_generation=$4 AND b.window_type=q.window_type
+				AND b.reset_at BETWEEN q.reset_at - INTERVAL '2 minutes' AND q.reset_at + INTERVAL '2 minutes'
 			CROSS JOIN LATERAL (
 				SELECT
 					COALESCE(sum(g.estimated_cost_micros) FILTER (WHERE g.member_id=m.id),0)::bigint AS member_cost_micros,
 					COALESCE(sum(g.estimated_cost_micros),0)::bigint AS total_cost_micros
 				FROM gateway_request_metrics g
-				WHERE g.plan_id=p.id AND g.account_id=q.account_id
-					AND g.created_at>=q.window_start AND g.created_at<q.reset_at
+				WHERE g.plan_id=$2 AND g.account_id=q.account_id
+					AND g.account_binding_generation=$4
+					AND g.created_at>=GREATEST(q.window_start,b.accounting_started_at)
+					AND g.created_at<LEAST($5,q.reset_at)
 			) costs
-			WHERE m.id=$1 AND costs.total_cost_micros>0
-				AND floor(costs.member_cost_micros::numeric*q.used_micros/costs.total_cost_micros)>=$4
-		)`, memberID, accountID, now, limit).Scan(&exhausted)
+			WHERE m.id=$1 AND m.plan_id=$2 AND costs.total_cost_micros>0
+				AND floor(costs.member_cost_micros::numeric*GREATEST(q.used_micros-b.baseline_used_micros,0)/costs.total_cost_micros)>=$6
+		)`, memberID, planID, accountID, generation, now, limit).Scan(&exhausted)
 	return exhausted, err
 }
 
@@ -239,14 +312,22 @@ func (s *Store) AccountQuotaExhausted(ctx context.Context, accountID string, now
 	return exhausted, err
 }
 
-func (s *Store) RecordAccountQuotaSignals(ctx context.Context, accountID string, signals []domain.QuotaSignal, now time.Time) error {
+func (s *Store) RecordAccountQuotaSignals(ctx context.Context, planID, accountID string, generation int64, signals []domain.QuotaSignal, now time.Time) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
+	var currentAccountID string
+	var currentGeneration int64
+	if err := tx.QueryRow(ctx, `SELECT account_id,account_binding_generation FROM shared_plans WHERE id=$1 FOR UPDATE`, planID).Scan(&currentAccountID, &currentGeneration); err != nil {
+		return mapError(err)
+	}
+	if currentAccountID != accountID || currentGeneration != generation {
+		return domain.ErrConflict
+	}
 	for _, signal := range signals {
-		signal, _, err = lockAndMergeAccountQuotaSignal(ctx, tx, accountID, signal)
+		signal, err = lockAndMergeAccountQuotaSignal(ctx, tx, accountID, signal)
 		if err != nil {
 			return err
 		}
@@ -254,86 +335,96 @@ func (s *Store) RecordAccountQuotaSignals(ctx context.Context, accountID string,
 		if err != nil {
 			return err
 		}
+		if _, err = tx.Exec(ctx, `
+			INSERT INTO plan_account_quota_baselines(
+				plan_id,account_id,account_binding_generation,window_type,window_start,reset_at,
+				baseline_used_micros,accounting_started_at,updated_at
+			)
+			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$8)
+			ON CONFLICT(plan_id,account_binding_generation,window_type) DO UPDATE SET
+				window_start=EXCLUDED.window_start,reset_at=EXCLUDED.reset_at,
+				baseline_used_micros=0,accounting_started_at=EXCLUDED.window_start,
+				updated_at=EXCLUDED.updated_at
+			WHERE ABS(EXTRACT(EPOCH FROM (plan_account_quota_baselines.reset_at-EXCLUDED.reset_at))) > 120`,
+			planID, accountID, generation, signal.WindowType, signal.WindowStart, signal.ResetAt,
+			signal.AccountUsedMicros, now); err != nil {
+			return err
+		}
 	}
 	return tx.Commit(ctx)
 }
 
-func (s *Store) RecordQuotaSignals(ctx context.Context, accountID, memberID string, signals []domain.QuotaSignal, requestID string, now time.Time) error {
+func (s *Store) RecordQuotaResetSignals(ctx context.Context, planID, accountID string, generation int64, signals []domain.QuotaSignal, now time.Time) error {
+	orderedSignals, ok := orderedBindingQuotaSignals(signals)
+	if !ok {
+		return domain.ErrInvalidInput
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	for _, signal := range signals {
-		signal, delta, mergeErr := lockAndMergeAccountQuotaSignal(ctx, tx, accountID, signal)
-		if mergeErr != nil {
-			return mergeErr
-		}
+	var currentAccountID string
+	var currentGeneration int64
+	if err := tx.QueryRow(ctx, `SELECT account_id,account_binding_generation FROM shared_plans WHERE id=$1 FOR UPDATE`, planID).Scan(&currentAccountID, &currentGeneration); err != nil {
+		return mapError(err)
+	}
+	if currentAccountID != accountID || currentGeneration != generation {
+		return domain.ErrConflict
+	}
+	for _, signal := range orderedSignals {
 		_, err = tx.Exec(ctx, `INSERT INTO account_quota_snapshots(account_id,window_type,window_start,reset_at,used_micros,updated_at) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(account_id,window_type) DO UPDATE SET window_start=EXCLUDED.window_start,reset_at=EXCLUDED.reset_at,used_micros=EXCLUDED.used_micros,updated_at=EXCLUDED.updated_at`, accountID, signal.WindowType, signal.WindowStart, signal.ResetAt, signal.AccountUsedMicros, now)
 		if err != nil {
 			return err
 		}
-		if requestID == "" {
-			continue
-		}
-		eventID := requestID + ":" + signal.WindowType
-		tag, err := tx.Exec(ctx, `INSERT INTO quota_usage_events(id,member_id,account_id,window_type,window_start,request_id,delta_micros,account_used_micros,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(member_id,account_id,window_type,window_start,request_id) DO NOTHING`, eventID, memberID, accountID, signal.WindowType, signal.WindowStart, requestID, delta, signal.AccountUsedMicros, now)
-		if err != nil {
-			return err
-		}
-		if tag.RowsAffected() == 0 {
-			continue
-		}
-		_, err = tx.Exec(ctx, `INSERT INTO member_quota_windows(member_id,account_id,window_type,window_start,reset_at,used_micros,account_used_micros,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(member_id,account_id,window_type) DO UPDATE SET window_start=EXCLUDED.window_start,reset_at=EXCLUDED.reset_at,used_micros=CASE WHEN member_quota_windows.window_start=EXCLUDED.window_start THEN member_quota_windows.used_micros+EXCLUDED.used_micros ELSE EXCLUDED.used_micros END,account_used_micros=EXCLUDED.account_used_micros,updated_at=EXCLUDED.updated_at`, memberID, accountID, signal.WindowType, signal.WindowStart, signal.ResetAt, delta, signal.AccountUsedMicros, now)
-		if err != nil {
+		if _, err = tx.Exec(ctx, `
+			INSERT INTO plan_account_quota_baselines(
+				plan_id,account_id,account_binding_generation,window_type,window_start,reset_at,
+				baseline_used_micros,accounting_started_at,updated_at
+			) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$8)
+			ON CONFLICT(plan_id,account_binding_generation,window_type) DO UPDATE SET
+				account_id=EXCLUDED.account_id,window_start=EXCLUDED.window_start,reset_at=EXCLUDED.reset_at,
+				baseline_used_micros=EXCLUDED.baseline_used_micros,
+				accounting_started_at=EXCLUDED.accounting_started_at,updated_at=EXCLUDED.updated_at`,
+			planID, accountID, generation, signal.WindowType, signal.WindowStart, signal.ResetAt, signal.AccountUsedMicros, now); err != nil {
 			return err
 		}
 	}
 	return tx.Commit(ctx)
 }
 
-func (s *Store) RecordQuotaResetSignals(ctx context.Context, accountID string, signals []domain.QuotaSignal, now time.Time) error {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-	for _, signal := range signals {
-		_, err = tx.Exec(ctx, `INSERT INTO account_quota_snapshots(account_id,window_type,window_start,reset_at,used_micros,updated_at) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(account_id,window_type) DO UPDATE SET window_start=EXCLUDED.window_start,reset_at=EXCLUDED.reset_at,used_micros=EXCLUDED.used_micros,updated_at=EXCLUDED.updated_at`, accountID, signal.WindowType, signal.WindowStart, signal.ResetAt, signal.AccountUsedMicros, now)
-		if err != nil {
-			return err
-		}
-		if _, err = tx.Exec(ctx, `DELETE FROM member_quota_windows WHERE account_id=$1 AND window_type=$2`, accountID, signal.WindowType); err != nil {
-			return err
-		}
-	}
-	return tx.Commit(ctx)
-}
-
-func lockAndMergeAccountQuotaSignal(ctx context.Context, tx pgx.Tx, accountID string, signal domain.QuotaSignal) (domain.QuotaSignal, int64, error) {
+func lockAndMergeAccountQuotaSignal(ctx context.Context, tx pgx.Tx, accountID string, signal domain.QuotaSignal) (domain.QuotaSignal, error) {
 	var oldUsed int64
 	var oldStart, oldReset time.Time
 	err := tx.QueryRow(ctx, `SELECT used_micros,window_start,reset_at FROM account_quota_snapshots WHERE account_id=$1 AND window_type=$2 FOR UPDATE`, accountID, signal.WindowType).Scan(&oldUsed, &oldStart, &oldReset)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return signal, 0, nil
+		return signal, nil
 	}
 	if err != nil {
-		return domain.QuotaSignal{}, 0, err
+		return domain.QuotaSignal{}, err
 	}
 	return mergeAccountQuotaSignal(oldStart, oldReset, oldUsed, signal)
 }
 
-func mergeAccountQuotaSignal(oldStart, oldReset time.Time, oldUsed int64, signal domain.QuotaSignal) (domain.QuotaSignal, int64, error) {
+func mergeAccountQuotaSignal(oldStart, oldReset time.Time, oldUsed int64, signal domain.QuotaSignal) (domain.QuotaSignal, error) {
 	if !sameQuotaWindow(oldReset, signal.ResetAt) {
-		return signal, 0, nil
+		if signal.ResetAt.After(oldReset) {
+			return signal, nil
+		}
+		return domain.QuotaSignal{
+			WindowType:        signal.WindowType,
+			WindowStart:       oldStart,
+			ResetAt:           oldReset,
+			AccountUsedMicros: oldUsed,
+		}, nil
 	}
 	signal.WindowStart = oldStart
 	signal.ResetAt = oldReset
 	if signal.AccountUsedMicros <= oldUsed {
 		signal.AccountUsedMicros = oldUsed
-		return signal, 0, nil
+		return signal, nil
 	}
-	return signal, signal.AccountUsedMicros - oldUsed, nil
+	return signal, nil
 }
 
 func sameQuotaWindow(left, right time.Time) bool {
@@ -349,15 +440,15 @@ func (s *Store) RecordGatewayMetric(ctx context.Context, metric domain.GatewayMe
 		request_id,api_key_id,plan_id,account_id,member_id,model,requested_model,upstream_model,billing_model,service_tier,
 		endpoint,is_stream,status_code,error_source,error_code,error_message,ttft_ms,duration_ms,input_tokens,output_tokens,cached_tokens,cache_creation_tokens,image_input_tokens,image_output_tokens,
 		image_count,web_search_calls,input_cost_micros,output_cost_micros,cache_creation_cost_micros,cache_read_cost_micros,
-		image_input_cost_micros,image_output_cost_micros,web_search_cost_micros,estimated_cost_micros,created_at
+		image_input_cost_micros,image_output_cost_micros,web_search_cost_micros,estimated_cost_micros,created_at,account_binding_generation
 	) VALUES(
-		$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35
-	) ON CONFLICT(request_id,api_key_id,account_id) DO NOTHING`,
+		$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36
+	) ON CONFLICT(request_id,api_key_id,plan_id,account_id,account_binding_generation) DO NOTHING`,
 		metric.RequestID, metric.APIKeyID, metric.PlanID, metric.AccountID, metric.MemberID, metric.Model, metric.RequestedModel, metric.UpstreamModel, metric.BillingModel, metric.ServiceTier,
 		metric.Endpoint, metric.IsStream, metric.StatusCode, metric.ErrorSource, metric.ErrorCode, metric.ErrorMessage,
 		metric.TTFT.Milliseconds(), metric.Duration.Milliseconds(), metric.TokenUsage.InputTokens, metric.TokenUsage.OutputTokens, metric.TokenUsage.CachedTokens, metric.TokenUsage.CacheCreationTokens, metric.TokenUsage.ImageInputTokens, metric.TokenUsage.ImageOutputTokens,
 		metric.ImageCount, metric.WebSearchCalls, metric.CostBreakdown.InputMicros, metric.CostBreakdown.OutputMicros, metric.CostBreakdown.CacheCreationMicros, metric.CostBreakdown.CacheReadMicros,
-		metric.CostBreakdown.ImageInputMicros, metric.CostBreakdown.ImageOutputMicros, metric.CostBreakdown.WebSearchMicros, metric.AccountCostMicros, metric.CreatedAt)
+		metric.CostBreakdown.ImageInputMicros, metric.CostBreakdown.ImageOutputMicros, metric.CostBreakdown.WebSearchMicros, metric.AccountCostMicros, metric.CreatedAt, metric.AccountBindingGeneration)
 	return err
 }
 

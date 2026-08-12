@@ -22,7 +22,6 @@ type Config struct {
 	CredentialKey             []byte
 	CleanupInterval           time.Duration
 	GatewayMetricRetention    time.Duration
-	QuotaEventRetention       time.Duration
 	AuditEventRetention       time.Duration
 	ReadNotificationRetention time.Duration
 	TerminalRecordRetention   time.Duration
@@ -65,10 +64,6 @@ func Load() (Config, error) {
 	}
 	if gatewayMetricRetention < minimumGatewayMetricRetention {
 		return Config{}, fmt.Errorf("SHARESUB_GATEWAY_METRIC_RETENTION must be at least %s", minimumGatewayMetricRetention)
-	}
-	quotaEventRetention, err := positiveDurationEnv("SHARESUB_QUOTA_EVENT_RETENTION", 90*24*time.Hour)
-	if err != nil {
-		return Config{}, err
 	}
 	auditEventRetention, err := positiveDurationEnv("SHARESUB_AUDIT_EVENT_RETENTION", 365*24*time.Hour)
 	if err != nil {
@@ -117,7 +112,6 @@ func Load() (Config, error) {
 		CredentialKey:             credentialKey,
 		CleanupInterval:           cleanupInterval,
 		GatewayMetricRetention:    gatewayMetricRetention,
-		QuotaEventRetention:       quotaEventRetention,
 		AuditEventRetention:       auditEventRetention,
 		ReadNotificationRetention: readNotificationRetention,
 		TerminalRecordRetention:   terminalRecordRetention,

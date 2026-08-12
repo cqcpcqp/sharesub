@@ -24,7 +24,7 @@ type Store interface {
 
 	CreateOAuthFlow(context.Context, OAuthFlow) error
 	ConsumeOAuthFlow(context.Context, []byte, time.Time) (OAuthFlow, error)
-	UpsertAccount(context.Context, domain.Account) (domain.Account, error)
+	CreateOrRotateAccountAuthorization(context.Context, domain.Account, bool) (domain.Account, error)
 	ListAccounts(context.Context, string) ([]domain.Account, error)
 	AccountByID(context.Context, string) (domain.Account, error)
 	UpdateAccountConfig(context.Context, string, domain.Account) (domain.Account, error)
@@ -37,8 +37,9 @@ type Store interface {
 	ReleaseAccountRefreshLease(context.Context, string, string) error
 	Dashboard(context.Context, string, time.Time, time.Time, time.Time) (domain.Dashboard, error)
 
-	CreatePlan(context.Context, domain.Plan, domain.Member, domain.AuditEvent) error
+	CreatePlan(context.Context, domain.Plan, domain.Member, []domain.QuotaSignal, time.Time, domain.AuditEvent) error
 	ListPlans(context.Context, string) ([]domain.Plan, error)
+	PlanBinding(context.Context, string, string) (domain.Plan, error)
 	PlanDetail(context.Context, string, string, time.Time, time.Time) (domain.PlanDetail, error)
 	PlanPerformance(context.Context, string, string, time.Time, time.Time, time.Duration) (domain.PlanPerformance, error)
 	PlanRequestErrors(context.Context, string, string, time.Time, time.Time, int, int) (domain.PlanRequestErrorList, error)
@@ -47,7 +48,7 @@ type Store interface {
 	UpdatePlanStatus(context.Context, string, string, string, domain.AuditEvent) (domain.Plan, error)
 	DeletePlan(context.Context, string, string, domain.AuditEvent) error
 	TransferPlanOwnership(context.Context, string, string, string, domain.AuditEvent) (domain.Plan, error)
-	RebindPlanAccount(context.Context, string, string, string, domain.AuditEvent) (domain.Plan, error)
+	RebindPlanAccount(context.Context, string, string, string, []domain.QuotaSignal, time.Time, domain.AuditEvent) (domain.Plan, error)
 	ListPublicPlans(context.Context, string) ([]domain.PublicPlan, error)
 	UpdatePlanPublication(context.Context, string, string, string, int, int, domain.AuditEvent) (domain.Plan, error)
 	CreateJoinApplication(context.Context, domain.JoinApplication, domain.AuditEvent) (domain.JoinApplication, error)
@@ -81,11 +82,10 @@ type Store interface {
 
 	ResolveGatewayRoutes(context.Context, []byte, time.Time) (domain.GatewayRouteSet, error)
 	TouchAPIKey(context.Context, string, time.Time) error
-	MemberQuotaExhausted(context.Context, string, string, int, time.Time) (bool, error)
+	MemberQuotaExhausted(context.Context, string, string, string, int64, int, time.Time) (bool, error)
 	AccountQuotaExhausted(context.Context, string, time.Time) (bool, error)
-	RecordAccountQuotaSignals(context.Context, string, []domain.QuotaSignal, time.Time) error
-	RecordQuotaSignals(context.Context, string, string, []domain.QuotaSignal, string, time.Time) error
-	RecordQuotaResetSignals(context.Context, string, []domain.QuotaSignal, time.Time) error
+	RecordAccountQuotaSignals(context.Context, string, string, int64, []domain.QuotaSignal, time.Time) error
+	RecordQuotaResetSignals(context.Context, string, string, int64, []domain.QuotaSignal, time.Time) error
 	RecordGatewayMetric(context.Context, domain.GatewayMetric) error
 }
 
@@ -115,4 +115,8 @@ type OpenAIOAuth interface {
 	Exchange(context.Context, string, string, string) (OAuthToken, error)
 	Refresh(context.Context, string) (OAuthToken, error)
 	SubscriptionExpiresAt(context.Context, string, string, string) (*time.Time, error)
+}
+
+type QuotaProber interface {
+	ProbeQuota(context.Context, string, string, string) ([]domain.QuotaSignal, error)
 }

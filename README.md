@@ -129,7 +129,6 @@ openssl rand -base64 32
 | `SHARESUB_SESSION_TTL` | 登录会话有效期 | `720h` |
 | `SHARESUB_CLEANUP_INTERVAL` | 过期资源清理周期 | `6h` |
 | `SHARESUB_GATEWAY_METRIC_RETENTION` | 网关请求明细保留期；至少 7 天，清理边界按 UTC 整日对齐，清理前会汇总 | `2160h`（90 天） |
-| `SHARESUB_QUOTA_EVENT_RETENTION` | 额度归因事件保留期 | `2160h`（90 天） |
 | `SHARESUB_AUDIT_EVENT_RETENTION` | 审计记录保留期 | `8760h`（365 天） |
 | `SHARESUB_READ_NOTIFICATION_RETENTION` | 已读通知保留期；未读通知不自动删除 | `2160h`（90 天） |
 | `SHARESUB_TERMINAL_RECORD_RETENTION` | 已结束邀请、申请及撤销 Key 保留期 | `2160h`（90 天） |
@@ -229,7 +228,7 @@ curl https://sharesub.example.com/v1/responses \
   --data '{"model":"gpt-5.4","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}],"stream":true,"store":false}'
 ```
 
-网关会按 Key 的配置从仍然有效的 Plan 中选路：`priority` 按数字从小到大选择，当前路由在请求发出前不可用或达到账号并发/RPM 上限时尝试下一条；`balanced` 在固定分配模式按成员消耗占个人份额的比例选择，在共享模式按账号总额度使用比例选择。固定分配模式会分别在 5 小时和 7 天窗口内，用“账号当前已用额度 × 成员账号费用占比”估算成员已用额度；任一窗口达到成员份额后停止使用该 Plan。固定份额为 0% 的成员不参与选路；共享 Plan 不执行个人额度限制，但账号任一有效窗口达到 100% 后会停止路由。账号独立代理优先于 `SHARESUB_OUTBOUND_PROXY`，代理请求失败时不会回退直连。只有上游明确以 `429` 或 `529` 拒绝执行时，网关才会切换到下一个账号，最多切换 3 次；连接错误、超时和其他状态不会重试，避免重复执行。系统不把请求或响应正文写入数据库或性能记录。
+网关会按 Key 的配置从仍然有效的 Plan 中选路：`priority` 按数字从小到大选择，当前路由在请求发出前不可用或达到账号并发/RPM 上限时尝试下一条；`balanced` 在固定分配模式按成员消耗占个人份额的比例选择，在共享模式按账号总额度使用比例选择。固定分配模式会分别在 5 小时和 7 天窗口内，先扣除账号本次绑定 Plan 时已经消耗的额度，再按同期成员请求费用占比分摊剩余用量；任一窗口达到成员份额后停止使用该 Plan。固定份额为 0% 的成员不参与选路；共享 Plan 不执行个人额度限制，但账号任一有效窗口达到 100% 后会停止路由。账号独立代理优先于 `SHARESUB_OUTBOUND_PROXY`，代理请求失败时不会回退直连。只有上游明确以 `429` 或 `529` 拒绝执行时，网关才会切换到下一个账号，最多切换 3 次；连接错误、超时和其他状态不会重试，避免重复执行。系统不把请求或响应正文写入数据库或性能记录。
 
 OAuth 请求会移除 ChatGPT 内部接口不支持的顶层字段并强制 `store=false`。非流式请求由网关把上游 SSE 终止响应还原成 JSON；流式上游异常关闭时会发出标准 `response.failed` 终止事件。完整兼容范围见 [转发兼容说明](docs/forwarding-compatibility.md)。
 

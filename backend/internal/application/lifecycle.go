@@ -10,11 +10,12 @@ import (
 )
 
 type PlanQuotaProbe struct {
-	AccountID        string `json:"account_id"`
-	OwnerMemberID    string `json:"owner_member_id"`
-	AccessToken      string `json:"-"`
-	ChatGPTAccountID string `json:"chatgpt_account_id"`
-	ProxyURL         string `json:"-"`
+	PlanID                   string `json:"-"`
+	AccountID                string `json:"account_id"`
+	AccountBindingGeneration int64  `json:"-"`
+	AccessToken              string `json:"-"`
+	ChatGPTAccountID         string `json:"chatgpt_account_id"`
+	ProxyURL                 string `json:"-"`
 }
 
 const automaticQuotaProbeTTL = 10 * time.Minute
@@ -60,6 +61,11 @@ func (s *Service) UpdatePlanStatus(ctx context.Context, ownerID, planID, status 
 }
 
 func (s *Service) DeletePlan(ctx context.Context, ownerID, planID string) error {
+	_, release, err := s.quiescePlanBinding(ctx, ownerID, planID)
+	if err != nil {
+		return err
+	}
+	defer release()
 	event, err := s.newAuditEvent(ownerID, "plan.deleted", "plan", planID, nil)
 	if err != nil {
 		return err
@@ -82,11 +88,20 @@ func (s *Service) RebindPlanAccount(ctx context.Context, ownerID, planID, accoun
 	if strings.TrimSpace(accountID) == "" {
 		return domain.Plan{}, domain.ErrInvalidInput
 	}
+	_, release, err := s.quiescePlanBinding(ctx, ownerID, planID, accountID)
+	if err != nil {
+		return domain.Plan{}, err
+	}
+	defer release()
+	account, signals, observedAt, err := s.probeAccountQuota(ctx, ownerID, accountID)
+	if err != nil {
+		return domain.Plan{}, err
+	}
 	event, err := s.newAuditEvent(ownerID, "plan.account_rebound", "plan", planID, map[string]string{"account_id": accountID})
 	if err != nil {
 		return domain.Plan{}, err
 	}
-	return s.store.RebindPlanAccount(ctx, planID, ownerID, accountID, event)
+	return s.store.RebindPlanAccount(ctx, planID, ownerID, account.ID, signals, observedAt, event)
 }
 
 func (s *Service) RemovePlanMember(ctx context.Context, actorUserID, planID, memberID string) error {
@@ -132,20 +147,50 @@ func (s *Service) PreparePlanQuotaProbeForMember(ctx context.Context, userID, pl
 	return s.preparePlanQuotaProbe(ctx, credential)
 }
 
-func (s *Service) PrepareAutomaticPlanQuotaProbe(ctx context.Context, userID, planID string) (PlanQuotaProbe, bool, error) {
+func (s *Service) PrepareAutomaticPlanQuotaProbe(ctx context.Context, userID, planID string) (PlanQuotaProbe, bool, func(), error) {
 	credential, err := s.store.PlanQuotaCredentialForMember(ctx, planID, userID)
 	if err != nil {
-		return PlanQuotaProbe{}, false, err
+		return PlanQuotaProbe{}, false, nil, err
 	}
 	updatedAt, err := s.store.AccountQuotaUpdatedAt(ctx, credential.AccountID)
 	if err != nil {
-		return PlanQuotaProbe{}, false, err
+		return PlanQuotaProbe{}, false, nil, err
 	}
 	if s.now().Sub(updatedAt) < automaticQuotaProbeTTL {
-		return PlanQuotaProbe{AccountID: credential.AccountID}, false, nil
+		return quotaProbeForCredential(credential), false, func() {}, nil
 	}
-	probe, err := s.preparePlanQuotaProbe(ctx, credential)
-	return probe, true, err
+	probe, release, err := s.reserveQuotaProbe(ctx, userID, credential)
+	return probe, true, release, err
+}
+
+func (s *Service) ReservePlanQuotaProbe(ctx context.Context, ownerID, planID string) (PlanQuotaProbe, func(), error) {
+	credential, err := s.store.PlanQuotaCredential(ctx, planID, ownerID)
+	if err != nil {
+		return PlanQuotaProbe{}, nil, err
+	}
+	return s.reserveQuotaProbe(ctx, ownerID, credential)
+}
+
+func (s *Service) reserveQuotaProbe(ctx context.Context, userID string, credential domain.PlanQuotaCredential) (PlanQuotaProbe, func(), error) {
+	release, err := s.reserveAccountTraffic(ctx, credential.AccountID)
+	if err != nil {
+		return PlanQuotaProbe{}, nil, err
+	}
+	current, err := s.store.PlanQuotaCredentialForMember(ctx, credential.PlanID, userID)
+	if err != nil {
+		release()
+		return PlanQuotaProbe{}, nil, err
+	}
+	if current.AccountID != credential.AccountID || current.AccountBindingGeneration != credential.AccountBindingGeneration {
+		release()
+		return PlanQuotaProbe{}, nil, domain.ErrConflict
+	}
+	probe, err := s.preparePlanQuotaProbe(ctx, current)
+	if err != nil {
+		release()
+		return PlanQuotaProbe{}, nil, err
+	}
+	return probe, release, nil
 }
 
 func (s *Service) preparePlanQuotaProbe(ctx context.Context, credential domain.PlanQuotaCredential) (PlanQuotaProbe, error) {
@@ -173,38 +218,164 @@ func (s *Service) preparePlanQuotaProbe(ctx context.Context, credential domain.P
 			return PlanQuotaProbe{}, domain.ErrAccountUnavailable
 		}
 	}
-	return PlanQuotaProbe{AccountID: credential.AccountID, OwnerMemberID: credential.OwnerMemberID, AccessToken: accessToken, ChatGPTAccountID: credential.ChatGPTAccountID, ProxyURL: proxyURL}, nil
+	probe := quotaProbeForCredential(credential)
+	probe.AccessToken = accessToken
+	probe.ChatGPTAccountID = credential.ChatGPTAccountID
+	probe.ProxyURL = proxyURL
+	return probe, nil
 }
 
-func (s *Service) RecordManualQuotaSignals(ctx context.Context, ownerID, planID string, signals []domain.QuotaSignal) error {
+func quotaProbeForCredential(credential domain.PlanQuotaCredential) PlanQuotaProbe {
+	return PlanQuotaProbe{
+		PlanID:                   credential.PlanID,
+		AccountID:                credential.AccountID,
+		AccountBindingGeneration: credential.AccountBindingGeneration,
+	}
+}
+
+func validQuotaProbeBinding(probe PlanQuotaProbe) bool {
+	return strings.TrimSpace(probe.PlanID) != "" &&
+		strings.TrimSpace(probe.AccountID) != "" &&
+		probe.AccountBindingGeneration >= 0
+}
+
+func (s *Service) RecordManualQuotaSignals(ctx context.Context, probe PlanQuotaProbe, signals []domain.QuotaSignal) error {
+	if !validQuotaProbeBinding(probe) || len(signals) == 0 {
+		return domain.ErrInvalidInput
+	}
+	return s.store.RecordAccountQuotaSignals(ctx, probe.PlanID, probe.AccountID, probe.AccountBindingGeneration, signals, s.now())
+}
+
+func (s *Service) RecordAutomaticQuotaSignals(ctx context.Context, probe PlanQuotaProbe, signals []domain.QuotaSignal) error {
+	if !validQuotaProbeBinding(probe) || len(signals) == 0 {
+		return domain.ErrInvalidInput
+	}
+	return s.store.RecordAccountQuotaSignals(ctx, probe.PlanID, probe.AccountID, probe.AccountBindingGeneration, signals, s.now())
+}
+
+func (s *Service) RecordResetQuotaSignals(ctx context.Context, probe PlanQuotaProbe, signals []domain.QuotaSignal) error {
+	if !validQuotaProbeBinding(probe) || !hasCompleteQuotaWindows(signals) {
+		return domain.ErrInvalidInput
+	}
+	return s.store.RecordQuotaResetSignals(ctx, probe.PlanID, probe.AccountID, probe.AccountBindingGeneration, signals, s.now())
+}
+
+func (s *Service) QuiescePlanQuota(ctx context.Context, ownerID, planID string) (PlanQuotaProbe, func(), error) {
+	plan, release, err := s.quiescePlanBinding(ctx, ownerID, planID)
+	if err != nil {
+		return PlanQuotaProbe{}, nil, err
+	}
 	credential, err := s.store.PlanQuotaCredential(ctx, planID, ownerID)
 	if err != nil {
-		return err
+		release()
+		return PlanQuotaProbe{}, nil, err
 	}
-	if len(signals) == 0 {
-		return domain.ErrInvalidInput
+	if credential.AccountID != plan.AccountID || credential.AccountBindingGeneration != plan.AccountBindingGeneration {
+		release()
+		return PlanQuotaProbe{}, nil, domain.ErrConflict
 	}
-	return s.store.RecordQuotaSignals(ctx, credential.AccountID, credential.OwnerMemberID, signals, "", s.now())
+	probe, err := s.preparePlanQuotaProbe(ctx, credential)
+	if err != nil {
+		release()
+		return PlanQuotaProbe{}, nil, err
+	}
+	return probe, release, nil
 }
 
-func (s *Service) RecordAutomaticQuotaSignals(ctx context.Context, userID, planID string, signals []domain.QuotaSignal) error {
-	credential, err := s.store.PlanQuotaCredentialForMember(ctx, planID, userID)
+func (s *Service) probeAccountQuota(ctx context.Context, ownerID, accountID string) (domain.Account, []domain.QuotaSignal, time.Time, error) {
+	account, err := s.store.AccountByID(ctx, accountID)
 	if err != nil {
-		return err
+		return domain.Account{}, nil, time.Time{}, err
 	}
-	if len(signals) == 0 {
-		return domain.ErrInvalidInput
+	if account.OwnerUserID != ownerID {
+		return domain.Account{}, nil, time.Time{}, domain.ErrForbidden
 	}
-	return s.store.RecordQuotaSignals(ctx, credential.AccountID, credential.OwnerMemberID, signals, "", s.now())
+	if account.Status != domain.StatusActive {
+		return domain.Account{}, nil, time.Time{}, domain.ErrAccountUnavailable
+	}
+	if s.quotaProber == nil {
+		return domain.Account{}, nil, time.Time{}, domain.ErrAccountUnavailable
+	}
+	accessToken, err := s.decryptAccountAccessToken(account)
+	if err != nil {
+		return domain.Account{}, nil, time.Time{}, err
+	}
+	if !account.TokenExpiresAt.After(s.now().Add(2 * time.Minute)) {
+		accessToken, _, err = s.refreshAccountToken(ctx, account, 2*time.Minute, true)
+		if err != nil {
+			return domain.Account{}, nil, time.Time{}, domain.ErrAccountUnavailable
+		}
+	}
+	if err := s.hydrateAccountProxy(&account); err != nil {
+		return domain.Account{}, nil, time.Time{}, err
+	}
+	signals, err := s.quotaProber.ProbeQuota(ctx, accessToken, account.ChatGPTAccountID, account.ProxyURL)
+	if err != nil {
+		return domain.Account{}, nil, time.Time{}, err
+	}
+	if !hasCompleteQuotaWindows(signals) {
+		return domain.Account{}, nil, time.Time{}, domain.ErrAccountUnavailable
+	}
+	return account, signals, s.now(), nil
 }
 
-func (s *Service) RecordResetQuotaSignals(ctx context.Context, ownerID, planID string, signals []domain.QuotaSignal) error {
-	credential, err := s.store.PlanQuotaCredential(ctx, planID, ownerID)
+func hasCompleteQuotaWindows(signals []domain.QuotaSignal) bool {
+	if len(signals) != 2 {
+		return false
+	}
+	has5H := false
+	has7D := false
+	for _, signal := range signals {
+		switch signal.WindowType {
+		case domain.Window5H:
+			if has5H {
+				return false
+			}
+			has5H = true
+		case domain.Window7D:
+			if has7D {
+				return false
+			}
+			has7D = true
+		default:
+			return false
+		}
+	}
+	return has5H && has7D
+}
+
+func (s *Service) quiesceAccounts(ctx context.Context, accountIDs ...string) (func(), error) {
+	if s.traffic == nil {
+		return func() {}, nil
+	}
+	release, err := s.traffic.quiesce(ctx, accountIDs...)
 	if err != nil {
-		return err
+		return nil, domain.ErrAccountUnavailable
 	}
-	if len(signals) == 0 {
-		return domain.ErrInvalidInput
+	return release, nil
+}
+
+func (s *Service) reserveAccountTraffic(ctx context.Context, accountID string) (func(), error) {
+	if s.traffic == nil {
+		return func() {}, nil
 	}
-	return s.store.RecordQuotaResetSignals(ctx, credential.AccountID, signals, s.now())
+	release, err := s.traffic.reserve(accountID, s.now())
+	if err != nil {
+		return nil, err
+	}
+	return release, nil
+}
+
+func (s *Service) quiescePlanBinding(ctx context.Context, ownerID, planID string, additionalAccountIDs ...string) (domain.Plan, func(), error) {
+	if s.traffic == nil {
+		plan, err := s.store.PlanBinding(ctx, planID, ownerID)
+		return plan, func() {}, err
+	}
+	plan, release, err := s.traffic.quiesceBinding(ctx, planID, func(ctx context.Context) (domain.Plan, error) {
+		return s.store.PlanBinding(ctx, planID, ownerID)
+	}, additionalAccountIDs...)
+	if err != nil {
+		return domain.Plan{}, nil, err
+	}
+	return plan, release, nil
 }

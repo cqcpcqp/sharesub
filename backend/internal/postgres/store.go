@@ -198,7 +198,7 @@ func (s *Store) ConsumeOAuthFlow(ctx context.Context, stateHash []byte, now time
 	return flow, tx.Commit(ctx)
 }
 
-func (s *Store) UpsertAccount(ctx context.Context, account domain.Account) (domain.Account, error) {
+func (s *Store) CreateOrRotateAccountAuthorization(ctx context.Context, account domain.Account, subscriptionObserved bool) (domain.Account, error) {
 	if account.FastPolicy == nil {
 		account.FastPolicy = make([]domain.FastPolicyRule, 0)
 	}
@@ -206,9 +206,16 @@ func (s *Store) UpsertAccount(ctx context.Context, account domain.Account) (doma
 	err := s.pool.QueryRow(ctx, `
 		INSERT INTO openai_accounts(id,owner_user_id,name,notes,email,chatgpt_account_id,plan_type,subscription_expires_at,access_token_ciphertext,refresh_token_ciphertext,proxy_url_ciphertext,max_concurrency,rpm_limit,fast_policy,token_expires_at,status,created_at,updated_at)
 		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$17)
-		ON CONFLICT(owner_user_id,chatgpt_account_id) DO UPDATE SET name=EXCLUDED.name,notes=EXCLUDED.notes,email=EXCLUDED.email,plan_type=EXCLUDED.plan_type,subscription_expires_at=EXCLUDED.subscription_expires_at,access_token_ciphertext=EXCLUDED.access_token_ciphertext,refresh_token_ciphertext=EXCLUDED.refresh_token_ciphertext,proxy_url_ciphertext=EXCLUDED.proxy_url_ciphertext,max_concurrency=EXCLUDED.max_concurrency,rpm_limit=EXCLUDED.rpm_limit,fast_policy=EXCLUDED.fast_policy,token_expires_at=EXCLUDED.token_expires_at,status='active',last_error='',updated_at=now()
+		ON CONFLICT(owner_user_id,chatgpt_account_id) DO UPDATE SET
+			email=EXCLUDED.email,
+			plan_type=EXCLUDED.plan_type,
+			subscription_expires_at=CASE WHEN $18 THEN EXCLUDED.subscription_expires_at ELSE openai_accounts.subscription_expires_at END,
+			access_token_ciphertext=EXCLUDED.access_token_ciphertext,
+			refresh_token_ciphertext=EXCLUDED.refresh_token_ciphertext,
+			token_expires_at=EXCLUDED.token_expires_at,
+			status='active',last_error='',updated_at=EXCLUDED.updated_at
 		RETURNING id,owner_user_id,name,notes,email,chatgpt_account_id,plan_type,subscription_expires_at,access_token_ciphertext,refresh_token_ciphertext,proxy_url_ciphertext,max_concurrency,rpm_limit,fast_policy,token_expires_at,status,last_error,created_at`,
-		account.ID, account.OwnerUserID, account.Name, account.Notes, account.Email, account.ChatGPTAccountID, account.PlanType, account.SubscriptionExpiresAt, account.AccessTokenCiphertext, account.RefreshTokenCiphertext, account.ProxyURLCiphertext, account.MaxConcurrency, account.RPMLimit, account.FastPolicy, account.TokenExpiresAt, account.Status, account.CreatedAt,
+		account.ID, account.OwnerUserID, account.Name, account.Notes, account.Email, account.ChatGPTAccountID, account.PlanType, account.SubscriptionExpiresAt, account.AccessTokenCiphertext, account.RefreshTokenCiphertext, account.ProxyURLCiphertext, account.MaxConcurrency, account.RPMLimit, account.FastPolicy, account.TokenExpiresAt, account.Status, account.CreatedAt, subscriptionObserved,
 	).Scan(&out.ID, &out.OwnerUserID, &out.Name, &out.Notes, &out.Email, &out.ChatGPTAccountID, &out.PlanType, &out.SubscriptionExpiresAt, &out.AccessTokenCiphertext, &out.RefreshTokenCiphertext, &out.ProxyURLCiphertext, &out.MaxConcurrency, &out.RPMLimit, &out.FastPolicy, &out.TokenExpiresAt, &out.Status, &out.LastError, &out.CreatedAt)
 	return out, mapError(err)
 }

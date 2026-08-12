@@ -273,15 +273,19 @@ func (s *Store) TransferPlanOwnership(ctx context.Context, planID, ownerID, memb
 	return plan, tx.Commit(ctx)
 }
 
-func (s *Store) RebindPlanAccount(ctx context.Context, planID, ownerID, accountID string, event domain.AuditEvent) (domain.Plan, error) {
+func (s *Store) RebindPlanAccount(ctx context.Context, planID, ownerID, accountID string, signals []domain.QuotaSignal, observedAt time.Time, event domain.AuditEvent) (domain.Plan, error) {
+	if len(signals) == 0 || observedAt.IsZero() {
+		return domain.Plan{}, domain.ErrInvalidInput
+	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
 	if err != nil {
 		return domain.Plan{}, err
 	}
 	defer tx.Rollback(ctx)
 	var actualOwner string
+	var currentGeneration int64
 	var currentAccountID *string
-	if err := tx.QueryRow(ctx, `SELECT owner_user_id,account_id FROM shared_plans WHERE id=$1 FOR UPDATE`, planID).Scan(&actualOwner, &currentAccountID); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT owner_user_id,account_id,account_binding_generation FROM shared_plans WHERE id=$1 FOR UPDATE`, planID).Scan(&actualOwner, &currentAccountID, &currentGeneration); err != nil {
 		return domain.Plan{}, mapError(err)
 	}
 	if actualOwner != ownerID {
@@ -308,8 +312,12 @@ func (s *Store) RebindPlanAccount(ctx context.Context, planID, ownerID, accountI
 	if alreadyBound {
 		return domain.Plan{}, domain.ErrAccountAlreadyBound
 	}
-	plan, err := scanPlan(tx.QueryRow(ctx, `UPDATE shared_plans SET account_id=$3,updated_at=$4 WHERE id=$1 AND owner_user_id=$2 RETURNING id,owner_user_id,account_id,name,description,status,visibility,public_slots,public_share_basis_points,allocation_mode,created_at,archived_at`, planID, ownerID, accountID, event.CreatedAt))
+	newGeneration := currentGeneration + 1
+	plan, err := scanPlan(tx.QueryRow(ctx, `UPDATE shared_plans SET account_id=$3,account_binding_generation=$4,account_bound_at=$5,updated_at=$6 WHERE id=$1 AND owner_user_id=$2 RETURNING id,owner_user_id,account_id,name,description,status,visibility,public_slots,public_share_basis_points,allocation_mode,created_at,archived_at`, planID, ownerID, accountID, newGeneration, observedAt, event.CreatedAt))
 	if err != nil {
+		return domain.Plan{}, err
+	}
+	if err := initializePlanAccountBinding(ctx, tx, planID, accountID, newGeneration, signals, observedAt); err != nil {
 		return domain.Plan{}, err
 	}
 	if firstBinding {
@@ -405,12 +413,12 @@ func (s *Store) ListPlanAuditEvents(ctx context.Context, planID, userID string) 
 func (s *Store) PlanQuotaCredential(ctx context.Context, planID, ownerID string) (domain.PlanQuotaCredential, error) {
 	var out domain.PlanQuotaCredential
 	err := s.pool.QueryRow(ctx, `
-		SELECT p.id,a.id,m.id,a.owner_user_id,a.chatgpt_account_id,a.access_token_ciphertext,a.refresh_token_ciphertext,a.proxy_url_ciphertext,a.token_expires_at
+		SELECT p.id,a.id,p.account_binding_generation,a.owner_user_id,a.chatgpt_account_id,a.access_token_ciphertext,a.refresh_token_ciphertext,a.proxy_url_ciphertext,a.token_expires_at
 		FROM shared_plans p
 		JOIN plan_members m ON m.plan_id=p.id AND m.user_id=$2 AND m.role='owner' AND m.status='active'
 		JOIN openai_accounts a ON a.id=p.account_id AND a.status='active'
 		WHERE p.id=$1 AND p.owner_user_id=$2 AND p.status='active'`, planID, ownerID,
-	).Scan(&out.PlanID, &out.AccountID, &out.OwnerMemberID, &out.AccountOwnerUserID, &out.ChatGPTAccountID, &out.AccessTokenCiphertext, &out.RefreshTokenCiphertext, &out.ProxyURLCiphertext, &out.TokenExpiresAt)
+	).Scan(&out.PlanID, &out.AccountID, &out.AccountBindingGeneration, &out.AccountOwnerUserID, &out.ChatGPTAccountID, &out.AccessTokenCiphertext, &out.RefreshTokenCiphertext, &out.ProxyURLCiphertext, &out.TokenExpiresAt)
 	if err != nil {
 		return domain.PlanQuotaCredential{}, mapError(err)
 	}
@@ -420,13 +428,12 @@ func (s *Store) PlanQuotaCredential(ctx context.Context, planID, ownerID string)
 func (s *Store) PlanQuotaCredentialForMember(ctx context.Context, planID, userID string) (domain.PlanQuotaCredential, error) {
 	var out domain.PlanQuotaCredential
 	err := s.pool.QueryRow(ctx, `
-		SELECT p.id,a.id,owner_member.id,a.owner_user_id,a.chatgpt_account_id,a.access_token_ciphertext,a.refresh_token_ciphertext,a.proxy_url_ciphertext,a.token_expires_at
+		SELECT p.id,a.id,p.account_binding_generation,a.owner_user_id,a.chatgpt_account_id,a.access_token_ciphertext,a.refresh_token_ciphertext,a.proxy_url_ciphertext,a.token_expires_at
 		FROM shared_plans p
 		JOIN plan_members viewer ON viewer.plan_id=p.id AND viewer.user_id=$2 AND viewer.status='active'
-		JOIN plan_members owner_member ON owner_member.plan_id=p.id AND owner_member.role='owner' AND owner_member.status='active'
 		JOIN openai_accounts a ON a.id=p.account_id AND a.status='active'
 		WHERE p.id=$1 AND p.status='active'`, planID, userID,
-	).Scan(&out.PlanID, &out.AccountID, &out.OwnerMemberID, &out.AccountOwnerUserID, &out.ChatGPTAccountID, &out.AccessTokenCiphertext, &out.RefreshTokenCiphertext, &out.ProxyURLCiphertext, &out.TokenExpiresAt)
+	).Scan(&out.PlanID, &out.AccountID, &out.AccountBindingGeneration, &out.AccountOwnerUserID, &out.ChatGPTAccountID, &out.AccessTokenCiphertext, &out.RefreshTokenCiphertext, &out.ProxyURLCiphertext, &out.TokenExpiresAt)
 	if err != nil {
 		return domain.PlanQuotaCredential{}, mapError(err)
 	}
@@ -492,6 +499,16 @@ func scanPlan(row pgx.Row) (domain.Plan, error) {
 	var plan domain.Plan
 	var accountID *string
 	err := row.Scan(&plan.ID, &plan.OwnerUserID, &accountID, &plan.Name, &plan.Description, &plan.Status, &plan.Visibility, &plan.PublicSlots, &plan.PublicShareBasisPoints, &plan.AllocationMode, &plan.CreatedAt, &plan.ArchivedAt)
+	if accountID != nil {
+		plan.AccountID = *accountID
+	}
+	return plan, mapError(err)
+}
+
+func scanPlanWithBinding(row pgx.Row) (domain.Plan, error) {
+	var plan domain.Plan
+	var accountID *string
+	err := row.Scan(&plan.ID, &plan.OwnerUserID, &accountID, &plan.Name, &plan.Description, &plan.Status, &plan.Visibility, &plan.PublicSlots, &plan.PublicShareBasisPoints, &plan.AllocationMode, &plan.CreatedAt, &plan.ArchivedAt, &plan.AccountBindingGeneration, &plan.AccountBoundAt)
 	if accountID != nil {
 		plan.AccountID = *accountID
 	}

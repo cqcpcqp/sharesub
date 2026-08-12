@@ -60,7 +60,11 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if _, err := pool.Exec(ctx, string(initial)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `CREATE TABLE schema_migrations (name TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now()); INSERT INTO schema_migrations(name) VALUES('001_initial.sql')`); err != nil {
+	if _, err := pool.Exec(ctx, `
+		CREATE TABLE schema_migrations (name TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now());
+		-- Temporarily mark 024 applied so the first migration pass stops at the
+		-- schema that existed immediately before this migration.
+		INSERT INTO schema_migrations(name) VALUES('001_initial.sql'),('024_plan_account_quota_baselines.sql')`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -71,13 +75,180 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	batch := &pgx.Batch{}
 	batch.Queue(`INSERT INTO users(id,email,password_hash,status,created_at,updated_at) VALUES('owner','owner@example.com','hash','active',$1,$1)`, now)
 	batch.Queue(`INSERT INTO openai_accounts(id,owner_user_id,email,chatgpt_account_id,plan_type,access_token_ciphertext,refresh_token_ciphertext,token_expires_at,status,created_at,updated_at) VALUES('account','owner','openai@example.com','chatgpt-account','plus',$2,$3,$4,'active',$1,$1)`, now, []byte("access"), []byte("refresh"), now.Add(time.Hour))
+	batch.Queue(`INSERT INTO openai_accounts(id,owner_user_id,email,chatgpt_account_id,plan_type,access_token_ciphertext,refresh_token_ciphertext,token_expires_at,status,created_at,updated_at) VALUES('account-without-snapshot','owner','no-snapshot@example.com','no-snapshot-chatgpt','plus',$2,$3,$4,'active',$1,$1)`, now, []byte("access"), []byte("refresh"), now.Add(time.Hour))
 	batch.Queue(`INSERT INTO shared_plans(id,owner_user_id,account_id,name,status,created_at,updated_at) VALUES('plan','owner','account','公开测试','active',$1,$1)`, now)
+	batch.Queue(`INSERT INTO shared_plans(id,owner_user_id,account_id,name,status,created_at,updated_at) VALUES('plan-without-snapshot','owner','account-without-snapshot','无快照测试','active',$1,$1)`, now)
 	batch.Queue(`INSERT INTO plan_members(id,plan_id,user_id,role,status,share_basis_points,created_at,updated_at) VALUES('owner-member','plan','owner','owner','active',6000,$1,$1)`, now)
+	batch.Queue(`INSERT INTO plan_members(id,plan_id,user_id,role,status,share_basis_points,created_at,updated_at) VALUES('owner-no-snapshot-member','plan-without-snapshot','owner','owner','active',6000,$1,$1)`, now)
 	batch.Queue(`INSERT INTO member_api_keys(id,member_id,user_id,name,key_prefix,key_hash,status,created_at) VALUES('legacy-key','owner-member','owner','旧 Key','sk-sharesub-old',$2,'active',$1)`, now, []byte("hash"))
+	batch.Queue(`INSERT INTO member_api_keys(id,member_id,user_id,name,key_prefix,key_hash,status,created_at) VALUES('legacy-no-snapshot-key','owner-no-snapshot-member','owner','无快照 Key','sk-sharesub-no-snapshot',$2,'active',$1)`, now, []byte("no-snapshot-hash"))
+	batch.Queue(`INSERT INTO account_quota_snapshots(account_id,window_type,window_start,reset_at,used_micros,updated_at) VALUES('account','5h',$1,$2,40000000,$1)`, now.Add(-time.Hour), now.Add(4*time.Hour))
+	batch.Queue(`INSERT INTO account_quota_snapshots(account_id,window_type,window_start,reset_at,used_micros,updated_at) VALUES('account','7d',$1,$2,60000000,$1)`, now.Add(-24*time.Hour), now.Add(6*24*time.Hour))
 	if err := pool.SendBatch(ctx, batch).Close(); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Migrate(ctx); err != nil {
+		t.Fatalf("migrate legacy schema through 022: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		DELETE FROM schema_migrations WHERE name='024_plan_account_quota_baselines.sql';
+		CREATE INDEX quota_usage_events_account_window_created_idx
+			ON quota_usage_events(account_id,window_type,window_start,created_at,id);
+		INSERT INTO schema_migrations(name) VALUES('023_member_quota_baseline_lookup.sql')`); err != nil {
+		t.Fatal(err)
+	}
+	legacyBatch := &pgx.Batch{}
+	legacyBatch.Queue(`INSERT INTO gateway_request_metrics(
+		request_id,api_key_id,plan_id,account_id,member_id,status_code,ttft_ms,duration_ms,created_at
+	) VALUES('legacy-binding-request','legacy-key','plan','account','owner-member',200,0,1,$1)`, now)
+	legacyBatch.Queue(`INSERT INTO gateway_metric_daily_rollups(
+		usage_day,user_id,plan_id,account_id,member_id,request_count,success_count,
+		input_tokens,output_tokens,cached_tokens,estimated_cost_micros
+	) VALUES($1,'owner','plan','account','owner-member',1,1,10,5,0,25)`, now.UTC().Truncate(24*time.Hour))
+	if err := pool.SendBatch(ctx, legacyBatch).Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Migrate(ctx); err != nil {
+		t.Fatalf("repeat migration: %v", err)
+	}
+	var migrationCount int64
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations WHERE name='024_plan_account_quota_baselines.sql'`).Scan(&migrationCount); err != nil || migrationCount != 1 {
+		t.Fatalf("024 migration registrations = %d, error = %v", migrationCount, err)
+	}
+	for _, obsoleteTable := range []string{"member_quota_windows", "quota_usage_events"} {
+		var exists bool
+		if err := pool.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, obsoleteTable).Scan(&exists); err != nil {
+			t.Fatal(err)
+		}
+		if exists {
+			t.Fatalf("obsolete quota attribution table %s still exists", obsoleteTable)
+		}
+	}
+	var obsoleteIndexExists bool
+	if err := pool.QueryRow(ctx, `SELECT to_regclass('quota_usage_events_account_window_created_idx') IS NOT NULL`).Scan(&obsoleteIndexExists); err != nil {
+		t.Fatal(err)
+	}
+	if obsoleteIndexExists {
+		t.Fatal("obsolete 023 quota attribution index still exists")
+	}
+	var legacyMetricGeneration, legacyRollupGeneration int64
+	if err := pool.QueryRow(ctx, `SELECT account_binding_generation FROM gateway_request_metrics WHERE request_id='legacy-binding-request'`).Scan(&legacyMetricGeneration); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT account_binding_generation FROM gateway_metric_daily_rollups WHERE plan_id='plan'`).Scan(&legacyRollupGeneration); err != nil {
+		t.Fatal(err)
+	}
+	if legacyMetricGeneration != 0 || legacyRollupGeneration != 0 {
+		t.Fatalf("legacy accounting generations = metric %d, rollup %d", legacyMetricGeneration, legacyRollupGeneration)
+	}
+	if err := store.RecordGatewayMetric(ctx, domain.GatewayMetric{
+		RequestID: "legacy-binding-request", APIKeyID: "legacy-key", PlanID: "plan", AccountID: "account",
+		MemberID: "owner-member", AccountBindingGeneration: 1, Model: "gpt-5.6-sol",
+		RequestedModel: "gpt-5.6-sol", UpstreamModel: "gpt-5.6-sol", BillingModel: "gpt-5.6-sol",
+		StatusCode: http.StatusOK, CreatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordGatewayMetric(ctx, domain.GatewayMetric{
+		RequestID: "legacy-binding-request", APIKeyID: "legacy-key", PlanID: "plan-without-snapshot", AccountID: "account",
+		MemberID: "owner-no-snapshot-member", AccountBindingGeneration: 0, Model: "gpt-5.6-sol",
+		RequestedModel: "gpt-5.6-sol", UpstreamModel: "gpt-5.6-sol", BillingModel: "gpt-5.6-sol",
+		StatusCode: http.StatusOK, CreatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var bindingMetricCount int64
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM gateway_request_metrics WHERE request_id='legacy-binding-request'`).Scan(&bindingMetricCount); err != nil || bindingMetricCount != 3 {
+		t.Fatalf("same request across binding generations = %d, error = %v", bindingMetricCount, err)
+	}
+	var legacyGeneration int64
+	var boundAt time.Time
+	if err := pool.QueryRow(ctx, `SELECT account_binding_generation,account_bound_at FROM shared_plans WHERE id='plan'`).Scan(&legacyGeneration, &boundAt); err != nil {
+		t.Fatal(err)
+	}
+	if legacyGeneration != 0 || boundAt.IsZero() {
+		t.Fatalf("legacy Plan binding = generation %d, bound at %s", legacyGeneration, boundAt)
+	}
+	rows, err := pool.Query(ctx, `SELECT window_type,baseline_used_micros,accounting_started_at FROM plan_account_quota_baselines WHERE plan_id='plan' ORDER BY window_type`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyBaselines := make(map[string]int64)
+	var baselineStartedAt time.Time
+	for rows.Next() {
+		var windowType string
+		var baseline int64
+		if err := rows.Scan(&windowType, &baseline, &baselineStartedAt); err != nil {
+			rows.Close()
+			t.Fatal(err)
+		}
+		legacyBaselines[windowType] = baseline
+		if baselineStartedAt.Before(now) {
+			rows.Close()
+			t.Fatalf("legacy baseline accounting started before migration: %s", baselineStartedAt)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		t.Fatal(err)
+	}
+	rows.Close()
+	if legacyBaselines[domain.Window5H] != 40_000_000 || legacyBaselines[domain.Window7D] != 60_000_000 || len(legacyBaselines) != 2 {
+		t.Fatalf("legacy Plan baselines = %+v", legacyBaselines)
+	}
+	var noSnapshotBaselineCount int64
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM plan_account_quota_baselines WHERE plan_id='plan-without-snapshot'`).Scan(&noSnapshotBaselineCount); err != nil || noSnapshotBaselineCount != 0 {
+		t.Fatalf("baseline rows for legacy Plan without snapshots = %d, error = %v", noSnapshotBaselineCount, err)
+	}
+	noSnapshotRoutes, err := store.ResolveGatewayRoutes(ctx, []byte("no-snapshot-hash"), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(noSnapshotRoutes.Candidates) != 1 || noSnapshotRoutes.Candidates[0].Plan.ID != "plan-without-snapshot" || noSnapshotRoutes.Candidates[0].UsageMicros != 0 || noSnapshotRoutes.Candidates[0].AccountUsageMicros != 0 {
+		t.Fatalf("legacy Plan without snapshots routes = %+v", noSnapshotRoutes.Candidates)
+	}
+	firstObservedAt := now.Add(time.Minute)
+	if err := store.RecordAccountQuotaSignals(ctx, "plan-without-snapshot", "account-without-snapshot", 0, []domain.QuotaSignal{
+		{WindowType: domain.Window5H, WindowStart: now, ResetAt: now.Add(5 * time.Hour), AccountUsedMicros: 35_000_000},
+		{WindowType: domain.Window7D, WindowStart: now.Add(-24 * time.Hour), ResetAt: now.Add(6 * 24 * time.Hour), AccountUsedMicros: 45_000_000},
+	}, firstObservedAt); err != nil {
+		t.Fatal(err)
+	}
+	rows, err = pool.Query(ctx, `SELECT window_type,baseline_used_micros,accounting_started_at FROM plan_account_quota_baselines WHERE plan_id='plan-without-snapshot'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstObservedBaselines := make(map[string]int64)
+	for rows.Next() {
+		var windowType string
+		var baseline int64
+		var accountingStartedAt time.Time
+		if err := rows.Scan(&windowType, &baseline, &accountingStartedAt); err != nil {
+			rows.Close()
+			t.Fatal(err)
+		}
+		if !accountingStartedAt.Equal(firstObservedAt) {
+			rows.Close()
+			t.Fatalf("first-observed baseline started at %s, want %s", accountingStartedAt, firstObservedAt)
+		}
+		firstObservedBaselines[windowType] = baseline
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		t.Fatal(err)
+	}
+	rows.Close()
+	if firstObservedBaselines[domain.Window5H] != 35_000_000 || firstObservedBaselines[domain.Window7D] != 45_000_000 || len(firstObservedBaselines) != 2 {
+		t.Fatalf("first-observed legacy baselines = %+v", firstObservedBaselines)
+	}
+	if _, err := pool.Exec(ctx, `
+		DELETE FROM gateway_request_metrics WHERE request_id='legacy-binding-request';
+		DELETE FROM gateway_metric_daily_rollups WHERE plan_id='plan';
+		DELETE FROM shared_plans WHERE id='plan-without-snapshot';
+		DELETE FROM openai_accounts WHERE id='account-without-snapshot'`); err != nil {
 		t.Fatal(err)
 	}
 	subscriptionExpiresAt := now.Add(30 * 24 * time.Hour)
@@ -149,12 +320,109 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if configuredAccount.Name != "团队主账号" || configuredAccount.Notes != "仅用于 Codex" || configuredAccount.MaxConcurrency != 6 || configuredAccount.RPMLimit != 90 || string(configuredAccount.ProxyURLCiphertext) != "encrypted-proxy" {
 		t.Fatalf("updated account configuration = %+v", configuredAccount)
 	}
+	if _, err := pool.Exec(ctx, `UPDATE openai_accounts SET status='refresh_required',last_error='expired credentials' WHERE id='account'`); err != nil {
+		t.Fatal(err)
+	}
+	var planAccountID string
+	var planBindingGeneration int64
+	var planBoundAt time.Time
+	if err := pool.QueryRow(ctx, `SELECT account_id,account_binding_generation,account_bound_at FROM shared_plans WHERE id='plan'`).Scan(&planAccountID, &planBindingGeneration, &planBoundAt); err != nil {
+		t.Fatal(err)
+	}
+	baselineRows, err := pool.Query(ctx, `SELECT window_type,baseline_used_micros,accounting_started_at FROM plan_account_quota_baselines WHERE plan_id='plan' ORDER BY window_type`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type storedBaseline struct {
+		windowType string
+		used       int64
+		startedAt  time.Time
+	}
+	baselinesBeforeRotation := make([]storedBaseline, 0, 2)
+	for baselineRows.Next() {
+		var baseline storedBaseline
+		if err := baselineRows.Scan(&baseline.windowType, &baseline.used, &baseline.startedAt); err != nil {
+			baselineRows.Close()
+			t.Fatal(err)
+		}
+		baselinesBeforeRotation = append(baselinesBeforeRotation, baseline)
+	}
+	if err := baselineRows.Err(); err != nil {
+		baselineRows.Close()
+		t.Fatal(err)
+	}
+	baselineRows.Close()
+	rotatedSubscriptionExpiresAt := subscriptionExpiresAt.Add(24 * time.Hour)
+	rotatedAccount, err := store.CreateOrRotateAccountAuthorization(ctx, domain.Account{
+		ID: "discarded-new-id", OwnerUserID: "owner", Name: "不得覆盖名称", Notes: "不得覆盖备注",
+		Email: "rotated@example.com", ChatGPTAccountID: "chatgpt-account", PlanType: "pro",
+		SubscriptionExpiresAt: &rotatedSubscriptionExpiresAt,
+		AccessTokenCiphertext: []byte("rotated-access"), RefreshTokenCiphertext: []byte("rotated-refresh"),
+		ProxyURLCiphertext: []byte("discarded-proxy"), MaxConcurrency: 1, RPMLimit: 2,
+		FastPolicy: []domain.FastPolicyRule{{Action: "discarded"}}, TokenExpiresAt: now.Add(2 * time.Hour),
+		Status: domain.StatusActive, CreatedAt: now.Add(time.Hour),
+	}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rotatedAccount.ID != "account" || rotatedAccount.Name != "团队主账号" || rotatedAccount.Notes != "仅用于 Codex" || rotatedAccount.Email != "rotated@example.com" || rotatedAccount.PlanType != "pro" || rotatedAccount.SubscriptionExpiresAt == nil || !rotatedAccount.SubscriptionExpiresAt.Equal(rotatedSubscriptionExpiresAt) || string(rotatedAccount.AccessTokenCiphertext) != "rotated-access" || string(rotatedAccount.RefreshTokenCiphertext) != "rotated-refresh" || string(rotatedAccount.ProxyURLCiphertext) != "encrypted-proxy" || rotatedAccount.MaxConcurrency != 6 || rotatedAccount.RPMLimit != 90 || rotatedAccount.Status != domain.StatusActive || rotatedAccount.LastError != "" || !rotatedAccount.CreatedAt.Equal(now) {
+		t.Fatalf("rotated account = %+v", rotatedAccount)
+	}
+	var bindingAfterRotation struct {
+		accountID  string
+		generation int64
+		boundAt    time.Time
+	}
+	if err := pool.QueryRow(ctx, `SELECT account_id,account_binding_generation,account_bound_at FROM shared_plans WHERE id='plan'`).Scan(&bindingAfterRotation.accountID, &bindingAfterRotation.generation, &bindingAfterRotation.boundAt); err != nil {
+		t.Fatal(err)
+	}
+	if bindingAfterRotation.accountID != planAccountID || bindingAfterRotation.generation != planBindingGeneration || !bindingAfterRotation.boundAt.Equal(planBoundAt) {
+		t.Fatalf("Plan binding changed during authorization rotation: before=(%s,%d,%s) after=(%s,%d,%s)", planAccountID, planBindingGeneration, planBoundAt, bindingAfterRotation.accountID, bindingAfterRotation.generation, bindingAfterRotation.boundAt)
+	}
+	baselineRows, err = pool.Query(ctx, `SELECT window_type,baseline_used_micros,accounting_started_at FROM plan_account_quota_baselines WHERE plan_id='plan' ORDER BY window_type`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baselinesAfterRotation := make([]storedBaseline, 0, 2)
+	for baselineRows.Next() {
+		var baseline storedBaseline
+		if err := baselineRows.Scan(&baseline.windowType, &baseline.used, &baseline.startedAt); err != nil {
+			baselineRows.Close()
+			t.Fatal(err)
+		}
+		baselinesAfterRotation = append(baselinesAfterRotation, baseline)
+	}
+	if err := baselineRows.Err(); err != nil {
+		baselineRows.Close()
+		t.Fatal(err)
+	}
+	baselineRows.Close()
+	if len(baselinesAfterRotation) != len(baselinesBeforeRotation) {
+		t.Fatalf("baseline count changed during authorization rotation: before=%+v after=%+v", baselinesBeforeRotation, baselinesAfterRotation)
+	}
+	for index := range baselinesBeforeRotation {
+		if baselinesAfterRotation[index].windowType != baselinesBeforeRotation[index].windowType || baselinesAfterRotation[index].used != baselinesBeforeRotation[index].used || !baselinesAfterRotation[index].startedAt.Equal(baselinesBeforeRotation[index].startedAt) {
+			t.Fatalf("baseline changed during authorization rotation: before=%+v after=%+v", baselinesBeforeRotation, baselinesAfterRotation)
+		}
+	}
+	failedSubscriptionRotation, err := store.CreateOrRotateAccountAuthorization(ctx, domain.Account{
+		ID: "another-discarded-id", OwnerUserID: "owner", Name: "仍不得覆盖", Email: "again@example.com",
+		ChatGPTAccountID: "chatgpt-account", PlanType: "team", AccessTokenCiphertext: []byte("again-access"),
+		RefreshTokenCiphertext: []byte("again-refresh"), TokenExpiresAt: now.Add(3 * time.Hour), Status: domain.StatusActive,
+		CreatedAt: now.Add(2 * time.Hour),
+	}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failedSubscriptionRotation.SubscriptionExpiresAt == nil || !failedSubscriptionRotation.SubscriptionExpiresAt.Equal(rotatedSubscriptionExpiresAt) {
+		t.Fatalf("failed subscription query cleared existing expiry: %+v", failedSubscriptionRotation.SubscriptionExpiresAt)
+	}
 	if _, err := pool.Exec(ctx, `INSERT INTO openai_accounts(id,owner_user_id,name,notes,email,chatgpt_account_id,plan_type,access_token_ciphertext,refresh_token_ciphertext,max_concurrency,rpm_limit,token_expires_at,status,created_at,updated_at) VALUES('later-account','owner','稍后绑定账号','','later@example.com','later-chatgpt','plus',$2,$3,0,0,$4,'active',$1,$1)`, now, []byte("access"), []byte("refresh"), now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	unboundPlan := domain.Plan{ID: "unbound-plan", OwnerUserID: "owner", Name: "先探索的 Plan", Status: domain.StatusActive, Visibility: domain.VisibilityPrivate, AllocationMode: domain.AllocationFixed, CreatedAt: now}
 	unboundOwner := domain.Member{ID: "unbound-owner-member", PlanID: unboundPlan.ID, UserID: "owner", Role: domain.RoleOwner, Status: domain.StatusActive, ShareBasisPoints: 0, CreatedAt: now}
-	if err := store.CreatePlan(ctx, unboundPlan, unboundOwner, audit("create-unbound", "owner", unboundPlan.ID)); err != nil {
+	if err := store.CreatePlan(ctx, unboundPlan, unboundOwner, nil, time.Time{}, audit("create-unbound", "owner", unboundPlan.ID)); err != nil {
 		t.Fatal(err)
 	}
 	unboundDetail, err := store.PlanDetail(ctx, unboundPlan.ID, "owner", now.Truncate(24*time.Hour), now.Add(time.Minute))
@@ -213,10 +481,17 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if err := store.CreateAPIKey(ctx, unboundKey, []domain.APIKeyRoute{{PlanID: unboundPlan.ID, Priority: 100, Enabled: true}}); !errors.Is(err, domain.ErrForbidden) {
 		t.Fatalf("create key for unbound plan error = %v, want forbidden", err)
 	}
-	if _, err := store.UpdatePlanPublication(ctx, "owner", unboundPlan.ID, domain.VisibilityPrivate, 0, 0, audit("unpublish-unbound", "owner", unboundPlan.ID)); err != nil {
+	// This legacy workflow has already approved a public member, so the
+	// publication API correctly refuses to reduce public_slots below one. The
+	// remainder of this fixture expects only the original Plan to stay public.
+	if _, err := pool.Exec(ctx, `UPDATE shared_plans SET visibility='private',public_slots=0,public_share_basis_points=0 WHERE id=$1`, unboundPlan.ID); err != nil {
 		t.Fatal(err)
 	}
-	boundPlan, err := store.RebindPlanAccount(ctx, unboundPlan.ID, "owner", "later-account", audit("bind-unbound", "owner", unboundPlan.ID))
+	bindSignals := []domain.QuotaSignal{
+		{WindowType: domain.Window5H, WindowStart: now, ResetAt: now.Add(5 * time.Hour), AccountUsedMicros: 20_000_000},
+		{WindowType: domain.Window7D, WindowStart: now, ResetAt: now.Add(7 * 24 * time.Hour), AccountUsedMicros: 30_000_000},
+	}
+	boundPlan, err := store.RebindPlanAccount(ctx, unboundPlan.ID, "owner", "later-account", bindSignals, now, audit("bind-unbound", "owner", unboundPlan.ID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +532,7 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(publicPlans) != 1 || publicPlans[0].OwnerAvatarURL != updatedOwner.AvatarURL || publicPlans[0].SubscriptionExpiresAt == nil || !publicPlans[0].SubscriptionExpiresAt.Equal(subscriptionExpiresAt) {
+	if len(publicPlans) != 1 || publicPlans[0].OwnerAvatarURL != updatedOwner.AvatarURL || publicPlans[0].SubscriptionExpiresAt == nil || !publicPlans[0].SubscriptionExpiresAt.Equal(rotatedSubscriptionExpiresAt) {
 		t.Fatalf("public plan owner avatar = %+v", publicPlans)
 	}
 	application, err := store.CreateJoinApplication(ctx, domain.JoinApplication{ID: "application", PlanID: "plan", UserID: "applicant", Status: "pending", CreatedAt: now}, audit("apply-plan", "applicant", "plan"))
@@ -281,7 +556,7 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if detail.Members[0].AvatarURL != updatedOwner.AvatarURL {
 		t.Fatalf("plan owner avatar = %q", detail.Members[0].AvatarURL)
 	}
-	if detail.Account.Name != "团队主账号" || detail.Account.Notes != "仅用于 Codex" || detail.Account.Email != "openai@example.com" || detail.Account.ChatGPTAccountID != "chatgpt-account" || detail.Account.MaxConcurrency != 6 || detail.Account.RPMLimit != 90 || string(detail.Account.ProxyURLCiphertext) != "encrypted-proxy" {
+	if detail.Account.Name != "团队主账号" || detail.Account.Notes != "仅用于 Codex" || detail.Account.Email != "again@example.com" || detail.Account.ChatGPTAccountID != "chatgpt-account" || detail.Account.MaxConcurrency != 6 || detail.Account.RPMLimit != 90 || string(detail.Account.ProxyURLCiphertext) != "encrypted-proxy" {
 		t.Fatalf("member-visible account configuration = %+v", detail.Account)
 	}
 	encodedAccount, err := json.Marshal(detail.Account)
@@ -305,7 +580,11 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	}
 	sharedPlan := domain.Plan{ID: "shared-plan", OwnerUserID: "owner", AccountID: "shared-account", Name: "共享额度测试", Status: domain.StatusActive, Visibility: domain.VisibilityPrivate, AllocationMode: domain.AllocationShared, CreatedAt: now}
 	sharedOwner := domain.Member{ID: "shared-owner-member", PlanID: sharedPlan.ID, UserID: "owner", Role: domain.RoleOwner, Status: domain.StatusActive, ShareBasisPoints: 0, CreatedAt: now}
-	if err := store.CreatePlan(ctx, sharedPlan, sharedOwner, audit("create-shared", "owner", sharedPlan.ID)); err != nil {
+	sharedSignals := []domain.QuotaSignal{
+		{WindowType: domain.Window5H, WindowStart: now, ResetAt: now.Add(5 * time.Hour), AccountUsedMicros: 0},
+		{WindowType: domain.Window7D, WindowStart: now, ResetAt: now.Add(7 * 24 * time.Hour), AccountUsedMicros: 0},
+	}
+	if err := store.CreatePlan(ctx, sharedPlan, sharedOwner, sharedSignals, now, audit("create-shared", "owner", sharedPlan.ID)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.UpdatePlanPublication(ctx, "owner", sharedPlan.ID, domain.VisibilityPublic, 2, 0, audit("publish-shared", "owner", sharedPlan.ID)); err != nil {
@@ -346,7 +625,7 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 		t.Fatalf("shared invite nonzero share error = %v, want invalid input", err)
 	}
 	quotaResetAt := time.Now().UTC().Add(time.Hour)
-	if _, err := pool.Exec(ctx, `INSERT INTO account_quota_snapshots(account_id,window_type,window_start,reset_at,used_micros,updated_at) VALUES('account','5h',$1,$2,100000000,$1)`, now, quotaResetAt); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO account_quota_snapshots(account_id,window_type,window_start,reset_at,used_micros,updated_at) VALUES('account','5h',$1,$2,100000000,$1) ON CONFLICT(account_id,window_type) DO UPDATE SET window_start=EXCLUDED.window_start,reset_at=EXCLUDED.reset_at,used_micros=EXCLUDED.used_micros,updated_at=EXCLUDED.updated_at`, now, quotaResetAt); err != nil {
 		t.Fatal(err)
 	}
 	exhausted, err := store.AccountQuotaExhausted(ctx, "account", now)
@@ -355,6 +634,11 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	}
 	if !exhausted {
 		t.Fatal("shared account at 100% was not exhausted")
+	}
+	if err := store.RecordAccountQuotaSignals(ctx, "plan", "account", 0, []domain.QuotaSignal{{
+		WindowType: domain.Window5H, WindowStart: now, ResetAt: quotaResetAt, AccountUsedMicros: 100_000_000,
+	}}, now); err != nil {
+		t.Fatal(err)
 	}
 
 	if err := store.RecordGatewayMetric(ctx, domain.GatewayMetric{
@@ -419,8 +703,10 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	}
 	memberShares := make(map[string]int64)
 	for _, memberQuota := range usageDetail.Insights.MemberQuotas {
-		if len(memberQuota.Windows) == 1 && memberQuota.Windows[0].WindowType == domain.Window5H {
-			memberShares[memberQuota.MemberID] = memberQuota.Windows[0].UsedMicros
+		for _, window := range memberQuota.Windows {
+			if window.WindowType == domain.Window5H {
+				memberShares[memberQuota.MemberID] = window.UsedMicros
+			}
 		}
 	}
 	if memberShares["owner-member"] != 87_179_487 || memberShares["applicant-member"] != 12_820_512 {
@@ -436,11 +722,11 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 		t.Fatalf("plan recent usage = %+v", usageDetail.Insights.RecentUsage)
 	}
 	adminOverview, err := store.AdminOverview(ctx, now.Add(-24*time.Hour))
-	if err != nil || adminOverview.UserCount != 4 || adminOverview.Requests24H != 2 || adminOverview.Tokens24H != 11500 {
+	if err != nil || adminOverview.UserCount != 5 || adminOverview.Requests24H != 2 || adminOverview.Tokens24H != 11500 {
 		t.Fatalf("admin overview = %+v, error = %v", adminOverview, err)
 	}
 	adminUsers, err := store.AdminListUsers(ctx)
-	if err != nil || len(adminUsers) != 4 {
+	if err != nil || len(adminUsers) != 5 {
 		t.Fatalf("admin users = %+v, error = %v", adminUsers, err)
 	}
 	adminAccounts, err := store.AdminListAccounts(ctx)
@@ -545,23 +831,31 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 
 	duplicatePlan := domain.Plan{ID: "duplicate-account-plan", OwnerUserID: "owner", AccountID: sharedPlan.AccountID, Name: "重复账号", Status: domain.StatusActive, Visibility: domain.VisibilityPrivate, AllocationMode: domain.AllocationShared, CreatedAt: now}
 	duplicateOwner := domain.Member{ID: "duplicate-owner", PlanID: duplicatePlan.ID, UserID: "owner", Role: domain.RoleOwner, Status: domain.StatusActive, CreatedAt: now}
-	if err := store.CreatePlan(ctx, duplicatePlan, duplicateOwner, audit("duplicate-account-plan", "owner", duplicatePlan.ID)); !errors.Is(err, domain.ErrConflict) {
+	if err := store.CreatePlan(ctx, duplicatePlan, duplicateOwner, sharedSignals, now, audit("duplicate-account-plan", "owner", duplicatePlan.ID)); !errors.Is(err, domain.ErrConflict) {
 		t.Fatalf("second Plan for account error = %v, want conflict", err)
 	}
 
-	baselineSignal := domain.QuotaSignal{WindowType: domain.Window5H, WindowStart: now, ResetAt: now.Add(5 * time.Hour), AccountUsedMicros: 0}
-	if err := store.RecordQuotaSignals(ctx, sharedPlan.AccountID, "shared-member", []domain.QuotaSignal{baselineSignal}, "shared-quota-baseline", now); err != nil {
-		t.Fatal(err)
-	}
 	signal := domain.QuotaSignal{WindowType: domain.Window5H, WindowStart: now, ResetAt: now.Add(5 * time.Hour), AccountUsedMicros: 100_000_000}
-	if err := store.RecordQuotaSignals(ctx, sharedPlan.AccountID, "shared-member", []domain.QuotaSignal{signal}, "shared-quota-request", now); err != nil {
+	if err := store.RecordGatewayMetric(ctx, domain.GatewayMetric{
+		RequestID: "shared-quota-cost", APIKeyID: "invitee-key", PlanID: sharedPlan.ID, AccountID: sharedPlan.AccountID,
+		MemberID: "shared-member", AccountBindingGeneration: 1, Model: "gpt-5.6-sol",
+		RequestedModel: "gpt-5.6-sol", UpstreamModel: "gpt-5.6-sol", BillingModel: "gpt-5.6-sol",
+		StatusCode: http.StatusOK, AccountCostMicros: 1, CreatedAt: now,
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if exhausted, err := store.MemberQuotaExhausted(ctx, "shared-member", sharedPlan.AccountID, 10000, now); err != nil || !exhausted {
+	if err := store.RecordAccountQuotaSignals(ctx, sharedPlan.ID, sharedPlan.AccountID, 1, []domain.QuotaSignal{signal}, now); err != nil {
+		t.Fatal(err)
+	}
+	quotaCheckAt := now.Add(time.Second)
+	if exhausted, err := store.MemberQuotaExhausted(ctx, "shared-member", sharedPlan.ID, sharedPlan.AccountID, 1, 10000, quotaCheckAt); err != nil || !exhausted {
 		t.Fatalf("old account member quota exhausted = %v, %v", exhausted, err)
 	}
-	resetSignal := domain.QuotaSignal{WindowType: domain.Window5H, WindowStart: now, ResetAt: signal.ResetAt, AccountUsedMicros: 0}
-	if err := store.RecordQuotaResetSignals(ctx, sharedPlan.AccountID, []domain.QuotaSignal{resetSignal}, now.Add(time.Minute)); err != nil {
+	resetSignals := []domain.QuotaSignal{
+		{WindowType: domain.Window5H, WindowStart: now, ResetAt: signal.ResetAt, AccountUsedMicros: 0},
+		{WindowType: domain.Window7D, WindowStart: now, ResetAt: now.Add(7 * 24 * time.Hour), AccountUsedMicros: 0},
+	}
+	if err := store.RecordQuotaResetSignals(ctx, sharedPlan.ID, sharedPlan.AccountID, 1, resetSignals, now.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	var resetUsedMicros int64
@@ -571,7 +865,7 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if resetUsedMicros != 0 {
 		t.Fatalf("reset account used micros = %d, want 0", resetUsedMicros)
 	}
-	if exhausted, err := store.MemberQuotaExhausted(ctx, "shared-member", sharedPlan.AccountID, 10000, now); err != nil || exhausted {
+	if exhausted, err := store.MemberQuotaExhausted(ctx, "shared-member", sharedPlan.ID, sharedPlan.AccountID, 1, 10000, now.Add(time.Minute)); err != nil || exhausted {
 		t.Fatalf("member quota after official reset exhausted = %v, %v", exhausted, err)
 	}
 
@@ -585,14 +879,18 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO openai_accounts(id,owner_user_id,name,notes,email,chatgpt_account_id,plan_type,access_token_ciphertext,refresh_token_ciphertext,max_concurrency,rpm_limit,token_expires_at,status,created_at,updated_at) VALUES('second-account','second','接管账号','','second-openai@example.com','second-chatgpt','plus',$2,$3,0,0,$4,'active',$1,$1)`, now, []byte("access"), []byte("refresh"), now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	rebound, err := store.RebindPlanAccount(ctx, sharedPlan.ID, "second", "second-account", audit("rebind-shared", "second", sharedPlan.ID))
+	rebindSignals := []domain.QuotaSignal{
+		{WindowType: domain.Window5H, WindowStart: now, ResetAt: now.Add(5 * time.Hour), AccountUsedMicros: 10_000_000},
+		{WindowType: domain.Window7D, WindowStart: now, ResetAt: now.Add(7 * 24 * time.Hour), AccountUsedMicros: 15_000_000},
+	}
+	rebound, err := store.RebindPlanAccount(ctx, sharedPlan.ID, "second", "second-account", rebindSignals, now, audit("rebind-shared", "second", sharedPlan.ID))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if rebound.AccountID != "second-account" {
 		t.Fatalf("rebound Plan = %+v", rebound)
 	}
-	if exhausted, err := store.MemberQuotaExhausted(ctx, "shared-member", "second-account", 10000, now); err != nil || exhausted {
+	if exhausted, err := store.MemberQuotaExhausted(ctx, "shared-member", sharedPlan.ID, "second-account", 2, 10000, now); err != nil || exhausted {
 		t.Fatalf("new account inherited old quota: exhausted=%v err=%v", exhausted, err)
 	}
 	if _, err := store.PlanQuotaCredential(ctx, sharedPlan.ID, "second"); err != nil {
@@ -600,8 +898,8 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	}
 	if credential, err := store.PlanQuotaCredentialForMember(ctx, sharedPlan.ID, "owner"); err != nil {
 		t.Fatal(err)
-	} else if credential.OwnerMemberID != "shared-member" {
-		t.Fatalf("member-triggered quota credential owner = %q, want shared-member", credential.OwnerMemberID)
+	} else if credential.AccountBindingGeneration != 2 {
+		t.Fatalf("member-triggered quota credential generation = %d, want 2", credential.AccountBindingGeneration)
 	}
 	events, err := store.ListPlanAuditEvents(ctx, sharedPlan.ID, "owner")
 	if err != nil {
@@ -649,7 +947,7 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if _, err := store.PlanQuotaCredentialForMember(ctx, sharedPlan.ID, "owner"); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("archived Plan member quota credential error = %v, want not found", err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO shared_plans(id,owner_user_id,account_id,name,status,visibility,allocation_mode,archived_at,created_at,updated_at) VALUES('legacy-duplicate-plan','second','second-account','旧归档 Plan','archived','private','shared',$1,$1,$1)`, now); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO shared_plans(id,owner_user_id,account_id,name,status,visibility,allocation_mode,account_binding_generation,account_bound_at,archived_at,created_at,updated_at) VALUES('legacy-duplicate-plan','second','second-account','旧归档 Plan','archived','private','shared',1,$1,$1,$1,$1)`, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO plan_members(id,plan_id,user_id,role,status,share_basis_points,created_at,updated_at) VALUES('legacy-duplicate-owner','legacy-duplicate-plan','second','owner','active',0,$1,$1)`, now); err != nil {
@@ -677,8 +975,8 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 
 	cleanupNow := now.Add(91 * 24 * time.Hour)
 	cleaned, err := store.CleanupResources(ctx, cleanupNow, RetentionPolicy{
-		GatewayMetrics: 90 * 24 * time.Hour, QuotaEvents: 90 * 24 * time.Hour,
-		AuditEvents: 365 * 24 * time.Hour, ReadNotifications: 90 * 24 * time.Hour,
+		GatewayMetrics: 90 * 24 * time.Hour,
+		AuditEvents:    365 * 24 * time.Hour, ReadNotifications: 90 * 24 * time.Hour,
 		TerminalRecords: 90 * 24 * time.Hour,
 	})
 	if err != nil {
@@ -738,7 +1036,7 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	}
 }
 
-func TestFixedQuotaUsesCostWeightedAccountUsage(t *testing.T) {
+func TestFixedQuotaUsesCurrentBindingCostsAfterAccountBaseline(t *testing.T) {
 	databaseURL := os.Getenv("SHARESUB_TEST_DATABASE_URL")
 	if databaseURL == "" {
 		t.Skip("SHARESUB_TEST_DATABASE_URL is not set")
@@ -776,38 +1074,80 @@ func TestFixedQuotaUsesCostWeightedAccountUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	now := time.Date(2026, 8, 7, 12, 0, 0, 0, time.UTC)
+	now := time.Now().UTC().Truncate(time.Second)
 	batch := &pgx.Batch{}
 	batch.Queue(`INSERT INTO users(id,username,email,password_hash,status,created_at,updated_at) VALUES('quota-owner','quota-owner','quota-owner@example.com','hash','active',$1,$1)`, now)
 	batch.Queue(`INSERT INTO users(id,username,email,password_hash,status,created_at,updated_at) VALUES('quota-member','quota-member','quota-member@example.com','hash','active',$1,$1)`, now)
 	batch.Queue(`INSERT INTO openai_accounts(id,owner_user_id,name,email,chatgpt_account_id,plan_type,access_token_ciphertext,refresh_token_ciphertext,token_expires_at,status,created_at,updated_at) VALUES('quota-account','quota-owner','额度测试账号','quota@example.com','quota-chatgpt','plus',$2,$3,$4,'active',$1,$1)`, now, []byte("access"), []byte("refresh"), now.Add(time.Hour))
-	batch.Queue(`INSERT INTO shared_plans(id,owner_user_id,account_id,name,status,visibility,allocation_mode,created_at,updated_at) VALUES('quota-plan','quota-owner','quota-account','固定额度测试','active','private','fixed',$1,$1)`, now)
+	batch.Queue(`INSERT INTO shared_plans(id,owner_user_id,account_id,name,status,visibility,allocation_mode,account_binding_generation,account_bound_at,created_at,updated_at) VALUES('quota-plan','quota-owner','quota-account','固定额度测试','active','private','fixed',1,$1,$1,$1)`, now)
 	batch.Queue(`INSERT INTO plan_members(id,plan_id,user_id,role,status,share_basis_points,created_at,updated_at) VALUES('quota-owner-member','quota-plan','quota-owner','owner','active',3000,$1,$1)`, now)
 	batch.Queue(`INSERT INTO plan_members(id,plan_id,user_id,role,status,share_basis_points,created_at,updated_at) VALUES('quota-member-member','quota-plan','quota-member','member','active',1100,$1,$1)`, now)
 	batch.Queue(`INSERT INTO api_keys(id,user_id,name,key_prefix,key_hash,key_ciphertext,strategy,status,created_at,updated_at) VALUES('quota-key','quota-owner','额度测试 Key','sk-sharesub-quota',$2,$3,'balanced','active',$1,$1)`, now, []byte("quota-hash"), []byte("ciphertext"))
 	batch.Queue(`INSERT INTO api_key_plans(api_key_id,plan_id,priority,enabled) VALUES('quota-key','quota-plan',1,true)`)
 	batch.Queue(`INSERT INTO account_quota_snapshots(account_id,window_type,window_start,reset_at,used_micros,updated_at) VALUES('quota-account','5h',$1,$2,40000000,$3)`, now.Add(-time.Hour), now.Add(4*time.Hour), now)
+	batch.Queue(`INSERT INTO account_quota_snapshots(account_id,window_type,window_start,reset_at,used_micros,updated_at) VALUES('quota-account','7d',$1,$2,20000000,$3)`, now.Add(-24*time.Hour), now.Add(6*24*time.Hour), now)
+	batch.Queue(`INSERT INTO plan_account_quota_baselines(plan_id,account_id,account_binding_generation,window_type,window_start,reset_at,baseline_used_micros,accounting_started_at,updated_at) VALUES('quota-plan','quota-account',1,'5h',$1,$2,40000000,$3,$3)`, now.Add(-time.Hour), now.Add(4*time.Hour), now)
+	batch.Queue(`INSERT INTO plan_account_quota_baselines(plan_id,account_id,account_binding_generation,window_type,window_start,reset_at,baseline_used_micros,accounting_started_at,updated_at) VALUES('quota-plan','quota-account',1,'7d',$1,$2,20000000,$3,$3)`, now.Add(-24*time.Hour), now.Add(6*24*time.Hour), now)
 	if err := pool.SendBatch(ctx, batch).Close(); err != nil {
 		t.Fatal(err)
 	}
 
 	for _, metric := range []domain.GatewayMetric{
-		{RequestID: "quota-owner-request", APIKeyID: "quota-key", PlanID: "quota-plan", AccountID: "quota-account", MemberID: "quota-owner-member", Model: "gpt-5.6-sol", RequestedModel: "gpt-5.6-sol", UpstreamModel: "gpt-5.6-sol", BillingModel: "gpt-5.6-sol", StatusCode: http.StatusOK, AccountCostMicros: 300, CreatedAt: now},
-		{RequestID: "quota-member-request", APIKeyID: "quota-key", PlanID: "quota-plan", AccountID: "quota-account", MemberID: "quota-member-member", Model: "gpt-5.6-sol", RequestedModel: "gpt-5.6-sol", UpstreamModel: "gpt-5.6-sol", BillingModel: "gpt-5.6-sol", StatusCode: http.StatusOK, AccountCostMicros: 100, CreatedAt: now},
+		{RequestID: "quota-owner-request", APIKeyID: "quota-key", PlanID: "quota-plan", AccountID: "quota-account", MemberID: "quota-owner-member", AccountBindingGeneration: 1, Model: "gpt-5.6-sol", RequestedModel: "gpt-5.6-sol", UpstreamModel: "gpt-5.6-sol", BillingModel: "gpt-5.6-sol", StatusCode: http.StatusOK, AccountCostMicros: 300, CreatedAt: now},
+		{RequestID: "quota-member-request", APIKeyID: "quota-key", PlanID: "quota-plan", AccountID: "quota-account", MemberID: "quota-member-member", AccountBindingGeneration: 1, Model: "gpt-5.6-sol", RequestedModel: "gpt-5.6-sol", UpstreamModel: "gpt-5.6-sol", BillingModel: "gpt-5.6-sol", StatusCode: http.StatusOK, AccountCostMicros: 100, CreatedAt: now},
 	} {
 		if err := store.RecordGatewayMetric(ctx, metric); err != nil {
 			t.Fatal(err)
 		}
 	}
+	if err := store.RecordAccountQuotaSignals(ctx, "quota-plan", "quota-account", 1, []domain.QuotaSignal{{
+		WindowType: domain.Window5H, WindowStart: now.Add(-time.Hour), ResetAt: now.Add(4 * time.Hour), AccountUsedMicros: 80_000_000,
+	}}, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	var baseline, current, ownerCost, totalCost int64
+	if err := pool.QueryRow(ctx, `
+		SELECT b.baseline_used_micros,q.used_micros,
+			COALESCE(sum(g.estimated_cost_micros) FILTER (WHERE g.member_id='quota-owner-member'),0),
+			COALESCE(sum(g.estimated_cost_micros),0)
+		FROM account_quota_snapshots q
+		JOIN plan_account_quota_baselines b ON b.account_id=q.account_id AND b.window_type=q.window_type AND b.window_start=q.window_start
+		LEFT JOIN gateway_request_metrics g ON g.plan_id='quota-plan' AND g.account_id=q.account_id
+			AND g.created_at>=q.window_start AND g.created_at<q.reset_at
+		WHERE q.account_id='quota-account' AND q.window_type='5h'
+		GROUP BY b.baseline_used_micros,q.used_micros`).Scan(&baseline, &current, &ownerCost, &totalCost); err != nil {
+		t.Fatal(err)
+	}
+	if baseline != 40_000_000 || current != 80_000_000 || ownerCost != 300 || totalCost != 400 {
+		t.Fatalf("fixed quota inputs = baseline %d current %d owner cost %d total cost %d", baseline, current, ownerCost, totalCost)
+	}
 
-	if exhausted, err := store.MemberQuotaExhausted(ctx, "quota-owner-member", "quota-account", 3000, now); err != nil || !exhausted {
+	quotaCalculationAt := now.Add(3 * time.Second)
+	if err := store.RecordGatewayMetric(ctx, domain.GatewayMetric{
+		RequestID:                "quota-future-request",
+		APIKeyID:                 "quota-key",
+		PlanID:                   "quota-plan",
+		AccountID:                "quota-account",
+		MemberID:                 "quota-member-member",
+		AccountBindingGeneration: 1,
+		Model:                    "gpt-5.6-sol",
+		RequestedModel:           "gpt-5.6-sol",
+		UpstreamModel:            "gpt-5.6-sol",
+		BillingModel:             "gpt-5.6-sol",
+		StatusCode:               http.StatusOK,
+		AccountCostMicros:        10_000,
+		CreatedAt:                quotaCalculationAt.Add(time.Second),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if exhausted, err := store.MemberQuotaExhausted(ctx, "quota-owner-member", "quota-plan", "quota-account", 1, 3000, quotaCalculationAt); err != nil || !exhausted {
 		t.Fatalf("owner fixed quota exhausted = %v, %v", exhausted, err)
 	}
-	if exhausted, err := store.MemberQuotaExhausted(ctx, "quota-member-member", "quota-account", 1100, now); err != nil || exhausted {
+	if exhausted, err := store.MemberQuotaExhausted(ctx, "quota-member-member", "quota-plan", "quota-account", 1, 1100, quotaCalculationAt); err != nil || exhausted {
 		t.Fatalf("member fixed quota exhausted = %v, %v", exhausted, err)
 	}
 
-	routes, err := store.ResolveGatewayRoutes(ctx, []byte("quota-hash"), now)
+	routes, err := store.ResolveGatewayRoutes(ctx, []byte("quota-hash"), quotaCalculationAt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -815,7 +1155,7 @@ func TestFixedQuotaUsesCostWeightedAccountUsage(t *testing.T) {
 		t.Fatalf("fixed route estimated quota usage = %+v", routes.Candidates)
 	}
 
-	detail, err := store.PlanDetail(ctx, "quota-plan", "quota-owner", now.Truncate(24*time.Hour), now)
+	detail, err := store.PlanDetail(ctx, "quota-plan", "quota-owner", now.Truncate(24*time.Hour), quotaCalculationAt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -830,4 +1170,153 @@ func TestFixedQuotaUsesCostWeightedAccountUsage(t *testing.T) {
 	if memberUsage["quota-owner-member"] != 30_000_000 || memberUsage["quota-member-member"] != 10_000_000 {
 		t.Fatalf("displayed fixed quota usage = %+v", memberUsage)
 	}
+
+	t.Run("natural window starts from zero baseline", func(t *testing.T) {
+		windowStart := now.Add(4 * time.Hour)
+		resetAt := windowStart.Add(5 * time.Hour)
+		observedAt := windowStart.Add(time.Minute)
+		if err := store.RecordAccountQuotaSignals(ctx, "quota-plan", "quota-account", 1, []domain.QuotaSignal{{
+			WindowType: domain.Window5H, WindowStart: windowStart, ResetAt: resetAt, AccountUsedMicros: 2_000_000,
+		}}, observedAt); err != nil {
+			t.Fatal(err)
+		}
+
+		var baseline int64
+		var storedWindowStart, storedResetAt, accountingStartedAt time.Time
+		if err := pool.QueryRow(ctx, `
+			SELECT baseline_used_micros,window_start,reset_at,accounting_started_at
+			FROM plan_account_quota_baselines
+			WHERE plan_id='quota-plan' AND account_binding_generation=1 AND window_type='5h'`).Scan(
+			&baseline, &storedWindowStart, &storedResetAt, &accountingStartedAt,
+		); err != nil {
+			t.Fatal(err)
+		}
+		if baseline != 0 || !storedWindowStart.Equal(windowStart) || !storedResetAt.Equal(resetAt) || !accountingStartedAt.Equal(windowStart) {
+			t.Fatalf("natural-window baseline = %d, window = %s..%s, accounting started = %s", baseline, storedWindowStart, storedResetAt, accountingStartedAt)
+		}
+	})
+}
+
+func TestQuotaResetSignalsAreCompleteAndAtomic(t *testing.T) {
+	databaseURL := os.Getenv("SHARESUB_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("SHARESUB_TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	admin, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+
+	schema := fmt.Sprintf("sharesub_reset_test_%d", time.Now().UnixNano())
+	identifier := pgx.Identifier{schema}.Sanitize()
+	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+identifier); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if _, err := admin.Exec(ctx, "DROP SCHEMA "+identifier+" CASCADE"); err != nil {
+			t.Errorf("drop test schema: %v", err)
+		}
+	}()
+
+	config, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.ConnConfig.RuntimeParams["search_path"] = schema
+	pool, err := pgxpool.NewWithConfig(ctx, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	store := &Store{pool: pool}
+	if err := store.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	initial := []domain.QuotaSignal{
+		{WindowType: domain.Window5H, WindowStart: now.Add(-time.Hour), ResetAt: now.Add(4 * time.Hour), AccountUsedMicros: 81_000_000},
+		{WindowType: domain.Window7D, WindowStart: now.Add(-24 * time.Hour), ResetAt: now.Add(6 * 24 * time.Hour), AccountUsedMicros: 73_000_000},
+	}
+	batch := &pgx.Batch{}
+	batch.Queue(`INSERT INTO users(id,username,email,password_hash,status,created_at,updated_at) VALUES('reset-owner','reset-owner','reset-owner@example.com','hash','active',$1,$1)`, now)
+	batch.Queue(`INSERT INTO openai_accounts(id,owner_user_id,name,email,chatgpt_account_id,plan_type,access_token_ciphertext,refresh_token_ciphertext,token_expires_at,status,created_at,updated_at) VALUES('reset-account','reset-owner','Reset account','reset@example.com','reset-chatgpt','plus',$2,$3,$4,'active',$1,$1)`, now, []byte("access"), []byte("refresh"), now.Add(time.Hour))
+	batch.Queue(`INSERT INTO shared_plans(id,owner_user_id,account_id,name,status,visibility,allocation_mode,account_binding_generation,account_bound_at,created_at,updated_at) VALUES('reset-plan','reset-owner','reset-account','Reset plan','active','private','fixed',1,$1,$1,$1)`, now)
+	for _, signal := range initial {
+		batch.Queue(`INSERT INTO account_quota_snapshots(account_id,window_type,window_start,reset_at,used_micros,updated_at) VALUES('reset-account',$1,$2,$3,$4,$5)`, signal.WindowType, signal.WindowStart, signal.ResetAt, signal.AccountUsedMicros, now)
+		batch.Queue(`INSERT INTO plan_account_quota_baselines(plan_id,account_id,account_binding_generation,window_type,window_start,reset_at,baseline_used_micros,accounting_started_at,updated_at) VALUES('reset-plan','reset-account',1,$1,$2,$3,$4,$5,$5)`, signal.WindowType, signal.WindowStart, signal.ResetAt, signal.AccountUsedMicros, now)
+	}
+	if err := pool.SendBatch(ctx, batch).Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	assertState := func(want5H, want7D int64, wantAccountingStartedAt time.Time) {
+		t.Helper()
+		rows, err := pool.Query(ctx, `
+			SELECT q.window_type,q.used_micros,b.baseline_used_micros,b.accounting_started_at
+			FROM account_quota_snapshots q
+			JOIN plan_account_quota_baselines b ON b.plan_id='reset-plan' AND b.account_id=q.account_id AND b.window_type=q.window_type
+			WHERE q.account_id='reset-account' ORDER BY q.window_type`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		got := make(map[string]int64)
+		for rows.Next() {
+			var window string
+			var snapshot, baseline int64
+			var accountingStartedAt time.Time
+			if err := rows.Scan(&window, &snapshot, &baseline, &accountingStartedAt); err != nil {
+				t.Fatal(err)
+			}
+			if snapshot != baseline {
+				t.Fatalf("%s snapshot/baseline = %d/%d", window, snapshot, baseline)
+			}
+			if !accountingStartedAt.Equal(wantAccountingStartedAt) {
+				t.Fatalf("%s accounting_started_at = %s, want %s", window, accountingStartedAt, wantAccountingStartedAt)
+			}
+			got[window] = snapshot
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		if got[domain.Window5H] != want5H || got[domain.Window7D] != want7D || len(got) != 2 {
+			t.Fatalf("reset state = %+v, want 5h=%d 7d=%d", got, want5H, want7D)
+		}
+	}
+
+	for _, invalid := range [][]domain.QuotaSignal{
+		{initial[0]},
+		{initial[1]},
+		{initial[0], initial[0]},
+		{initial[0], {WindowType: "30d", WindowStart: now, ResetAt: now.Add(30 * 24 * time.Hour)}},
+	} {
+		if err := store.RecordQuotaResetSignals(ctx, "reset-plan", "reset-account", 1, invalid, now.Add(time.Minute)); err != domain.ErrInvalidInput {
+			t.Fatalf("incomplete reset error = %v, want invalid input", err)
+		}
+		assertState(81_000_000, 73_000_000, now)
+	}
+
+	resetAt := now.Add(2 * time.Minute)
+	valid := []domain.QuotaSignal{
+		{WindowType: domain.Window7D, WindowStart: resetAt.Add(-24 * time.Hour), ResetAt: resetAt.Add(6 * 24 * time.Hour), AccountUsedMicros: 19_000_000},
+		{WindowType: domain.Window5H, WindowStart: resetAt.Add(-time.Hour), ResetAt: resetAt.Add(4 * time.Hour), AccountUsedMicros: 7_000_000},
+	}
+	if _, err := pool.Exec(ctx, `ALTER TABLE account_quota_snapshots ADD CONSTRAINT reject_reset_7d CHECK (window_type <> '7d' OR used_micros <> 19000000)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordQuotaResetSignals(ctx, "reset-plan", "reset-account", 1, valid, resetAt); err == nil {
+		t.Fatal("reset unexpectedly committed after the second window failed")
+	}
+	assertState(81_000_000, 73_000_000, now)
+	if _, err := pool.Exec(ctx, `ALTER TABLE account_quota_snapshots DROP CONSTRAINT reject_reset_7d`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.RecordQuotaResetSignals(ctx, "reset-plan", "reset-account", 1, valid, resetAt); err != nil {
+		t.Fatal(err)
+	}
+	assertState(7_000_000, 19_000_000, resetAt)
 }

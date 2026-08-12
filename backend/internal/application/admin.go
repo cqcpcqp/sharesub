@@ -194,11 +194,20 @@ func (s *Service) AdminRebindPlanAccount(ctx context.Context, admin domain.User,
 	if err != nil {
 		return domain.Plan{}, err
 	}
+	_, release, err := s.quiescePlanBinding(ctx, plan.OwnerUserID, planID, accountID)
+	if err != nil {
+		return domain.Plan{}, err
+	}
+	defer release()
+	account, signals, observedAt, err := s.probeAccountQuota(ctx, plan.OwnerUserID, accountID)
+	if err != nil {
+		return domain.Plan{}, err
+	}
 	event, err := s.newAuditEvent(admin.ID, "plan.account_rebound", "plan", planID, map[string]string{"account_id": accountID})
 	if err != nil {
 		return domain.Plan{}, err
 	}
-	return s.store.RebindPlanAccount(ctx, planID, plan.OwnerUserID, accountID, event)
+	return s.store.RebindPlanAccount(ctx, planID, plan.OwnerUserID, account.ID, signals, observedAt, event)
 }
 
 func (s *Service) AdminUpdatePlanPublication(ctx context.Context, admin domain.User, planID, visibility string, slots, shareBPS int) (domain.Plan, error) {
