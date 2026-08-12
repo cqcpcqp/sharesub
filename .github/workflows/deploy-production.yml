@@ -22,6 +22,22 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: production
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: sharesub_test
+          POSTGRES_PASSWORD: sharesub_test
+          POSTGRES_DB: sharesub_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sharesub_test -d sharesub_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      SHARESUB_TEST_DATABASE_URL: postgres://sharesub_test:sharesub_test@127.0.0.1:5432/sharesub_test?sslmode=disable
     steps:
       - uses: actions/checkout@v4
         with:
@@ -66,15 +82,19 @@ jobs:
         env:
           DEPLOY_HOST: ${{ secrets.PRODUCTION_SSH_HOST }}
           DEPLOY_USER: ${{ secrets.PRODUCTION_SSH_USER }}
+          DEPLOY_DIR: ${{ secrets.PRODUCTION_DEPLOY_DIR }}
           ALLOW_MIGRATIONS: ${{ inputs.allow_migrations }}
         run: |
           test -n "$DEPLOY_HOST"
           test -n "$DEPLOY_USER"
+          test -n "$DEPLOY_DIR"
           if [ "$ALLOW_MIGRATIONS" = "true" ]; then
             migration_flag=1
           else
             migration_flag=0
           fi
           SHARESUB_DEPLOY_HOST="$DEPLOY_USER@$DEPLOY_HOST" \
+          SHARESUB_DEPLOY_DIR="$DEPLOY_DIR" \
+          SHARESUB_DEPLOY_VIA_GITHUB_ACTIONS=1 \
           SHARESUB_DEPLOY_ALLOW_MIGRATIONS="$migration_flag" \
-          make deploy
+          ./scripts/deploy.sh deploy

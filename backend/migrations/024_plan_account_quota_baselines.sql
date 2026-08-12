@@ -50,16 +50,17 @@ CREATE TABLE plan_account_quota_baselines (
     UNIQUE (plan_id, account_id, account_binding_generation, window_type, window_start)
 );
 
--- A legacy Plan with a current snapshot needs two migration anchors:
--- 1. the snapshot value excludes quota already consumed before the upgrade;
--- 2. accounting starts at the upgrade, so only generation-0 costs observed
---    after the migration participate in member allocation.
+-- A legacy Plan is already using its current account binding. Preserve its
+-- existing accounting window instead of treating the upgrade as a new
+-- binding: the full current quota usage remains attributable to the legacy
+-- generation and all metrics from the current window continue to participate
+-- in member allocation.
 INSERT INTO plan_account_quota_baselines(
     plan_id, account_id, account_binding_generation, window_type, window_start,
     reset_at, baseline_used_micros, accounting_started_at, updated_at
 )
 SELECT p.id, p.account_id, p.account_binding_generation, q.window_type,
-       q.window_start, q.reset_at, q.used_micros, now(), now()
+       q.window_start, q.reset_at, 0, q.window_start, now()
 FROM shared_plans p
 JOIN account_quota_snapshots q ON q.account_id = p.account_id
 WHERE p.account_id IS NOT NULL;

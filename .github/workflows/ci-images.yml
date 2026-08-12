@@ -17,6 +17,22 @@ jobs:
     name: Backend tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: sharesub_test
+          POSTGRES_PASSWORD: sharesub_test
+          POSTGRES_DB: sharesub_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sharesub_test -d sharesub_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      SHARESUB_TEST_DATABASE_URL: postgres://sharesub_test:sharesub_test@127.0.0.1:5432/sharesub_test?sslmode=disable
     defaults:
       run:
         working-directory: backend
@@ -26,6 +42,8 @@ jobs:
         run: ../scripts/verify-version.sh
       - name: Test version validation
         run: ../scripts/verify-version-test.sh
+      - name: Test production deployment guard
+        run: ../scripts/deploy-test.sh
       - uses: actions/setup-go@v5
         with:
           go-version-file: backend/go.mod

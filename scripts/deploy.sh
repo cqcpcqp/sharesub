@@ -2,8 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DEPLOY_HOST="${SHARESUB_DEPLOY_HOST:-underelay}"
-DEPLOY_DIR="${SHARESUB_DEPLOY_DIR:-/home/cqcpcqp/share2api}"
+DEPLOY_HOST="${SHARESUB_DEPLOY_HOST:-}"
+DEPLOY_DIR="${SHARESUB_DEPLOY_DIR:-}"
 IMAGE_REGISTRY="${SHARESUB_IMAGE_REGISTRY:-ghcr.io/cqcpcqp}"
 API_IMAGE_REPOSITORY="$IMAGE_REGISTRY/sharesub-api"
 WEB_IMAGE_REPOSITORY="$IMAGE_REGISTRY/sharesub-web"
@@ -36,6 +36,17 @@ usage() {
   logs    持续查看生产日志
   backup  立即创建一次生产数据库备份
 EOF
+}
+
+assert_github_production_workflow() {
+  [[ "${GITHUB_ACTIONS:-}" == "true" ]] \
+    || die "生产操作只能通过 GitHub Actions 的 Deploy production workflow 执行"
+  [[ "${GITHUB_WORKFLOW_REF:-}" == */.github/workflows/deploy-production.yml@refs/heads/main ]] \
+    || die "当前不是 main 分支的 Deploy production workflow"
+  [[ "${SHARESUB_DEPLOY_VIA_GITHUB_ACTIONS:-}" == "1" ]] \
+    || die "缺少 GitHub 生产部署授权标记"
+  [[ -n "$DEPLOY_HOST" ]] || die "缺少 SHARESUB_DEPLOY_HOST"
+  [[ -n "$DEPLOY_DIR" ]] || die "缺少 SHARESUB_DEPLOY_DIR"
 }
 
 assert_image_repository() {
@@ -143,13 +154,12 @@ assert_deployable_commit() {
   worktree_status="$(git -C "$ROOT" status --porcelain --untracked-files=all)"
   [[ -z "$worktree_status" ]] || die "工作区不干净，请先提交或移除本地改动"
 
-  info "更新 origin/main" >&2
-  GIT_SSH_COMMAND="$SSH_COMMAND" git -C "$ROOT" fetch --quiet --tags origin main
-
   head_commit="$(git -C "$ROOT" rev-parse HEAD)"
   origin_commit="$(git -C "$ROOT" rev-parse origin/main)"
   [[ "$head_commit" == "$origin_commit" ]] \
-    || die "HEAD 尚未推送到 origin/main"
+    || die "runner 的 HEAD 与 origin/main 不一致"
+  [[ "$head_commit" == "${GITHUB_SHA:-}" ]] \
+    || die "runner 的 HEAD 与 workflow 触发提交不一致"
 
   printf '%s\n' "$head_commit"
 }
@@ -189,7 +199,7 @@ run_deploy() {
   if ! git -C "$ROOT" diff --quiet "$previous_commit" "$current_commit" -- backend/migrations; then
     migrations_changed=1
     [[ "${SHARESUB_DEPLOY_ALLOW_MIGRATIONS:-}" == "1" ]] \
-      || die "检测到数据库迁移变更；确认后使用 SHARESUB_DEPLOY_ALLOW_MIGRATIONS=1 make deploy"
+      || die "检测到数据库迁移变更；必须在 Deploy production workflow 中启用 allow_migrations"
   fi
 
   info "运行完整测试"
@@ -267,9 +277,9 @@ run_deploy() {
 }
 
 case "${1:-}" in
-  deploy) run_deploy ;;
-  status) run_status ;;
-  logs) run_logs ;;
-  backup) run_backup ;;
+  deploy) assert_github_production_workflow; run_deploy ;;
+  status) assert_github_production_workflow; run_status ;;
+  logs) assert_github_production_workflow; run_logs ;;
+  backup) assert_github_production_workflow; run_backup ;;
   *) usage; exit 1 ;;
 esac

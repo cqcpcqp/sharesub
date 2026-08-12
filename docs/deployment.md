@@ -114,6 +114,7 @@ Add these Environment secrets:
 | `PRODUCTION_SSH_USER` | Restricted deployment SSH user |
 | `PRODUCTION_SSH_PRIVATE_KEY` | Private key dedicated to Actions deployment |
 | `PRODUCTION_SSH_KNOWN_HOSTS` | Verified `known_hosts` entry for that host |
+| `PRODUCTION_DEPLOY_DIR` | Absolute ShareSub deployment directory on the production host |
 
 Install the matching public key in the deployment user's
 `~/.ssh/authorized_keys`. Generate `PRODUCTION_SSH_KNOWN_HOSTS` from a trusted
@@ -121,9 +122,9 @@ network and compare its fingerprint with the server before storing it; do not
 blindly trust an unverified `ssh-keyscan` result inside the workflow.
 
 The server must allow the deployment user to run Docker without interactive
-sudo, and `/home/cqcpcqp/share2api` plus its `.env` must already exist. The
-current script defaults to that directory; `SHARESUB_DEPLOY_DIR` can override
-it when invoking the script outside Actions.
+sudo, and the directory configured by `PRODUCTION_DEPLOY_DIR` plus its `.env`
+must already exist. The deployment script intentionally has no host or path
+defaults and refuses direct execution outside the production workflow.
 
 ### 3. First release
 

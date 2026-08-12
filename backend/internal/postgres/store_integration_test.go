@@ -64,7 +64,10 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 		CREATE TABLE schema_migrations (name TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now());
 		-- Temporarily mark 024 applied so the first migration pass stops at the
 		-- schema that existed immediately before this migration.
-		INSERT INTO schema_migrations(name) VALUES('001_initial.sql'),('024_plan_account_quota_baselines.sql')`); err != nil {
+		INSERT INTO schema_migrations(name) VALUES
+			('001_initial.sql'),
+			('024_plan_account_quota_baselines.sql'),
+			('025_repair_legacy_plan_quota_baselines.sql')`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -83,7 +86,7 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	batch.Queue(`INSERT INTO member_api_keys(id,member_id,user_id,name,key_prefix,key_hash,status,created_at) VALUES('legacy-key','owner-member','owner','旧 Key','sk-sharesub-old',$2,'active',$1)`, now, []byte("hash"))
 	batch.Queue(`INSERT INTO member_api_keys(id,member_id,user_id,name,key_prefix,key_hash,status,created_at) VALUES('legacy-no-snapshot-key','owner-no-snapshot-member','owner','无快照 Key','sk-sharesub-no-snapshot',$2,'active',$1)`, now, []byte("no-snapshot-hash"))
 	batch.Queue(`INSERT INTO account_quota_snapshots(account_id,window_type,window_start,reset_at,used_micros,updated_at) VALUES('account','5h',$1,$2,40000000,$1)`, now.Add(-time.Hour), now.Add(4*time.Hour))
-	batch.Queue(`INSERT INTO account_quota_snapshots(account_id,window_type,window_start,reset_at,used_micros,updated_at) VALUES('account','7d',$1,$2,60000000,$1)`, now.Add(-24*time.Hour), now.Add(6*24*time.Hour))
+	batch.Queue(`INSERT INTO account_quota_snapshots(account_id,window_type,window_start,reset_at,used_micros,updated_at) VALUES('account','7d',$1,$2,82000000,$1)`, now.Add(-24*time.Hour), now.Add(6*24*time.Hour))
 	if err := pool.SendBatch(ctx, batch).Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +94,10 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 		t.Fatalf("migrate legacy schema through 022: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
-		DELETE FROM schema_migrations WHERE name='024_plan_account_quota_baselines.sql';
+		DELETE FROM schema_migrations WHERE name IN (
+			'024_plan_account_quota_baselines.sql',
+			'025_repair_legacy_plan_quota_baselines.sql'
+		);
 		CREATE INDEX quota_usage_events_account_window_created_idx
 			ON quota_usage_events(account_id,window_type,window_start,created_at,id);
 		INSERT INTO schema_migrations(name) VALUES('023_member_quota_baseline_lookup.sql')`); err != nil {
@@ -99,8 +105,8 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	}
 	legacyBatch := &pgx.Batch{}
 	legacyBatch.Queue(`INSERT INTO gateway_request_metrics(
-		request_id,api_key_id,plan_id,account_id,member_id,status_code,ttft_ms,duration_ms,created_at
-	) VALUES('legacy-binding-request','legacy-key','plan','account','owner-member',200,0,1,$1)`, now)
+		request_id,api_key_id,plan_id,account_id,member_id,status_code,ttft_ms,duration_ms,estimated_cost_micros,created_at
+	) VALUES('legacy-binding-request','legacy-key','plan','account','owner-member',200,0,1,100,$1)`, now.Add(-30*time.Minute))
 	legacyBatch.Queue(`INSERT INTO gateway_metric_daily_rollups(
 		usage_day,user_id,plan_id,account_id,member_id,request_count,success_count,
 		input_tokens,output_tokens,cached_tokens,estimated_cost_micros
@@ -117,6 +123,9 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	var migrationCount int64
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations WHERE name='024_plan_account_quota_baselines.sql'`).Scan(&migrationCount); err != nil || migrationCount != 1 {
 		t.Fatalf("024 migration registrations = %d, error = %v", migrationCount, err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations WHERE name='025_repair_legacy_plan_quota_baselines.sql'`).Scan(&migrationCount); err != nil || migrationCount != 1 {
+		t.Fatalf("025 migration registrations = %d, error = %v", migrationCount, err)
 	}
 	for _, obsoleteTable := range []string{"member_quota_windows", "quota_usage_events"} {
 		var exists bool
@@ -186,9 +195,16 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 			t.Fatal(err)
 		}
 		legacyBaselines[windowType] = baseline
-		if baselineStartedAt.Before(now) {
+		var wantAccountingStartedAt time.Time
+		switch windowType {
+		case domain.Window5H:
+			wantAccountingStartedAt = now.Add(-time.Hour)
+		case domain.Window7D:
+			wantAccountingStartedAt = now.Add(-24 * time.Hour)
+		}
+		if !baselineStartedAt.Equal(wantAccountingStartedAt) {
 			rows.Close()
-			t.Fatalf("legacy baseline accounting started before migration: %s", baselineStartedAt)
+			t.Fatalf("legacy %s accounting started at %s, want existing window start %s", windowType, baselineStartedAt, wantAccountingStartedAt)
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -196,8 +212,36 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	rows.Close()
-	if legacyBaselines[domain.Window5H] != 40_000_000 || legacyBaselines[domain.Window7D] != 60_000_000 || len(legacyBaselines) != 2 {
+	if legacyBaselines[domain.Window5H] != 0 || legacyBaselines[domain.Window7D] != 0 || len(legacyBaselines) != 2 {
 		t.Fatalf("legacy Plan baselines = %+v", legacyBaselines)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE plan_account_quota_baselines b
+		SET baseline_used_micros=q.used_micros,accounting_started_at=$1
+		FROM account_quota_snapshots q
+		WHERE b.plan_id='plan' AND q.account_id=b.account_id AND q.window_type=b.window_type`, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM schema_migrations WHERE name='025_repair_legacy_plan_quota_baselines.sql'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Migrate(ctx); err != nil {
+		t.Fatalf("repair legacy baselines after original 024: %v", err)
+	}
+	var repairedBaseline int64
+	var repairedAccountingStartedAt time.Time
+	if err := pool.QueryRow(ctx, `SELECT baseline_used_micros,accounting_started_at FROM plan_account_quota_baselines WHERE plan_id='plan' AND window_type='7d'`).Scan(&repairedBaseline, &repairedAccountingStartedAt); err != nil {
+		t.Fatal(err)
+	}
+	if repairedBaseline != 0 || !repairedAccountingStartedAt.Equal(now.Add(-24*time.Hour)) {
+		t.Fatalf("repaired legacy 7d baseline = %d, accounting started at %s", repairedBaseline, repairedAccountingStartedAt)
+	}
+	legacyRoutes, err := store.ResolveGatewayRoutes(ctx, []byte("hash"), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(legacyRoutes.Candidates) != 1 || legacyRoutes.Candidates[0].UsageMicros != 82_000_000 || legacyRoutes.Candidates[0].AccountUsageMicros != 82_000_000 {
+		t.Fatalf("legacy Plan usage after migration = %+v", legacyRoutes.Candidates)
 	}
 	var noSnapshotBaselineCount int64
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM plan_account_quota_baselines WHERE plan_id='plan-without-snapshot'`).Scan(&noSnapshotBaselineCount); err != nil || noSnapshotBaselineCount != 0 {
@@ -744,7 +788,7 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 		t.Fatalf("admin plans = %+v, error = %v", adminPlans, err)
 	}
 	adminKeys, err := store.AdminListAPIKeys(ctx)
-	if err != nil || len(adminKeys) != 1 || adminKeys[0].KeyPrefix != "sk-sharesub-old" {
+	if err != nil || len(adminKeys) != 2 || adminKeys[0].KeyPrefix != "sk-sharesub-old" || adminKeys[1].KeyPrefix != "sk-sharesub-no-snapshot" {
 		t.Fatalf("admin keys = %+v, error = %v", adminKeys, err)
 	}
 

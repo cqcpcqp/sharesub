@@ -386,29 +386,11 @@ git push origin "v$version"
 
 `scripts/verify-version.sh --release` 会校验 `VERSION`、tag 名称、tag 类型和 tag 指向的提交。生产仍使用完整 commit SHA 镜像部署与回滚，SemVer tag 不代替不可变镜像标识。
 
-生产环境固定为 `share.underelay.com`、SSH 别名固定为 `underelay` 时，也可以在本机从干净且已经推送的 `main` 执行同一发布脚本：
+生产部署只能通过 GitHub Actions 的 `Deploy production` workflow 执行。`scripts/deploy.sh` 是该 workflow 的内部部署引擎，不是开发机上的发布入口；脚本会拒绝本地直接调用。workflow 会运行完整测试、同步当前提交、拉取对应完整 commit SHA 的 API/Web 镜像、保留当前运行镜像用于回滚、备份生产数据库、更新容器并验证公网健康接口。服务器不会再执行镜像构建。拉取或备份失败时不会切换当前容器；不包含迁移的版本健康检查失败时会自动恢复上一组镜像。仓库中的 Nginx 配置发生变化时，脚本会停止并要求先人工安装配置。
 
-```bash
-make deploy
-```
+检测到 `backend/migrations` 变化时，必须在手动运行 workflow 时明确启用 `allow_migrations`。
 
-发布脚本会运行完整测试、同步当前提交、拉取对应完整 commit SHA 的 API/Web 镜像、保留当前运行镜像用于回滚、备份生产数据库、更新容器并验证公网健康接口。服务器不会再执行镜像构建。拉取或备份失败时不会切换当前容器；不包含迁移的版本健康检查失败时会自动恢复上一组镜像。仓库中的 Nginx 配置发生变化时，脚本会停止并要求先人工安装配置。
-
-常用生产管理命令：
-
-```bash
-make deploy-status
-make deploy-logs
-make deploy-backup
-```
-
-检测到 `backend/migrations` 变化时，必须明确确认后发布：
-
-```bash
-SHARESUB_DEPLOY_ALLOW_MIGRATIONS=1 make deploy
-```
-
-迁移版本不会自动恢复旧数据库；发布前生成的压缩备份会保存在服务器 `/home/cqcpcqp/share2api/backups/`。完整的新旧工作流、首次配置、回滚边界和机器资源建议见 [部署工作流](docs/deployment.md)。升级应使用 GitHub Actions 或 `make deploy`，不要绕过迁移确认、备份、不可变镜像和健康检查直接运行 Compose。
+迁移版本不会自动恢复旧数据库；发布前生成的压缩备份会保存在 workflow 配置的生产部署目录下的 `backups/`。完整的新旧工作流、首次配置、回滚边界和机器资源建议见 [部署工作流](docs/deployment.md)。升级只能使用 GitHub Actions，不要绕过迁移确认、备份、不可变镜像和健康检查直接运行脚本或 Compose。
 
 后端进程启动时会自动应用新增迁移。
 
