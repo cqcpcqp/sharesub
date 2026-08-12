@@ -150,6 +150,7 @@ func copySSEWithPendingLimit(dst http.ResponseWriter, src *http.Response, starte
 	reader := bufio.NewReader(src.Body)
 	var firstByteAt, firstTokenAt time.Time
 	var terminal terminalResponse
+	var topLevelError *responseError
 	terminalSeen := false
 	clientOutputStarted := false
 	clientDisconnected := false
@@ -191,12 +192,21 @@ func copySSEWithPendingLimit(dst http.ResponseWriter, src *http.Response, starte
 				firstTokenAt = now
 			}
 			if parsed, ok := parseResponseUsage(line); ok {
+				if parsed.Error == nil && topLevelError != nil {
+					parsed.Error = topLevelError
+				}
 				terminal = parsed
 			}
 			if !clientOutputStarted && len(line) >= pendingLimit-len(pending) {
 				startClientOutput()
 			}
 			eventType, hasEvent := responseEventType(line)
+			if hasEvent && eventType == "error" {
+				if parsed := parseSSEError(line); parsed != nil {
+					topLevelError = parsed
+					terminal.Error = parsed
+				}
+			}
 			if hasEvent && isTerminalResponseEvent(eventType) {
 				terminalSeen = true
 				if eventType == "response.failed" && !clientOutputStarted {
@@ -220,6 +230,19 @@ func copySSEWithPendingLimit(dst http.ResponseWriter, src *http.Response, starte
 		if err != nil {
 			if err == io.EOF {
 				if successfulStatus(src.StatusCode) && !terminalSeen {
+					// A top-level error event is a valid terminal form even when the
+					// upstream does not follow it with response.failed. Keep it pending
+					// until EOF so the common error+response.failed sequence can still
+					// be handled as one terminal response.
+					if topLevelError != nil {
+						if !clientOutputStarted {
+							if status, retryable := retryableTerminalFailure(terminal); retryable {
+								return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, clientDisconnected), &StreamFailoverError{StatusCode: status, StreamBody: append([]byte(nil), pending...)}
+							}
+							startClientOutput()
+						}
+						return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, clientDisconnected), nil
+					}
 					if !clientOutputStarted {
 						startClientOutput()
 					}
@@ -234,6 +257,15 @@ func copySSEWithPendingLimit(dst http.ResponseWriter, src *http.Response, starte
 				return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, clientDisconnected), nil
 			}
 			if successfulStatus(src.StatusCode) && !terminalSeen {
+				if topLevelError != nil {
+					if !clientOutputStarted {
+						if status, retryable := retryableTerminalFailure(terminal); retryable {
+							return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, clientDisconnected), &StreamFailoverError{StatusCode: status, StreamBody: append([]byte(nil), pending...)}
+						}
+						startClientOutput()
+					}
+					return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, clientDisconnected), nil
+				}
 				if !clientOutputStarted {
 					startClientOutput()
 				}
@@ -253,6 +285,7 @@ func copySSEAsJSON(dst http.ResponseWriter, src *http.Response, startedAt time.T
 	var terminal terminalResponse
 	var finalResponse json.RawMessage
 	var terminalType string
+	var topLevelError *responseError
 	for {
 		line, err := readLimitedLine(reader)
 		if len(line) > 0 {
@@ -268,12 +301,28 @@ func copySSEAsJSON(dst http.ResponseWriter, src *http.Response, startedAt time.T
 				var event struct {
 					Type     string          `json:"type"`
 					Response json.RawMessage `json:"response"`
+					Error    *responseError  `json:"error"`
 				}
-				if json.Unmarshal(payload, &event) == nil && isTerminalResponseEvent(event.Type) && len(event.Response) > 0 && string(event.Response) != "null" {
-					terminalType = event.Type
-					finalResponse = append(finalResponse[:0], event.Response...)
-					if parsed, ok := parseJSONResponseUsage(event.Response); ok {
-						terminal = parsed
+				if json.Unmarshal(payload, &event) == nil {
+					if event.Type == "error" && event.Error != nil {
+						topLevelError = event.Error
+						terminal.Error = event.Error
+					}
+					if isTerminalResponseEvent(event.Type) && len(event.Response) > 0 && string(event.Response) != "null" {
+						terminalType = event.Type
+						finalResponse = append(finalResponse[:0], event.Response...)
+						if parsed, ok := parseJSONResponseUsage(event.Response); ok {
+							if parsed.Error == nil && topLevelError != nil {
+								parsed.Error = topLevelError
+								responseWithError, marshalErr := responseJSONWithError(event.Response, topLevelError)
+								if marshalErr != nil {
+									writeProxyJSONError(dst, http.StatusBadGateway, "upstream_error", "upstream error response could not be encoded")
+									return proxyMetrics(startedAt, firstByteAt, firstTokenAt, parsed, false), marshalErr
+								}
+								finalResponse = responseWithError
+							}
+							terminal = parsed
+						}
 					}
 				}
 			}
@@ -287,19 +336,54 @@ func copySSEAsJSON(dst http.ResponseWriter, src *http.Response, startedAt time.T
 		}
 	}
 	if len(finalResponse) == 0 {
+		if topLevelError != nil {
+			errorEnvelope, marshalErr := json.Marshal(map[string]any{"error": topLevelError})
+			if marshalErr != nil {
+				writeProxyJSONError(dst, http.StatusBadGateway, "upstream_error", "upstream error response could not be encoded")
+				return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), marshalErr
+			}
+			status, retryable := retryableTerminalFailure(terminal)
+			if retryable {
+				return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), &StreamFailoverError{StatusCode: status, Response: errorEnvelope}
+			}
+			copyResponseHeaders(dst.Header(), src.Header)
+			dst.Header().Set("Content-Type", "application/json")
+			dst.WriteHeader(status)
+			_, err := dst.Write(errorEnvelope)
+			return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), err
+		}
 		writeProxyJSONError(dst, http.StatusBadGateway, "upstream_error", ErrIncompleteStream.Error())
 		return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), ErrIncompleteStream
 	}
 	if terminalType == "response.failed" {
-		if status, retryable := retryableTerminalFailure(terminal); retryable {
+		status, retryable := retryableTerminalFailure(terminal)
+		if retryable {
 			return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), &StreamFailoverError{StatusCode: status, Response: append(json.RawMessage(nil), finalResponse...)}
 		}
+		copyResponseHeaders(dst.Header(), src.Header)
+		dst.Header().Set("Content-Type", "application/json")
+		dst.WriteHeader(status)
+		_, err := dst.Write(finalResponse)
+		return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), err
 	}
 	copyResponseHeaders(dst.Header(), src.Header)
 	dst.Header().Set("Content-Type", "application/json")
 	dst.WriteHeader(src.StatusCode)
 	_, err := dst.Write(finalResponse)
 	return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), err
+}
+
+func responseJSONWithError(payload json.RawMessage, responseError *responseError) (json.RawMessage, error) {
+	var response map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &response); err != nil {
+		return nil, err
+	}
+	encodedError, err := json.Marshal(responseError)
+	if err != nil {
+		return nil, err
+	}
+	response["error"] = encodedError
+	return json.Marshal(response)
 }
 
 func readLimitedLine(reader *bufio.Reader) ([]byte, error) {
@@ -501,6 +585,21 @@ func parseResponseUsage(line []byte) (terminalResponse, bool) {
 		return terminalResponse{}, false
 	}
 	return event.Response, true
+}
+
+func parseSSEError(line []byte) *responseError {
+	payload, ok := ssePayload(line)
+	if !ok {
+		return nil
+	}
+	var event struct {
+		Type  string         `json:"type"`
+		Error *responseError `json:"error"`
+	}
+	if json.Unmarshal(payload, &event) != nil || event.Type != "error" {
+		return nil
+	}
+	return event.Error
 }
 
 func terminalFailureStatus(response terminalResponse) int {

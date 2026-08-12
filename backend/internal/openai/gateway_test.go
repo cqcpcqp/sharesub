@@ -812,6 +812,116 @@ func TestCopyResponseReturnsSemanticStatusForNonStreamingTerminalFailure(t *test
 	}
 }
 
+func TestCopyResponseReturnsNonRetryableTerminalFailureWithSemanticStatus(t *testing.T) {
+	responseJSON := `{"id":"resp_failed","status":"failed","error":{"type":"invalid_request_error","code":"content_policy_violation","message":"blocked"}}`
+	body := "data: {\"type\":\"response.failed\",\"response\":" + responseJSON + "}\n\n"
+	source := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}
+	recorder := httptest.NewRecorder()
+	metrics, err := CopyResponseForRequest(recorder, source, time.Now(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recorder.Code != http.StatusBadRequest || recorder.Body.String() != responseJSON {
+		t.Fatalf("status = %d, body = %q", recorder.Code, recorder.Body.String())
+	}
+	if metrics.ErrorCode != "content_policy_violation" || metrics.ErrorStatusCode != http.StatusBadRequest {
+		t.Fatalf("metrics = %+v", metrics)
+	}
+}
+
+func TestCopyResponsePreservesIncompleteResponseForNonStreamingCaller(t *testing.T) {
+	responseJSON := `{"id":"resp_incomplete","status":"incomplete","output":[],"incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":4,"output_tokens":8}}`
+	body := "data: {\"type\":\"response.incomplete\",\"response\":" + responseJSON + "}\n\n"
+	source := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}
+	recorder := httptest.NewRecorder()
+	metrics, err := CopyResponseForRequest(recorder, source, time.Now(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recorder.Code != http.StatusOK || recorder.Body.String() != responseJSON {
+		t.Fatalf("status = %d, body = %q", recorder.Code, recorder.Body.String())
+	}
+	if metrics.InputTokens != 4 || metrics.OutputTokens != 8 {
+		t.Fatalf("metrics = %+v", metrics)
+	}
+}
+
+func TestCopyResponseHandlesStandaloneErrorEventForNonStreamingCaller(t *testing.T) {
+	body := "data: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"code\":\"invalid_request\",\"message\":\"invalid input\"}}\n\n"
+	source := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}
+	recorder := httptest.NewRecorder()
+	metrics, err := CopyResponseForRequest(recorder, source, time.Now(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), `"code":"invalid_request"`) {
+		t.Fatalf("status = %d, body = %q", recorder.Code, recorder.Body.String())
+	}
+	if metrics.ErrorCode != "invalid_request" || metrics.ErrorMessage != "invalid input" || metrics.ErrorStatusCode != http.StatusBadRequest {
+		t.Fatalf("metrics = %+v", metrics)
+	}
+}
+
+func TestCopyResponseTreatsStandaloneRetryableErrorAsTerminal(t *testing.T) {
+	body := "data: {\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\",\"code\":\"rate_limit_exceeded\",\"message\":\"limited\"}}\n\n"
+	source := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}
+	recorder := httptest.NewRecorder()
+	metrics, err := CopyResponse(recorder, source, time.Now())
+	var failure *StreamFailoverError
+	if !errors.As(err, &failure) || failure.StatusCode != http.StatusTooManyRequests || !strings.Contains(string(failure.StreamBody), `"type":"error"`) {
+		t.Fatalf("error = %#v", err)
+	}
+	if recorder.Body.Len() != 0 {
+		t.Fatalf("body was committed before terminal classification: %q", recorder.Body.String())
+	}
+	if metrics.ErrorCode != "rate_limit_exceeded" || metrics.ErrorStatusCode != http.StatusTooManyRequests {
+		t.Fatalf("metrics = %+v", metrics)
+	}
+}
+
+func TestCopyResponseCarriesTopLevelErrorIntoTerminalResponse(t *testing.T) {
+	body := "data: {\"type\":\"error\",\"error\":{\"type\":\"service_unavailable_error\",\"code\":\"server_is_overloaded\",\"message\":\"overloaded\"}}\n\n" +
+		"data: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_1\",\"status\":\"failed\"}}\n\n"
+	source := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}
+	recorder := httptest.NewRecorder()
+	metrics, err := CopyResponse(recorder, source, time.Now())
+	var failure *StreamFailoverError
+	if !errors.As(err, &failure) || failure.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("error = %#v", err)
+	}
+	if recorder.Body.Len() != 0 || metrics.ErrorCode != "server_is_overloaded" || metrics.ErrorStatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("body = %q, metrics = %+v", recorder.Body.String(), metrics)
+	}
+}
+
+func TestCopyResponseCarriesTopLevelErrorIntoNonStreamingTerminalResponse(t *testing.T) {
+	body := "data: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"code\":\"invalid_request\",\"message\":\"invalid input\"}}\n\n" +
+		"data: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_1\",\"status\":\"failed\"}}\n\n"
+	source := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}
+	recorder := httptest.NewRecorder()
+	metrics, err := CopyResponseForRequest(recorder, source, time.Now(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, body = %q", recorder.Code, recorder.Body.String())
+	}
+	var response struct {
+		ID     string         `json:"id"`
+		Status string         `json:"status"`
+		Error  *responseError `json:"error"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.ID != "resp_1" || response.Status != "failed" || response.Error == nil || response.Error.Type != "invalid_request_error" || response.Error.Code != "invalid_request" || response.Error.Message != "invalid input" {
+		t.Fatalf("response = %+v", response)
+	}
+	if metrics.ErrorCode != "invalid_request" || metrics.ErrorMessage != "invalid input" || metrics.ErrorStatusCode != http.StatusBadRequest {
+		t.Fatalf("metrics = %+v", metrics)
+	}
+}
+
 func TestCopyResponseDoesNotFailoverAfterVisibleOutput(t *testing.T) {
 	body := "data: {\"type\":\"response.output_text.delta\",\"delta\":\"visible\"}\n\n" +
 		"data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"code\":\"rate_limit_exceeded\"}}}\n\n"
