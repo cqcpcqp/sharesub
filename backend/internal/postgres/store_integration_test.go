@@ -403,7 +403,7 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 		SubscriptionExpiresAt: &rotatedSubscriptionExpiresAt,
 		AccessTokenCiphertext: []byte("rotated-access"), RefreshTokenCiphertext: []byte("rotated-refresh"),
 		ProxyURLCiphertext: []byte("discarded-proxy"), MaxConcurrency: 1, RPMLimit: 2,
-		FastPolicy: []domain.FastPolicyRule{{Action: "discarded"}}, TokenExpiresAt: now.Add(2 * time.Hour),
+		FastPolicy: []domain.FastPolicyRule{{Action: "discarded"}}, CodexFingerprintMode: "off", TokenExpiresAt: now.Add(2 * time.Hour),
 		Status: domain.StatusActive, CreatedAt: now.Add(time.Hour),
 	}, true)
 	if err != nil {
@@ -452,7 +452,7 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	failedSubscriptionRotation, err := store.CreateOrRotateAccountAuthorization(ctx, domain.Account{
 		ID: "another-discarded-id", OwnerUserID: "owner", Name: "仍不得覆盖", Email: "again@example.com",
 		ChatGPTAccountID: "chatgpt-account", PlanType: "team", AccessTokenCiphertext: []byte("again-access"),
-		RefreshTokenCiphertext: []byte("again-refresh"), TokenExpiresAt: now.Add(3 * time.Hour), Status: domain.StatusActive,
+		RefreshTokenCiphertext: []byte("again-refresh"), CodexFingerprintMode: "device", TokenExpiresAt: now.Add(3 * time.Hour), Status: domain.StatusActive,
 		CreatedAt: now.Add(2 * time.Hour),
 	}, false)
 	if err != nil {

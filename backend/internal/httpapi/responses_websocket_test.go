@@ -262,6 +262,15 @@ func newResponsesWebSocketHTTPServer(
 	config ResponsesWebSocketConfig,
 	mutateCredential ...func(*domain.GatewayCredential),
 ) (*httptest.Server, *application.Service, *responsesWebSocketHTTPStore, *responsesWebSocketHTTPUpstream, *responsesWebSocketHTTPDialer) {
+	return newResponsesWebSocketHTTPServerWithRequestDone(t, config, nil, mutateCredential...)
+}
+
+func newResponsesWebSocketHTTPServerWithRequestDone(
+	t *testing.T,
+	config ResponsesWebSocketConfig,
+	requestDone chan<- struct{},
+	mutateCredential ...func(*domain.GatewayCredential),
+) (*httptest.Server, *application.Service, *responsesWebSocketHTTPStore, *responsesWebSocketHTTPUpstream, *responsesWebSocketHTTPDialer) {
 	t.Helper()
 	service, store := newResponsesWebSocketHTTPService(t, mutateCredential...)
 	upstream := newResponsesWebSocketHTTPUpstream()
@@ -272,7 +281,15 @@ func newResponsesWebSocketHTTPServer(
 		WriteTimeout: config.WriteTimeout, InterTurnIdleTimeout: config.InterTurnIdleTimeout,
 		UpstreamDrainTimeout: config.UpstreamDrainTimeout,
 	})
-	return httptest.NewServer(server.Handler()), service, store, upstream, dialer
+	handler := server.Handler()
+	if requestDone != nil {
+		baseHandler := handler
+		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			baseHandler.ServeHTTP(w, r)
+			requestDone <- struct{}{}
+		})
+	}
+	return httptest.NewServer(handler), service, store, upstream, dialer
 }
 
 func responsesWebSocketHTTPConfig() ResponsesWebSocketConfig {
@@ -776,7 +793,8 @@ func TestResponsesWebSocketHTTPFirstMessageTimeoutSendsPolicyCloseAndReleasesIng
 	config.FirstMessageTimeout = 25 * time.Millisecond
 	config.MaxSessionDuration = time.Second
 	config.MaxConnectionsPerAPIKey = 1
-	httpServer, _, store, _, dialer := newResponsesWebSocketHTTPServer(t, config)
+	requestDone := make(chan struct{}, 1)
+	httpServer, _, store, _, dialer := newResponsesWebSocketHTTPServerWithRequestDone(t, config, requestDone)
 	defer httpServer.Close()
 
 	client, _, err := dialResponsesWebSocketHTTP(t, httpServer.URL)
@@ -790,6 +808,11 @@ func TestResponsesWebSocketHTTPFirstMessageTimeoutSendsPolicyCloseAndReleasesIng
 	}
 	if dialer.dialCount() != 0 || len(store.recordedMetrics()) != 0 {
 		t.Fatalf("first-message timeout reached turn setup: dials=%d metrics=%d", dialer.dialCount(), len(store.recordedMetrics()))
+	}
+	select {
+	case <-requestDone:
+	case <-time.After(time.Second):
+		t.Fatal("first-message timeout handler did not finish")
 	}
 
 	reconnected, response, err := dialResponsesWebSocketHTTP(t, httpServer.URL)
