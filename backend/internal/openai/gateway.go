@@ -52,6 +52,7 @@ var responseHeaders = []string{
 }
 
 var chatGPTUnsupportedFields = []string{
+	"max_output_tokens", "max_completion_tokens", "temperature", "top_p", "frequency_penalty", "presence_penalty",
 	"user", "metadata", "prompt_cache_retention", "safety_identifier", "stream_options",
 }
 
@@ -158,10 +159,20 @@ func prepareRequest(body []byte, compact, normalize bool) ([]byte, RequestBillin
 	if !normalize {
 		return body, metadata, nil
 	}
+	if instructions, exists := payload["instructions"]; exists && strings.Contains(strings.ToLower(model), "codex") {
+		value, ok := instructions.(string)
+		if !ok {
+			return nil, RequestBilling{}, fmt.Errorf("Codex request instructions must be a string")
+		}
+		if strings.TrimSpace(value) == "" {
+			return nil, RequestBilling{}, fmt.Errorf("Codex request instructions must not be empty")
+		}
+	}
 
 	for _, field := range chatGPTUnsupportedFields {
 		delete(payload, field)
 	}
+	normalizeCodexInput(payload)
 	if compact {
 		compactPayload := make(map[string]any, len(compactRequestFields))
 		for _, field := range compactRequestFields {
@@ -175,12 +186,55 @@ func prepareRequest(body []byte, compact, normalize bool) ([]byte, RequestBillin
 		// ChatGPT's Codex endpoint is an SSE upstream. Non-streaming callers
 		// are converted back to JSON by CopyResponseForRequest.
 		payload["stream"] = true
+		ensureCodexReasoningInclude(payload)
 	}
 	normalized, err := json.Marshal(payload)
 	if err != nil {
 		return nil, RequestBilling{}, fmt.Errorf("normalize Codex request: %w", err)
 	}
 	return normalized, metadata, nil
+}
+
+func normalizeCodexInput(payload map[string]any) {
+	input, exists := payload["input"]
+	if !exists {
+		return
+	}
+	switch value := input.(type) {
+	case string:
+		if strings.TrimSpace(value) == "" {
+			payload["input"] = []any{}
+			return
+		}
+		payload["input"] = []any{map[string]any{
+			"type": "message", "role": "user", "content": value,
+		}}
+	case map[string]any:
+		payload["input"] = []any{value}
+	}
+}
+
+func ensureCodexReasoningInclude(payload map[string]any) {
+	reasoning, ok := payload["reasoning"].(map[string]any)
+	if !ok || len(reasoning) == 0 {
+		return
+	}
+	const encryptedContent = "reasoning.encrypted_content"
+	include, exists := payload["include"]
+	if !exists || include == nil {
+		payload["include"] = []any{encryptedContent}
+		return
+	}
+	values, ok := include.([]any)
+	if !ok {
+		return
+	}
+	for _, value := range values {
+		if value == encryptedContent {
+			return
+		}
+	}
+	payload["include"] = append(values, encryptedContent)
 }
 
 func NewGateway(httpClient *http.Client) *Gateway {
@@ -287,11 +341,10 @@ func (g *Gateway) Forward(ctx context.Context, inbound *http.Request, body []byt
 			req.Header.Add(key, value)
 		}
 	}
-	if !images {
-		req.Header.Set("OpenAI-Beta", "responses=experimental")
-	} else {
-		req.Header.Del("OpenAI-Beta")
-	}
+	// The legacy responses=experimental beta is no longer accepted by the
+	// ChatGPT Codex OAuth HTTP endpoints. Preserve independent beta tokens sent
+	// by the client while removing only that legacy token.
+	stripLegacyResponsesBeta(req.Header)
 	if req.Header.Get("Originator") == "" {
 		req.Header.Set("Originator", "codex_cli_rs")
 	}
@@ -345,6 +398,24 @@ func (g *Gateway) Forward(ctx context.Context, inbound *http.Request, body []byt
 		return nil, fmt.Errorf("forward Codex request: %w", err)
 	}
 	return resp, nil
+}
+
+func stripLegacyResponsesBeta(headers http.Header) {
+	values := headers.Values("OpenAI-Beta")
+	headers.Del("OpenAI-Beta")
+	for _, value := range values {
+		kept := make([]string, 0, 2)
+		for _, token := range strings.Split(value, ",") {
+			token = strings.TrimSpace(token)
+			if token == "" || strings.EqualFold(token, "responses=experimental") {
+				continue
+			}
+			kept = append(kept, token)
+		}
+		if len(kept) > 0 {
+			headers.Add("OpenAI-Beta", strings.Join(kept, ", "))
+		}
+	}
 }
 
 // FetchModels forwards Codex model discovery to the selected ChatGPT OAuth

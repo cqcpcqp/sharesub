@@ -196,6 +196,8 @@ func TestPrepareRequestNormalizesChatGPTPayload(t *testing.T) {
 		"prompt_cache_key":"session-a",
 		"metadata":{"private":"value"},
 		"stream_options":{"include_usage":true},
+		"max_output_tokens":100,
+		"temperature":0.2,
 		"input":[]
 	}`), false)
 	if err != nil {
@@ -211,13 +213,114 @@ func TestPrepareRequestNormalizesChatGPTPayload(t *testing.T) {
 	if payload["store"] != false || payload["stream"] != true {
 		t.Fatalf("normalized flags = store:%v stream:%v", payload["store"], payload["stream"])
 	}
-	for _, field := range []string{"metadata", "stream_options"} {
+	for _, field := range []string{"metadata", "stream_options", "max_output_tokens", "temperature"} {
 		if _, exists := payload[field]; exists {
 			t.Fatalf("unsupported field %q was preserved", field)
 		}
 	}
 	if payload["prompt_cache_key"] != "session-a" {
 		t.Fatalf("prompt_cache_key = %v", payload["prompt_cache_key"])
+	}
+}
+
+func TestPrepareRequestNormalizesCodexInputShapes(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		input   string
+		wantLen int
+		wantMsg string
+	}{
+		{name: "string", input: `"hello"`, wantLen: 1, wantMsg: "hello"},
+		{name: "empty string", input: `"  "`, wantLen: 0},
+		{name: "object", input: `{"type":"message","role":"user","content":"hi"}`, wantLen: 1, wantMsg: "hi"},
+		{name: "array", input: `[{"type":"message","role":"user","content":"kept"}]`, wantLen: 1, wantMsg: "kept"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			body, _, err := PrepareRequest([]byte(`{"model":"gpt-5.4","input":`+test.input+`}`), false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var payload map[string]any
+			if err := json.Unmarshal(body, &payload); err != nil {
+				t.Fatal(err)
+			}
+			input, ok := payload["input"].([]any)
+			if !ok || len(input) != test.wantLen {
+				t.Fatalf("input = %#v", payload["input"])
+			}
+			if test.wantLen > 0 {
+				item, ok := input[0].(map[string]any)
+				if !ok || item["content"] != test.wantMsg {
+					t.Fatalf("input item = %#v", input[0])
+				}
+			}
+		})
+	}
+}
+
+func TestPrepareRequestAddsEncryptedReasoningInclude(t *testing.T) {
+	body, _, err := PrepareRequest([]byte(`{
+		"model":"gpt-5.4",
+		"input":[],
+		"reasoning":{"effort":"high","summary":"auto"},
+		"include":["message.output_text.logprobs"]
+	}`), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	include, ok := payload["include"].([]any)
+	if !ok || len(include) != 2 || include[0] != "message.output_text.logprobs" || include[1] != "reasoning.encrypted_content" {
+		t.Fatalf("include = %#v", payload["include"])
+	}
+	reasoning := payload["reasoning"].(map[string]any)
+	if reasoning["effort"] != "high" || reasoning["summary"] != "auto" {
+		t.Fatalf("reasoning = %#v", reasoning)
+	}
+}
+
+func TestPrepareRequestPreservesNativeResponsesToolsAndContinuation(t *testing.T) {
+	body, _, err := PrepareRequest([]byte(`{
+		"model":"gpt-5.4",
+		"input":[
+			{"type":"function_call","call_id":"call_123","name":"search","arguments":"{}"},
+			{"type":"function_call_output","call_id":"call_123","output":"result"}
+		],
+		"tools":[{"type":"function","name":"search","description":"Search","parameters":{"type":"object"}},{"type":"image_generation"}],
+		"tool_choice":{"type":"function","name":"search"},
+		"parallel_tool_calls":true
+	}`), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	input := payload["input"].([]any)
+	if input[0].(map[string]any)["call_id"] != "call_123" || input[1].(map[string]any)["call_id"] != "call_123" {
+		t.Fatalf("tool continuation = %#v", input)
+	}
+	tools := payload["tools"].([]any)
+	if len(tools) != 2 || tools[0].(map[string]any)["name"] != "search" || tools[1].(map[string]any)["type"] != "image_generation" || payload["parallel_tool_calls"] != true {
+		t.Fatalf("tools payload = %#v", payload)
+	}
+}
+
+func TestPrepareRequestValidatesExplicitCodexInstructions(t *testing.T) {
+	for _, body := range []string{
+		`{"model":"gpt-5.4-codex","instructions":"  ","input":[]}`,
+		`{"model":"gpt-5.4-codex","instructions":{"text":"invalid"},"input":[]}`,
+	} {
+		if _, _, err := PrepareRequest([]byte(body), false); err == nil {
+			t.Fatalf("request %s was accepted", body)
+		}
+	}
+	if _, _, err := PrepareRequest([]byte(`{"model":"gpt-5.4-codex","input":[]}`), false); err != nil {
+		t.Fatalf("missing optional instructions was rejected: %v", err)
 	}
 }
 
@@ -394,11 +497,34 @@ func TestForwardCompactUsesCompactEndpointAndHeaders(t *testing.T) {
 	if captured.Header.Get("Accept") != "application/json" || captured.Header.Get("Version") != codexProbeVersion {
 		t.Fatalf("compact headers = %#v", captured.Header)
 	}
+	if captured.Header.Get("OpenAI-Beta") != "" {
+		t.Fatalf("legacy responses beta was forwarded: %q", captured.Header.Get("OpenAI-Beta"))
+	}
 	if captured.Header.Get("User-Agent") != codexProbeUserAgent {
 		t.Fatalf("user-agent = %q", captured.Header.Get("User-Agent"))
 	}
 	if got, want := captured.Header.Get("Session_Id"), isolateSession("key", "compact-session"); got != want {
 		t.Fatalf("session_id = %q, want %q", got, want)
+	}
+}
+
+func TestForwardRemovesOnlyLegacyResponsesBeta(t *testing.T) {
+	var captured *http.Request
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		captured = req
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: http.NoBody, Request: req}, nil
+	})}
+	inbound := httptest.NewRequest(http.MethodPost, "http://gateway.test/v1/responses", nil)
+	inbound.Header.Add("OpenAI-Beta", "responses=experimental, future_feature=v1")
+	inbound.Header.Add("OpenAI-Beta", "another_feature=v2, RESPONSES=EXPERIMENTAL")
+	response, err := NewGateway(client).Forward(context.Background(), inbound, []byte(`{"model":"gpt-5.4","input":[],"stream":true,"store":false}`), RequestBilling{Model: "gpt-5.4", Stream: true}, "access", "account", "key", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	values := captured.Header.Values("OpenAI-Beta")
+	if len(values) != 2 || values[0] != "future_feature=v1" || values[1] != "another_feature=v2" {
+		t.Fatalf("OpenAI-Beta = %#v", values)
 	}
 }
 

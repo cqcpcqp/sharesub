@@ -15,9 +15,9 @@ ShareSub 复用 sub2api 已验证的 OpenAI Codex 协议行为，但产品边界
 | 图片输入输出 | 生成支持 JSON；编辑支持 JSON 图片 URL、multipart 图片与 mask；响应支持 JSON 和 Images SSE |
 | 图片模型 | `/v1/models` 返回 `gpt-image-1`、`gpt-image-1.5`、`gpt-image-2` |
 | 路径兼容 | 支持 `/v1/models`、`/models`、`/backend-api/codex/models`，三个 Responses/compact、Alpha Search 前缀和 Images 前缀 |
-| OAuth 请求规范化 | 删除 ChatGPT 内部 API 不支持的顶层字段，强制 `store=false`，compact 只保留其协议字段 |
+| OAuth 请求规范化 | 删除 ChatGPT 内部 API 不支持的顶层字段与采样参数，规范字符串/对象 `input` 为数组，强制 `store=false`；携带 reasoning 时请求加密推理上下文，compact 只保留其协议字段 |
 | 会话隔离 | `session_id`、`conversation_id` 和 `prompt_cache_key` 按 ShareSub API Key 隔离 |
-| 上游请求头 | 注入 OAuth、ChatGPT Account ID、Codex Beta、Originator、Version 和必要 User-Agent |
+| 上游请求头 | 注入 OAuth、ChatGPT Account ID、Originator、Version 和必要 User-Agent；移除废弃的 `responses=experimental` Beta，同时保留客户端发送的其他独立 Beta token |
 | Alpha Search 请求头 | 使用 SearchClient 独立头部，保留 Codex 身份与 Turn Metadata，不发送 Responses Beta 或会话状态头 |
 | 上游响应头 | 透传请求 ID、Retry-After、Codex 额度窗口和标准 rate-limit 头 |
 | 异常流终止 | SSE 在终止事件前断开时补发标准 `response.failed` |
