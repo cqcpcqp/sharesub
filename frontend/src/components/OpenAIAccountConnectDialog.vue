@@ -126,7 +126,7 @@ function resetForm() {
 
 function updateCallback(value: string) { callback.value = value }
 function emptyConfig(): AccountConfigInput {
-  return { name: '', notes: '', proxy_url: '', max_concurrency: 0, rpm_limit: 0, fast_policy: [], status: 'active' }
+  return { name: '', notes: '', proxy_url: '', max_concurrency: 0, rpm_limit: 0, fast_policy: [], codex_fingerprint_mode: 'session', status: 'active' }
 }
 function notifyError(value: unknown) {
   emit('message', 'error', value instanceof Error ? value.message : String(value))

@@ -454,9 +454,12 @@ func TestResponsesWebSocketHeaders(t *testing.T) {
 	inbound.Set("session_id", "session")
 	inbound.Set("conversation_id", "conversation")
 	inbound.Set("Accept-Language", "zh-CN")
-	headers := responsesWebSocketHeaders(ResponsesWebSocketDialConfig{
+	headers, err := responsesWebSocketHeaders(ResponsesWebSocketDialConfig{
 		AccessToken: "access", ChatGPTAccountID: "account", APIKeyID: "key", InboundHeader: inbound,
 	}, "cache")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if headers.Get("Authorization") != "Bearer access" || headers.Get("ChatGPT-Account-ID") != "account" ||
 		headers.Get("OpenAI-Beta") != responsesWebSocketBetaV2 || headers.Get("Version") != codexProbeVersion ||
 		headers.Get("Originator") != codexDefaultOriginator || headers.Get("User-Agent") != codexProbeUserAgent || headers.Get("Accept-Language") != "zh-CN" {

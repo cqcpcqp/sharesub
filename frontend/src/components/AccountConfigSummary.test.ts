@@ -16,6 +16,7 @@ const account: Account = {
     service_tier: 'priority', action: 'filter', user_ids: ['member'], error_message: '',
     model_whitelist: ['gpt-5.5*'], fallback_action: 'pass', fallback_error_message: '',
   }],
+  codex_fingerprint_mode: 'session',
   subscription_expires_at: '2026-09-06T10:00:00Z', token_expires_at: '2026-08-13T02:46:00Z', status: 'active', created_at: '2026-08-01T00:00:00Z',
 }
 
@@ -34,6 +35,7 @@ describe('AccountConfigSummary', () => {
         },
       },
     })
+    expect(wrapper.text()).toContain('设备 + 会话（推荐）')
 
     expect(wrapper.get('[aria-label="查看最大并发说明"]').attributes('type')).toBe('button')
     expect(wrapper.get('[aria-label="查看 RPM 上限说明"]').attributes('type')).toBe('button')

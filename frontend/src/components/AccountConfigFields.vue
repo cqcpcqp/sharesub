@@ -15,6 +15,7 @@
         <label>最大并发<NInputNumber :value="modelValue.max_concurrency" :min="0" :max="100" :precision="0" @update:value="updateNumber('max_concurrency', $event)"><template #suffix>请求</template></NInputNumber></label>
         <label>RPM 上限<NInputNumber :value="modelValue.rpm_limit" :min="0" :max="10000" :precision="0" @update:value="updateNumber('rpm_limit', $event)"><template #suffix>次/分钟</template></NInputNumber></label>
         <label class="account-form-full">账号代理<AppInput :value="modelValue.proxy_url" type="password" clearable show-password-on="mousedown" placeholder="http://、https:// 或 socks5://" @update:value="updateText('proxy_url', $event)" /></label>
+        <label class="account-form-full">Codex 指纹收敛<NSelect :value="modelValue.codex_fingerprint_mode" :options="fingerprintOptions" to="body" @update:value="updateFingerprintMode" /><small>共享 OAuth 账号时收敛上游可见的设备和会话标识；推荐使用“设备 + 会话”。</small></label>
       </div>
     </section>
 
@@ -39,6 +40,13 @@ const statusOptions = [
   { label: '需重新授权', value: 'refresh_required', disabled: true },
 ]
 
+const fingerprintOptions = [
+  { label: '关闭（透传）', value: 'off' },
+  { label: '仅设备', value: 'device' },
+  { label: '设备 + 会话（推荐）', value: 'session' },
+  { label: '完全收敛', value: 'full' },
+]
+
 function updateText(field: AccountTextField, value: string) {
   emit('update:modelValue', updateAccountText(props.modelValue, field, value))
 }
@@ -49,6 +57,10 @@ function updateNumber(field: 'max_concurrency' | 'rpm_limit', value: number | nu
 
 function updateStatus(value: AccountStatus) {
   emit('update:modelValue', { ...props.modelValue, status: value })
+}
+
+function updateFingerprintMode(value: 'off' | 'device' | 'session' | 'full') {
+  emit('update:modelValue', { ...props.modelValue, codex_fingerprint_mode: value })
 }
 
 function updateFastPolicy(fastPolicy: FastPolicyRule[]) {

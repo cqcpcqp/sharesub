@@ -121,6 +121,7 @@ type Account struct {
 	MaxConcurrency         int              `json:"max_concurrency"`
 	RPMLimit               int              `json:"rpm_limit"`
 	FastPolicy             []FastPolicyRule `json:"fast_policy"`
+	CodexFingerprintMode   string           `json:"codex_fingerprint_mode"`
 	TokenExpiresAt         time.Time        `json:"token_expires_at"`
 	Status                 string           `json:"status"`
 	LastError              string           `json:"last_error,omitempty"`

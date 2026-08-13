@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"time"
@@ -36,9 +37,17 @@ func (s *Server) alphaSearch(w http.ResponseWriter, r *http.Request) {
 	for switches := 0; ; {
 		attemptStartedAt := time.Now()
 		attemptCtx, cancelAttempt := upstreamAttemptContext(r.Context())
-		upstream, forwardErr := s.gateway.ForwardAlphaSearch(attemptCtx, r, forwardBody, access.AccessToken, access.Credential.Account.ChatGPTAccountID, access.ProxyURL)
+		upstream, forwardErr := s.gateway.ForwardAlphaSearch(attemptCtx, r, forwardBody, access.AccessToken, access.Credential.Account.ChatGPTAccountID, access.ProxyURL, openai.CodexFingerprintConfig{
+			AccountID: access.Credential.Account.ID, APIKeyID: access.Credential.APIKeyID, Mode: access.Credential.Account.CodexFingerprintMode,
+		})
 		if forwardErr != nil {
 			cancelAttempt()
+			var fingerprintErr *openai.CodexFingerprintRequestError
+			if errors.As(forwardErr, &fingerprintErr) {
+				s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(requestID, r.URL.Path, metadata.Model, metadata, http.StatusBadRequest, domain.GatewayErrorSourceRequest, "invalid_request_error", forwardErr.Error(), time.Since(attemptStartedAt)), attemptStartedAt)
+				writeGatewayErrorStatus(w, http.StatusBadRequest, "invalid_request_error", forwardErr.Error())
+				return
+			}
 			if r.Context().Err() != nil {
 				s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(requestID, r.URL.Path, metadata.Model, metadata, clientClosedRequestStatus, domain.GatewayErrorSourceRequest, "client_disconnected", "client disconnected before response completed", time.Since(attemptStartedAt)), attemptStartedAt)
 				return

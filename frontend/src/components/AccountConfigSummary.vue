@@ -9,6 +9,7 @@
       <div><dt><Sparkles :size="15" />套餐类型</dt><dd>{{ account.plan_type }}</dd></div>
       <div><dt><CalendarRange :size="15" />订阅有效期至</dt><dd>{{ account.subscription_expires_at ? formatDate(account.subscription_expires_at) : '暂无订阅有效期' }}</dd></div>
       <div><dt><Network :size="15" />账号代理</dt><dd><code>{{ account.proxy_url || '继承系统代理' }}</code></dd></div>
+      <div><dt><Fingerprint :size="15" />Codex 指纹收敛</dt><dd>{{ fingerprintModeLabel(account.codex_fingerprint_mode) }}</dd></div>
       <div>
         <dt>
           <Gauge :size="15" />
@@ -87,13 +88,14 @@
 
 <script setup lang="ts">
 import { NAlert, NTag, NTooltip } from 'naive-ui'
-import { ArrowRight, Boxes, CalendarRange, CircleHelp, Gauge, ListOrdered, Mail, Network, Sparkles, TimerReset, Users, Zap } from 'lucide-vue-next'
+import { ArrowRight, Boxes, CalendarRange, CircleHelp, Fingerprint, Gauge, ListOrdered, Mail, Network, Sparkles, TimerReset, Users, Zap } from 'lucide-vue-next'
 import type { Account, FastPolicyAction, FastPolicyTier, Member } from '../types'
 import StatusBadge from './StatusBadge.vue'
 
 const props = withDefaults(defineProps<{ account: Account; members?: Member[] }>(), { members: () => [] })
 function formatDate(value: string) { return new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) }
 function limitLabel(value: number, suffix: string) { return value === 0 ? '不限制' : `${value} ${suffix}` }
+function fingerprintModeLabel(value: Account['codex_fingerprint_mode']) { return { off: '关闭（透传）', device: '仅设备', session: '设备 + 会话（推荐）', full: '完全收敛' }[value] }
 function tierLabel(value: FastPolicyTier) { return value === 'all' ? '全部 Fast/Flex tier' : value === 'priority' ? 'Fast（含 priority）' : 'Flex' }
 function actionLabel(value: FastPolicyAction) {
   return { pass: '透传到下一层', filter: '过滤 service_tier', force_priority: '强制 Fast', block: '拦截请求' }[value]

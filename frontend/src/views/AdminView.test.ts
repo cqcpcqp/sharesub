@@ -17,7 +17,7 @@ const account: AdminAccount = {
   id: 'account', owner_user_id: admin.id, owner_username: admin.username, owner_email: admin.email,
   name: '团队账号', notes: '', email: 'openai@example.com', chatgpt_account_id: 'chatgpt-account',
   plan_type: 'plus', subscription_expires_at: '2026-09-06T10:00:00Z', proxy_url: '', max_concurrency: 0,
-  rpm_limit: 0, fast_policy: [], token_expires_at: '2026-08-13T02:46:00Z', status: 'active',
+  rpm_limit: 0, fast_policy: [], codex_fingerprint_mode: 'session', token_expires_at: '2026-08-13T02:46:00Z', status: 'active',
   last_error: '', created_at: '2026-08-01T00:00:00Z', plan_id: 'plan', plan_name: '团队 Plan',
 }
 const unboundAccount: AdminAccount = { ...account, id: 'available-account', name: '备用账号', plan_id: '', plan_name: '' }

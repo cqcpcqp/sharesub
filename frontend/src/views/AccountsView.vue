@@ -206,6 +206,7 @@ async function openEdit(account: Account) {
     max_concurrency: account.max_concurrency,
     rpm_limit: account.rpm_limit,
     fast_policy: account.fast_policy.map(rule => ({ ...rule, user_ids: [...rule.user_ids], model_whitelist: [...rule.model_whitelist] })),
+    codex_fingerprint_mode: account.codex_fingerprint_mode,
     status: account.status,
   }
   const plan = props.plans.find(candidate => candidate.account_id === account.id)
@@ -235,7 +236,7 @@ async function saveEdit() {
 }
 
 function emptyConfig(): AccountConfigInput {
-  return { name: '', notes: '', proxy_url: '', max_concurrency: 0, rpm_limit: 0, fast_policy: [], status: 'active' }
+  return { name: '', notes: '', proxy_url: '', max_concurrency: 0, rpm_limit: 0, fast_policy: [], codex_fingerprint_mode: 'session', status: 'active' }
 }
 
 function notifyError(value: unknown) {

@@ -160,11 +160,11 @@ async function toggleAccount(item: AdminAccount) {
   catch (error) { emit('message', 'error', error instanceof Error ? error.message : String(error)) }
   finally { actionID.value = '' }
 }
-function emptyAccountConfig(): AccountConfigInput { return { name: '', notes: '', proxy_url: '', max_concurrency: 0, rpm_limit: 0, fast_policy: [], status: 'active' } }
+function emptyAccountConfig(): AccountConfigInput { return { name: '', notes: '', proxy_url: '', max_concurrency: 0, rpm_limit: 0, fast_policy: [], codex_fingerprint_mode: 'session', status: 'active' } }
 function openAccountEdit(item: AdminAccount) {
   editingAccount.value = item
   accountConfig.value = {
-    name: item.name, notes: item.notes, proxy_url: item.proxy_url, max_concurrency: item.max_concurrency, rpm_limit: item.rpm_limit, status: item.status,
+    name: item.name, notes: item.notes, proxy_url: item.proxy_url, max_concurrency: item.max_concurrency, rpm_limit: item.rpm_limit, codex_fingerprint_mode: item.codex_fingerprint_mode, status: item.status,
     fast_policy: item.fast_policy.map(rule => ({ ...rule, user_ids: [...rule.user_ids], model_whitelist: [...rule.model_whitelist] })),
   }
 }

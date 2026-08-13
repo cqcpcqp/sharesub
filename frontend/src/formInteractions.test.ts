@@ -51,6 +51,7 @@ const account: Account = {
   max_concurrency: 0,
     rpm_limit: 0,
     fast_policy: [],
+  codex_fingerprint_mode: 'session',
   token_expires_at: createdAt,
   status: 'active',
   created_at: createdAt,

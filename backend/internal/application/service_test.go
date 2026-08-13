@@ -332,11 +332,16 @@ func TestNormalizeAccountConfigRejectsUnsupportedValues(t *testing.T) {
 		{Name: "账号", MaxConcurrency: 101, Status: domain.StatusActive},
 		{Name: "账号", RPMLimit: 10_001, Status: domain.StatusActive},
 		{Name: "账号", Status: "unknown"},
+		{Name: "账号", CodexFingerprintMode: "invalid", Status: domain.StatusActive},
 		{Name: "账号", FastPolicy: []domain.FastPolicyRule{{ServiceTier: "turbo", Action: "pass", FallbackAction: "pass"}}, Status: domain.StatusActive},
 		{Name: "账号", FastPolicy: []domain.FastPolicyRule{{ServiceTier: "priority", Action: "filter", ModelWhitelist: []string{"gpt-*-codex"}, FallbackAction: "pass"}}, Status: domain.StatusActive},
 	}
-	if _, err := normalizeAccountConfig(valid); err != nil {
+	normalized, err := normalizeAccountConfig(valid)
+	if err != nil {
 		t.Fatalf("valid config rejected: %v", err)
+	}
+	if normalized.CodexFingerprintMode != "session" {
+		t.Fatalf("default fingerprint mode = %q, want session", normalized.CodexFingerprintMode)
 	}
 	for _, config := range tests {
 		if _, err := normalizeAccountConfig(config); err != domain.ErrInvalidInput {

@@ -180,13 +180,17 @@ func (s *Server) responsesWebSocketHandler(w http.ResponseWriter, r *http.Reques
 			releaseGatewayAccess(&turnAccess)
 			return openai.ResponsesWebSocketTurnConfig{}, openai.NewResponsesWebSocketCloseError(websocket.StatusPolicyViolation, closeReason, policyErr)
 		}
-		return openai.ResponsesWebSocketTurnConfig{
-			Frame: policyFrame,
-			Dial: &openai.ResponsesWebSocketDialConfig{
-				AccessToken: access.AccessToken, ChatGPTAccountID: access.Credential.Account.ChatGPTAccountID,
-				APIKeyID: access.Credential.APIKeyID, ProxyURL: access.ProxyURL, InboundHeader: r.Header,
-			},
-		}, nil
+		dial := &openai.ResponsesWebSocketDialConfig{
+			AccessToken: access.AccessToken, ChatGPTAccountID: access.Credential.Account.ChatGPTAccountID,
+			APIKeyID: access.Credential.APIKeyID, InternalAccountID: access.Credential.Account.ID,
+			FingerprintMode: access.Credential.Account.CodexFingerprintMode, ProxyURL: access.ProxyURL, InboundHeader: r.Header,
+		}
+		policyFrame, fingerprintErr := openai.PrepareResponsesWebSocketFingerprint(dial, policyFrame, request.Billing.PromptCacheKey)
+		if fingerprintErr != nil {
+			releaseGatewayAccess(&turnAccess)
+			return openai.ResponsesWebSocketTurnConfig{}, openai.NewResponsesWebSocketCloseError(websocket.StatusPolicyViolation, "invalid Codex fingerprint metadata", fingerprintErr)
+		}
+		return openai.ResponsesWebSocketTurnConfig{Frame: policyFrame, Dial: dial}, nil
 	}
 	retryFirstAccount := func(
 		ctx context.Context,
@@ -399,7 +403,8 @@ func responsesWebSocketTurnConfig(access application.GatewayAccess, frame []byte
 		Frame: frame,
 		Dial: &openai.ResponsesWebSocketDialConfig{
 			AccessToken: access.AccessToken, ChatGPTAccountID: access.Credential.Account.ChatGPTAccountID,
-			APIKeyID: access.Credential.APIKeyID, ProxyURL: access.ProxyURL, InboundHeader: inboundHeader,
+			APIKeyID: access.Credential.APIKeyID, InternalAccountID: access.Credential.Account.ID,
+			FingerprintMode: access.Credential.Account.CodexFingerprintMode, ProxyURL: access.ProxyURL, InboundHeader: inboundHeader,
 		},
 	}
 }

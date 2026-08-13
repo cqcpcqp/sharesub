@@ -125,9 +125,17 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		attemptCtx, cancelAttempt := upstreamAttemptContext(r.Context())
-		upstream, err := s.gateway.Forward(attemptCtx, r, policyBody, policyMetadata, access.AccessToken, access.Credential.Account.ChatGPTAccountID, access.Credential.APIKeyID, access.ProxyURL)
+		upstream, err := s.gateway.Forward(attemptCtx, r, policyBody, policyMetadata, access.AccessToken, access.Credential.Account.ChatGPTAccountID, access.Credential.APIKeyID, access.ProxyURL, openai.CodexFingerprintContext{
+			AccountID: access.Credential.Account.ID, Mode: access.Credential.Account.CodexFingerprintMode,
+		})
 		if err != nil {
 			cancelAttempt()
+			var fingerprintErr *openai.CodexFingerprintRequestError
+			if errors.As(err, &fingerprintErr) {
+				s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, billingMetadata.Model, policyMetadata, http.StatusBadRequest, domain.GatewayErrorSourceRequest, "invalid_request_error", err.Error(), time.Since(attemptStartedAt)), attemptStartedAt)
+				writeGatewayErrorStatus(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+				return
+			}
 			if r.Context().Err() != nil {
 				s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, billingMetadata.Model, policyMetadata, clientClosedRequestStatus, domain.GatewayErrorSourceRequest, "client_disconnected", "client disconnected before response completed", time.Since(attemptStartedAt)), attemptStartedAt)
 				return
@@ -254,9 +262,17 @@ func (s *Server) images(w http.ResponseWriter, r *http.Request) {
 	for switches := 0; ; {
 		attemptStartedAt := time.Now()
 		attemptCtx, cancelAttempt := upstreamAttemptContext(r.Context())
-		upstream, forwardErr := s.gateway.Forward(attemptCtx, r, forwardBody, billingMetadata, access.AccessToken, access.Credential.Account.ChatGPTAccountID, access.Credential.APIKeyID, access.ProxyURL)
+		upstream, forwardErr := s.gateway.Forward(attemptCtx, r, forwardBody, billingMetadata, access.AccessToken, access.Credential.Account.ChatGPTAccountID, access.Credential.APIKeyID, access.ProxyURL, openai.CodexFingerprintContext{
+			AccountID: access.Credential.Account.ID, Mode: access.Credential.Account.CodexFingerprintMode,
+		})
 		if forwardErr != nil {
 			cancelAttempt()
+			var fingerprintErr *openai.CodexFingerprintRequestError
+			if errors.As(forwardErr, &fingerprintErr) {
+				s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, imageRequest.Model, billingMetadata, http.StatusBadRequest, domain.GatewayErrorSourceRequest, "invalid_request_error", forwardErr.Error(), time.Since(attemptStartedAt)), attemptStartedAt)
+				writeGatewayErrorStatus(w, http.StatusBadRequest, "invalid_request_error", forwardErr.Error())
+				return
+			}
 			if r.Context().Err() != nil {
 				s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, imageRequest.Model, billingMetadata, clientClosedRequestStatus, domain.GatewayErrorSourceRequest, "client_disconnected", "client disconnected before response completed", time.Since(attemptStartedAt)), attemptStartedAt)
 				return

@@ -35,6 +35,14 @@ func normalizeAccountConfig(config AccountConfigInput) (AccountConfigInput, erro
 	if config.FastPolicy == nil {
 		config.FastPolicy = make([]domain.FastPolicyRule, 0)
 	}
+	if config.CodexFingerprintMode == "" {
+		config.CodexFingerprintMode = "session"
+	}
+	switch config.CodexFingerprintMode {
+	case "off", "device", "session", "full":
+	default:
+		return AccountConfigInput{}, domain.ErrInvalidInput
+	}
 	if utf8.RuneCountInString(config.Name) < 1 || utf8.RuneCountInString(config.Name) > 100 || utf8.RuneCountInString(config.Notes) > 2000 {
 		return AccountConfigInput{}, domain.ErrInvalidInput
 	}

@@ -32,9 +32,9 @@ const (
 const codexProbeTimeout = 20 * time.Second
 
 var requestHeaderAllowlist = map[string]struct{}{
-	"accept": {}, "accept-language": {}, "content-type": {}, "conversation_id": {},
-	"openai-beta": {}, "originator": {}, "session_id": {}, "user-agent": {}, "version": {},
-	"x-codex-turn-state": {}, "x-codex-turn-metadata": {},
+	"accept": {}, "accept-language": {}, "content-type": {}, "conversation-id": {}, "conversation_id": {},
+	"openai-beta": {}, "originator": {}, "session-id": {}, "session_id": {}, "thread-id": {}, "user-agent": {}, "version": {},
+	"x-client-request-id": {}, "x-codex-installation-id": {}, "x-codex-turn-state": {}, "x-codex-turn-metadata": {}, "x-codex-window-id": {},
 }
 
 var responseHeaders = []string{
@@ -329,9 +329,38 @@ func quotaSignalFromUsageWindow(window codexQuotaWindow) domain.QuotaSignal {
 	}
 }
 
-func (g *Gateway) Forward(ctx context.Context, inbound *http.Request, body []byte, metadata RequestBilling, accessToken, accountID, apiKeyID, proxyURL string) (*http.Response, error) {
+type CodexFingerprintContext struct {
+	AccountID string
+	Mode      string
+}
+
+func (g *Gateway) Forward(ctx context.Context, inbound *http.Request, body []byte, metadata RequestBilling, accessToken, chatGPTAccountID, apiKeyID, proxyURL string, fingerprintContext ...CodexFingerprintContext) (*http.Response, error) {
 	compact := isCompactRequestPath(inbound.URL.Path)
 	images := normalizeImagesEndpoint(inbound.URL.Path) != ""
+	var err error
+	clientSessionID := ClientCodexSessionID(inbound.Header, metadata.PromptCacheKey)
+	if compact && clientSessionID == "" {
+		clientSessionID, err = randomSessionSeed()
+		if err != nil {
+			return nil, fmt.Errorf("create compact session: %w", err)
+		}
+	}
+	var fingerprint *CodexFingerprint
+	fingerprintConfigured := len(fingerprintContext) > 0
+	if fingerprintConfigured {
+		fingerprint, err = ResolveCodexFingerprint(CodexFingerprintConfig{
+			AccountID: fingerprintContext[0].AccountID, APIKeyID: apiKeyID, Mode: fingerprintContext[0].Mode, ClientSessionID: clientSessionID,
+		})
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !compact {
+		body, err = ApplyCodexFingerprintBody(body, fingerprint)
+		if err != nil {
+			return nil, err
+		}
+	}
 	targetURL := codexResponsesURL
 	if compact {
 		targetURL = codexCompactURL
@@ -342,7 +371,7 @@ func (g *Gateway) Forward(ctx context.Context, inbound *http.Request, body []byt
 	}
 	req.Host = "chatgpt.com"
 	req.Header.Set("Authorization", "Bearer "+accessToken)
-	req.Header.Set("Chatgpt-Account-Id", accountID)
+	req.Header.Set("Chatgpt-Account-Id", chatGPTAccountID)
 	for key, values := range inbound.Header {
 		if _, ok := requestHeaderAllowlist[strings.ToLower(key)]; !ok {
 			continue
@@ -367,26 +396,21 @@ func (g *Gateway) Forward(ctx context.Context, inbound *http.Request, body []byt
 	}
 	applyCodexOAuthIdentity(req.Header, "")
 
-	clientSessionID := strings.TrimSpace(req.Header.Get("Session_Id"))
 	clientConversationID := strings.TrimSpace(req.Header.Get("Conversation_Id"))
-	seed := strings.TrimSpace(metadata.PromptCacheKey)
-	if compact && clientSessionID == "" && seed == "" {
-		seed, err = randomSessionSeed()
-		if err != nil {
-			return nil, fmt.Errorf("create compact session: %w", err)
-		}
-	}
-	if clientSessionID == "" {
-		clientSessionID = seed
-	}
+	seed := clientSessionID
 	if clientConversationID == "" && !compact {
 		clientConversationID = seed
 	}
-	if clientSessionID != "" {
-		req.Header.Set("Session_Id", isolateSession(apiKeyID, clientSessionID))
+	if !fingerprintConfigured {
+		if clientSessionID != "" {
+			req.Header.Set("Session_Id", isolateSession(apiKeyID, clientSessionID))
+		}
+		if clientConversationID != "" {
+			req.Header.Set("Conversation_Id", isolateSession(apiKeyID, clientConversationID))
+		}
 	}
-	if clientConversationID != "" {
-		req.Header.Set("Conversation_Id", isolateSession(apiKeyID, clientConversationID))
+	if err := ApplyCodexFingerprintHeaders(req.Header, fingerprint); err != nil {
+		return nil, err
 	}
 	client, err := g.clientForProxy(proxyURL)
 	if err != nil {

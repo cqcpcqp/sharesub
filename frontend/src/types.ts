@@ -80,6 +80,7 @@ export interface Account {
   max_concurrency: number
   rpm_limit: number
   fast_policy: FastPolicyRule[]
+  codex_fingerprint_mode: 'off' | 'device' | 'session' | 'full'
   token_expires_at: string
   status: AccountStatus
   last_error?: string
@@ -106,6 +107,7 @@ export interface AccountConfigInput {
   max_concurrency: number
   rpm_limit: number
   fast_policy: FastPolicyRule[]
+  codex_fingerprint_mode: 'off' | 'device' | 'session' | 'full'
   status: AccountStatus
 }
 

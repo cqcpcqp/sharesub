@@ -204,24 +204,24 @@ func (s *Store) CreateOrRotateAccountAuthorization(ctx context.Context, account 
 	}
 	var out domain.Account
 	err := s.pool.QueryRow(ctx, `
-		INSERT INTO openai_accounts(id,owner_user_id,name,notes,email,chatgpt_account_id,plan_type,subscription_expires_at,access_token_ciphertext,refresh_token_ciphertext,proxy_url_ciphertext,max_concurrency,rpm_limit,fast_policy,token_expires_at,status,created_at,updated_at)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$17)
+		INSERT INTO openai_accounts(id,owner_user_id,name,notes,email,chatgpt_account_id,plan_type,subscription_expires_at,access_token_ciphertext,refresh_token_ciphertext,proxy_url_ciphertext,max_concurrency,rpm_limit,fast_policy,codex_fingerprint_mode,token_expires_at,status,created_at,updated_at)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$18)
 		ON CONFLICT(owner_user_id,chatgpt_account_id) DO UPDATE SET
 			email=EXCLUDED.email,
 			plan_type=EXCLUDED.plan_type,
-			subscription_expires_at=CASE WHEN $18 THEN EXCLUDED.subscription_expires_at ELSE openai_accounts.subscription_expires_at END,
+			subscription_expires_at=CASE WHEN $19 THEN EXCLUDED.subscription_expires_at ELSE openai_accounts.subscription_expires_at END,
 			access_token_ciphertext=EXCLUDED.access_token_ciphertext,
 			refresh_token_ciphertext=EXCLUDED.refresh_token_ciphertext,
 			token_expires_at=EXCLUDED.token_expires_at,
 			status='active',last_error='',updated_at=EXCLUDED.updated_at
-		RETURNING id,owner_user_id,name,notes,email,chatgpt_account_id,plan_type,subscription_expires_at,access_token_ciphertext,refresh_token_ciphertext,proxy_url_ciphertext,max_concurrency,rpm_limit,fast_policy,token_expires_at,status,last_error,created_at`,
-		account.ID, account.OwnerUserID, account.Name, account.Notes, account.Email, account.ChatGPTAccountID, account.PlanType, account.SubscriptionExpiresAt, account.AccessTokenCiphertext, account.RefreshTokenCiphertext, account.ProxyURLCiphertext, account.MaxConcurrency, account.RPMLimit, account.FastPolicy, account.TokenExpiresAt, account.Status, account.CreatedAt, subscriptionObserved,
-	).Scan(&out.ID, &out.OwnerUserID, &out.Name, &out.Notes, &out.Email, &out.ChatGPTAccountID, &out.PlanType, &out.SubscriptionExpiresAt, &out.AccessTokenCiphertext, &out.RefreshTokenCiphertext, &out.ProxyURLCiphertext, &out.MaxConcurrency, &out.RPMLimit, &out.FastPolicy, &out.TokenExpiresAt, &out.Status, &out.LastError, &out.CreatedAt)
+		RETURNING id,owner_user_id,name,notes,email,chatgpt_account_id,plan_type,subscription_expires_at,access_token_ciphertext,refresh_token_ciphertext,proxy_url_ciphertext,max_concurrency,rpm_limit,fast_policy,codex_fingerprint_mode,token_expires_at,status,last_error,created_at`,
+		account.ID, account.OwnerUserID, account.Name, account.Notes, account.Email, account.ChatGPTAccountID, account.PlanType, account.SubscriptionExpiresAt, account.AccessTokenCiphertext, account.RefreshTokenCiphertext, account.ProxyURLCiphertext, account.MaxConcurrency, account.RPMLimit, account.FastPolicy, account.CodexFingerprintMode, account.TokenExpiresAt, account.Status, account.CreatedAt, subscriptionObserved,
+	).Scan(&out.ID, &out.OwnerUserID, &out.Name, &out.Notes, &out.Email, &out.ChatGPTAccountID, &out.PlanType, &out.SubscriptionExpiresAt, &out.AccessTokenCiphertext, &out.RefreshTokenCiphertext, &out.ProxyURLCiphertext, &out.MaxConcurrency, &out.RPMLimit, &out.FastPolicy, &out.CodexFingerprintMode, &out.TokenExpiresAt, &out.Status, &out.LastError, &out.CreatedAt)
 	return out, mapError(err)
 }
 
 func (s *Store) ListAccounts(ctx context.Context, userID string) ([]domain.Account, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id,owner_user_id,name,notes,email,chatgpt_account_id,plan_type,subscription_expires_at,proxy_url_ciphertext,max_concurrency,rpm_limit,fast_policy,token_expires_at,status,last_error,created_at FROM openai_accounts WHERE owner_user_id=$1 ORDER BY created_at DESC`, userID)
+	rows, err := s.pool.Query(ctx, `SELECT id,owner_user_id,name,notes,email,chatgpt_account_id,plan_type,subscription_expires_at,proxy_url_ciphertext,max_concurrency,rpm_limit,fast_policy,codex_fingerprint_mode,token_expires_at,status,last_error,created_at FROM openai_accounts WHERE owner_user_id=$1 ORDER BY created_at DESC`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -229,7 +229,7 @@ func (s *Store) ListAccounts(ctx context.Context, userID string) ([]domain.Accou
 	out := make([]domain.Account, 0)
 	for rows.Next() {
 		var a domain.Account
-		if err := rows.Scan(&a.ID, &a.OwnerUserID, &a.Name, &a.Notes, &a.Email, &a.ChatGPTAccountID, &a.PlanType, &a.SubscriptionExpiresAt, &a.ProxyURLCiphertext, &a.MaxConcurrency, &a.RPMLimit, &a.FastPolicy, &a.TokenExpiresAt, &a.Status, &a.LastError, &a.CreatedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.OwnerUserID, &a.Name, &a.Notes, &a.Email, &a.ChatGPTAccountID, &a.PlanType, &a.SubscriptionExpiresAt, &a.ProxyURLCiphertext, &a.MaxConcurrency, &a.RPMLimit, &a.FastPolicy, &a.CodexFingerprintMode, &a.TokenExpiresAt, &a.Status, &a.LastError, &a.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, a)
@@ -239,7 +239,7 @@ func (s *Store) ListAccounts(ctx context.Context, userID string) ([]domain.Accou
 
 func (s *Store) AccountByID(ctx context.Context, id string) (domain.Account, error) {
 	var a domain.Account
-	err := s.pool.QueryRow(ctx, `SELECT id,owner_user_id,name,notes,email,chatgpt_account_id,plan_type,subscription_expires_at,access_token_ciphertext,refresh_token_ciphertext,proxy_url_ciphertext,max_concurrency,rpm_limit,fast_policy,token_expires_at,status,last_error,created_at FROM openai_accounts WHERE id=$1`, id).Scan(&a.ID, &a.OwnerUserID, &a.Name, &a.Notes, &a.Email, &a.ChatGPTAccountID, &a.PlanType, &a.SubscriptionExpiresAt, &a.AccessTokenCiphertext, &a.RefreshTokenCiphertext, &a.ProxyURLCiphertext, &a.MaxConcurrency, &a.RPMLimit, &a.FastPolicy, &a.TokenExpiresAt, &a.Status, &a.LastError, &a.CreatedAt)
+	err := s.pool.QueryRow(ctx, `SELECT id,owner_user_id,name,notes,email,chatgpt_account_id,plan_type,subscription_expires_at,access_token_ciphertext,refresh_token_ciphertext,proxy_url_ciphertext,max_concurrency,rpm_limit,fast_policy,codex_fingerprint_mode,token_expires_at,status,last_error,created_at FROM openai_accounts WHERE id=$1`, id).Scan(&a.ID, &a.OwnerUserID, &a.Name, &a.Notes, &a.Email, &a.ChatGPTAccountID, &a.PlanType, &a.SubscriptionExpiresAt, &a.AccessTokenCiphertext, &a.RefreshTokenCiphertext, &a.ProxyURLCiphertext, &a.MaxConcurrency, &a.RPMLimit, &a.FastPolicy, &a.CodexFingerprintMode, &a.TokenExpiresAt, &a.Status, &a.LastError, &a.CreatedAt)
 	return a, mapError(err)
 }
 
@@ -248,7 +248,7 @@ func (s *Store) UpdateAccountConfig(ctx context.Context, userID string, account 
 		account.FastPolicy = make([]domain.FastPolicyRule, 0)
 	}
 	var out domain.Account
-	err := s.pool.QueryRow(ctx, `UPDATE openai_accounts SET name=$3,notes=$4,proxy_url_ciphertext=$5,max_concurrency=$6,rpm_limit=$7,fast_policy=$8,status=$9,last_error=CASE WHEN $9='active' THEN '' ELSE last_error END,updated_at=now() WHERE id=$1 AND owner_user_id=$2 RETURNING id,owner_user_id,name,notes,email,chatgpt_account_id,plan_type,subscription_expires_at,proxy_url_ciphertext,max_concurrency,rpm_limit,fast_policy,token_expires_at,status,last_error,created_at`, account.ID, userID, account.Name, account.Notes, account.ProxyURLCiphertext, account.MaxConcurrency, account.RPMLimit, account.FastPolicy, account.Status).Scan(&out.ID, &out.OwnerUserID, &out.Name, &out.Notes, &out.Email, &out.ChatGPTAccountID, &out.PlanType, &out.SubscriptionExpiresAt, &out.ProxyURLCiphertext, &out.MaxConcurrency, &out.RPMLimit, &out.FastPolicy, &out.TokenExpiresAt, &out.Status, &out.LastError, &out.CreatedAt)
+	err := s.pool.QueryRow(ctx, `UPDATE openai_accounts SET name=$3,notes=$4,proxy_url_ciphertext=$5,max_concurrency=$6,rpm_limit=$7,fast_policy=$8,codex_fingerprint_mode=$9,status=$10,last_error=CASE WHEN $10='active' THEN '' ELSE last_error END,updated_at=now() WHERE id=$1 AND owner_user_id=$2 RETURNING id,owner_user_id,name,notes,email,chatgpt_account_id,plan_type,subscription_expires_at,proxy_url_ciphertext,max_concurrency,rpm_limit,fast_policy,codex_fingerprint_mode,token_expires_at,status,last_error,created_at`, account.ID, userID, account.Name, account.Notes, account.ProxyURLCiphertext, account.MaxConcurrency, account.RPMLimit, account.FastPolicy, account.CodexFingerprintMode, account.Status).Scan(&out.ID, &out.OwnerUserID, &out.Name, &out.Notes, &out.Email, &out.ChatGPTAccountID, &out.PlanType, &out.SubscriptionExpiresAt, &out.ProxyURLCiphertext, &out.MaxConcurrency, &out.RPMLimit, &out.FastPolicy, &out.CodexFingerprintMode, &out.TokenExpiresAt, &out.Status, &out.LastError, &out.CreatedAt)
 	return out, mapError(err)
 }
 
@@ -269,7 +269,7 @@ func (s *Store) UpdateAccountSubscriptionExpiresAtIfRefreshTokenUnchanged(ctx co
 }
 
 func (s *Store) ListExpiringAccounts(ctx context.Context, expiresBefore time.Time, limit int) ([]domain.Account, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id,owner_user_id,name,notes,email,chatgpt_account_id,plan_type,subscription_expires_at,access_token_ciphertext,refresh_token_ciphertext,proxy_url_ciphertext,max_concurrency,rpm_limit,fast_policy,token_expires_at,status,last_error,created_at FROM openai_accounts WHERE status='active' AND token_expires_at<$1 ORDER BY token_expires_at,id LIMIT $2`, expiresBefore, limit)
+	rows, err := s.pool.Query(ctx, `SELECT id,owner_user_id,name,notes,email,chatgpt_account_id,plan_type,subscription_expires_at,access_token_ciphertext,refresh_token_ciphertext,proxy_url_ciphertext,max_concurrency,rpm_limit,fast_policy,codex_fingerprint_mode,token_expires_at,status,last_error,created_at FROM openai_accounts WHERE status='active' AND token_expires_at<$1 ORDER BY token_expires_at,id LIMIT $2`, expiresBefore, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -277,7 +277,7 @@ func (s *Store) ListExpiringAccounts(ctx context.Context, expiresBefore time.Tim
 	accounts := make([]domain.Account, 0)
 	for rows.Next() {
 		var account domain.Account
-		if err := rows.Scan(&account.ID, &account.OwnerUserID, &account.Name, &account.Notes, &account.Email, &account.ChatGPTAccountID, &account.PlanType, &account.SubscriptionExpiresAt, &account.AccessTokenCiphertext, &account.RefreshTokenCiphertext, &account.ProxyURLCiphertext, &account.MaxConcurrency, &account.RPMLimit, &account.FastPolicy, &account.TokenExpiresAt, &account.Status, &account.LastError, &account.CreatedAt); err != nil {
+		if err := rows.Scan(&account.ID, &account.OwnerUserID, &account.Name, &account.Notes, &account.Email, &account.ChatGPTAccountID, &account.PlanType, &account.SubscriptionExpiresAt, &account.AccessTokenCiphertext, &account.RefreshTokenCiphertext, &account.ProxyURLCiphertext, &account.MaxConcurrency, &account.RPMLimit, &account.FastPolicy, &account.CodexFingerprintMode, &account.TokenExpiresAt, &account.Status, &account.LastError, &account.CreatedAt); err != nil {
 			return nil, err
 		}
 		accounts = append(accounts, account)

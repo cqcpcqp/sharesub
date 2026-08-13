@@ -54,11 +54,14 @@ type ResponsesWebSocketDialer interface {
 }
 
 type ResponsesWebSocketDialConfig struct {
-	AccessToken      string
-	ChatGPTAccountID string
-	APIKeyID         string
-	ProxyURL         string
-	InboundHeader    http.Header
+	AccessToken       string
+	ChatGPTAccountID  string
+	APIKeyID          string
+	InternalAccountID string
+	FingerprintMode   string
+	Fingerprint       *CodexFingerprint
+	ProxyURL          string
+	InboundHeader     http.Header
 }
 
 type ResponsesWebSocketTurnRequest struct {
@@ -510,7 +513,14 @@ func (s *ResponsesWebSocketSession) Run(ctx context.Context, client ResponsesWeb
 				}
 				for {
 					pinnedDial = cloneResponsesWebSocketDialConfig(*turnConfig.Dial)
-					headers := responsesWebSocketHeaders(*turnConfig.Dial, result.Billing.PromptCacheKey)
+					headers, headerErr := responsesWebSocketHeaders(*turnConfig.Dial, result.Billing.PromptCacheKey)
+					if headerErr != nil {
+						err = NewResponsesWebSocketCloseError(websocket.StatusPolicyViolation, "invalid Codex fingerprint metadata", headerErr)
+						if turnStarted {
+							callResponsesWebSocketAfterTurn(ctx, hooks, turn, result, err)
+						}
+						return err
+					}
 					dialCtx, cancelDial := context.WithTimeout(ctx, s.dialTimeout)
 					var handshakeHeaders http.Header
 					var dialStatus int
@@ -1229,7 +1239,22 @@ func isResponsesWebSocketTokenEvent(eventType string) bool {
 	return strings.HasPrefix(eventType, "response.output") && !strings.HasSuffix(eventType, ".done")
 }
 
-func responsesWebSocketHeaders(config ResponsesWebSocketDialConfig, promptCacheKey string) http.Header {
+func PrepareResponsesWebSocketFingerprint(config *ResponsesWebSocketDialConfig, frame []byte, promptCacheKey string) ([]byte, error) {
+	if config == nil || strings.TrimSpace(config.InternalAccountID) == "" {
+		return frame, nil
+	}
+	sessionID := ClientCodexSessionID(config.InboundHeader, promptCacheKey)
+	fingerprint, err := ResolveCodexFingerprint(CodexFingerprintConfig{
+		AccountID: config.InternalAccountID, APIKeyID: config.APIKeyID, Mode: config.FingerprintMode, ClientSessionID: sessionID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	config.Fingerprint = fingerprint
+	return ApplyCodexFingerprintBody(frame, fingerprint)
+}
+
+func responsesWebSocketHeaders(config ResponsesWebSocketDialConfig, promptCacheKey string) (http.Header, error) {
 	headers := make(http.Header)
 	headers.Set("Authorization", "Bearer "+config.AccessToken)
 	if config.ChatGPTAccountID != "" {
@@ -1252,13 +1277,36 @@ func responsesWebSocketHeaders(config ResponsesWebSocketDialConfig, promptCacheK
 	if sessionID == "" {
 		sessionID = strings.TrimSpace(promptCacheKey)
 	}
-	if sessionID != "" {
-		headers.Set("session_id", isolateSession(config.APIKeyID, sessionID))
+	fingerprint := config.Fingerprint
+	var err error
+	if fingerprint == nil && strings.TrimSpace(config.InternalAccountID) != "" {
+		fingerprint, err = ResolveCodexFingerprint(CodexFingerprintConfig{
+			AccountID: config.InternalAccountID, APIKeyID: config.APIKeyID, Mode: config.FingerprintMode, ClientSessionID: sessionID,
+		})
+		if err != nil {
+			return nil, err
+		}
 	}
-	if conversationID != "" {
-		headers.Set("conversation_id", isolateSession(config.APIKeyID, conversationID))
+	useLegacyIsolation := strings.TrimSpace(config.InternalAccountID) == ""
+	if err == nil && useLegacyIsolation {
+		if sessionID != "" {
+			headers.Set("session_id", isolateSession(config.APIKeyID, sessionID))
+		}
+		if conversationID != "" {
+			headers.Set("conversation_id", isolateSession(config.APIKeyID, conversationID))
+		}
+	} else if fingerprint == nil || fingerprint.mode == "device" {
+		if sessionID != "" {
+			headers.Set("session_id", sessionID)
+		}
+		if conversationID != "" {
+			headers.Set("conversation_id", conversationID)
+		}
 	}
-	return headers
+	if err := ApplyCodexFingerprintHeaders(headers, fingerprint); err != nil {
+		return nil, err
+	}
+	return headers, nil
 }
 
 func validateResponsesWebSocketDialConfig(config ResponsesWebSocketDialConfig) error {
@@ -1270,6 +1318,11 @@ func validateResponsesWebSocketDialConfig(config ResponsesWebSocketDialConfig) e
 	}
 	if strings.TrimSpace(config.ChatGPTAccountID) == "" {
 		return errors.New("Responses WebSocket ChatGPT account ID is required")
+	}
+	if strings.TrimSpace(config.InternalAccountID) != "" {
+		if _, err := ResolveCodexFingerprint(CodexFingerprintConfig{AccountID: config.InternalAccountID, APIKeyID: config.APIKeyID, Mode: config.FingerprintMode, ClientSessionID: "validation"}); err != nil {
+			return err
+		}
 	}
 	return nil
 }

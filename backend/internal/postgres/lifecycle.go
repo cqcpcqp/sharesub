@@ -42,9 +42,9 @@ func (s *Store) UpdateAccountAuthorization(ctx context.Context, ownerID string, 
 	err = tx.QueryRow(ctx, `
 		UPDATE openai_accounts SET email=$3,plan_type=$4,subscription_expires_at=$5,access_token_ciphertext=$6,refresh_token_ciphertext=$7,token_expires_at=$8,status='active',last_error='',updated_at=$9
 		WHERE id=$1 AND owner_user_id=$2
-		RETURNING id,owner_user_id,name,notes,email,chatgpt_account_id,plan_type,subscription_expires_at,proxy_url_ciphertext,max_concurrency,rpm_limit,fast_policy,token_expires_at,status,last_error,created_at`,
+		RETURNING id,owner_user_id,name,notes,email,chatgpt_account_id,plan_type,subscription_expires_at,proxy_url_ciphertext,max_concurrency,rpm_limit,fast_policy,codex_fingerprint_mode,token_expires_at,status,last_error,created_at`,
 		account.ID, ownerID, account.Email, account.PlanType, account.SubscriptionExpiresAt, account.AccessTokenCiphertext, account.RefreshTokenCiphertext, account.TokenExpiresAt, event.CreatedAt,
-	).Scan(&out.ID, &out.OwnerUserID, &out.Name, &out.Notes, &out.Email, &out.ChatGPTAccountID, &out.PlanType, &out.SubscriptionExpiresAt, &out.ProxyURLCiphertext, &out.MaxConcurrency, &out.RPMLimit, &out.FastPolicy, &out.TokenExpiresAt, &out.Status, &out.LastError, &out.CreatedAt)
+	).Scan(&out.ID, &out.OwnerUserID, &out.Name, &out.Notes, &out.Email, &out.ChatGPTAccountID, &out.PlanType, &out.SubscriptionExpiresAt, &out.ProxyURLCiphertext, &out.MaxConcurrency, &out.RPMLimit, &out.FastPolicy, &out.CodexFingerprintMode, &out.TokenExpiresAt, &out.Status, &out.LastError, &out.CreatedAt)
 	if err != nil {
 		return domain.Account{}, mapError(err)
 	}

@@ -55,7 +55,7 @@ func PrepareAlphaSearchRequest(body []byte) ([]byte, RequestBilling, error) {
 // ForwardAlphaSearch proxies the standalone SearchClient protocol. It is not
 // a Responses subrequest and therefore deliberately omits Responses-only
 // headers such as OpenAI-Beta and session/conversation state.
-func (g *Gateway) ForwardAlphaSearch(ctx context.Context, inbound *http.Request, body []byte, accessToken, accountID, proxyURL string) (*http.Response, error) {
+func (g *Gateway) ForwardAlphaSearch(ctx context.Context, inbound *http.Request, body []byte, accessToken, accountID, proxyURL string, fingerprintContext ...CodexFingerprintConfig) (*http.Response, error) {
 	target, err := url.Parse(codexAlphaSearchURL)
 	if err != nil {
 		return nil, err
@@ -76,6 +76,18 @@ func (g *Gateway) ForwardAlphaSearch(ctx context.Context, inbound *http.Request,
 		req.Header.Set("X-Codex-Turn-Metadata", metadata)
 	}
 	applyCodexOAuthIdentity(req.Header, "")
+	var fingerprint *CodexFingerprint
+	if len(fingerprintContext) > 0 {
+		config := fingerprintContext[0]
+		config.ClientSessionID = ClientCodexSessionID(inbound.Header, "alpha-search")
+		fingerprint, err = ResolveCodexFingerprint(config)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := ApplyCodexFingerprintHeaders(req.Header, fingerprint); err != nil {
+		return nil, err
+	}
 
 	client, err := g.clientForProxy(proxyURL)
 	if err != nil {

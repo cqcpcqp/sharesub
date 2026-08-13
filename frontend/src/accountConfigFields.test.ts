@@ -8,7 +8,7 @@ import AccountConfigFields from './components/AccountConfigFields.vue'
 
 const modelValue: AccountConfigInput = {
   name: '团队主账号', notes: '共享账号', proxy_url: 'http://127.0.0.1:7890',
-  max_concurrency: 2, rpm_limit: 60, fast_policy: [], status: 'active',
+  max_concurrency: 2, rpm_limit: 60, fast_policy: [], codex_fingerprint_mode: 'session', status: 'active',
 }
 
 describe('AccountConfigFields', () => {
@@ -22,6 +22,7 @@ describe('AccountConfigFields', () => {
     expect(wrapper.text()).toContain('发送兼容值 priority')
     expect(wrapper.text()).toContain('响应更慢且可能暂时无可用资源')
     expect(wrapper.text()).toContain('继续执行成员 Key 的规则')
+    expect(wrapper.text()).toContain('设备 + 会话（推荐）')
   })
 
   it('defaults new account rules to filtering Fast requests', async () => {
