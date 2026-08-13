@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -604,8 +605,25 @@ func TestResponsesWebSocketHTTPFirstUpstreamRateLimitErrorSwitchesBeforeDownstre
 	gotFailedRequest := waitResponsesWebSocketHTTPWrite(t, firstUpstream)
 	firstUpstream.send(`{"type":"error","error":{"type":"usage_limit_error","code":"insufficient_quota","message":"usage limit reached"}}`)
 	gotSuccessfulRequest := waitResponsesWebSocketHTTPWrite(t, secondUpstream)
-	if string(gotFailedRequest) != string(gotSuccessfulRequest) || !strings.Contains(string(gotSuccessfulRequest), `"content":"one"`) {
+	var failedPayload, successfulPayload map[string]any
+	if err := json.Unmarshal(gotFailedRequest, &failedPayload); err != nil {
+		t.Fatalf("decode failed account first frame: %v", err)
+	}
+	if err := json.Unmarshal(gotSuccessfulRequest, &successfulPayload); err != nil {
+		t.Fatalf("decode successful account first frame: %v", err)
+	}
+	failedMetadata, failedMetadataOK := failedPayload["client_metadata"].(map[string]any)
+	successfulMetadata, successfulMetadataOK := successfulPayload["client_metadata"].(map[string]any)
+	delete(failedPayload, "client_metadata")
+	delete(successfulPayload, "client_metadata")
+	if !reflect.DeepEqual(failedPayload, successfulPayload) || !strings.Contains(string(gotSuccessfulRequest), `"content":"one"`) {
 		t.Fatalf("first frame replay mismatch:\nfailed=%s\nsuccess=%s", gotFailedRequest, gotSuccessfulRequest)
+	}
+	if !failedMetadataOK || !successfulMetadataOK ||
+		failedMetadata["session_id"] == "" || successfulMetadata["session_id"] == "" ||
+		failedMetadata["session_id"] == successfulMetadata["session_id"] ||
+		failedMetadata["x-codex-installation-id"] == successfulMetadata["x-codex-installation-id"] {
+		t.Fatalf("account-specific fingerprints were not switched:\nfailed=%v\nsuccess=%v", failedMetadata, successfulMetadata)
 	}
 	if dialer.dialCount() != 2 {
 		t.Fatalf("upstream dial count = %d, want 2", dialer.dialCount())

@@ -356,7 +356,7 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	}
 	configuredAccount, err := store.UpdateAccountConfig(ctx, "owner", domain.Account{
 		ID: "account", Name: "团队主账号", Notes: "仅用于 Codex", ProxyURLCiphertext: []byte("encrypted-proxy"),
-		MaxConcurrency: 6, RPMLimit: 90, Status: domain.StatusActive,
+		MaxConcurrency: 6, RPMLimit: 90, CodexFingerprintMode: "session", Status: domain.StatusActive,
 	})
 	if err != nil {
 		t.Fatal(err)
