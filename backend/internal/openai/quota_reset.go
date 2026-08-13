@@ -100,7 +100,7 @@ func newQuotaResetRequest(ctx context.Context, method, targetURL, accessToken, c
 	req.Header.Set("Chatgpt-Account-Id", chatgptAccountID)
 	req.Header.Set("OpenAI-Beta", "codex-1")
 	req.Header.Set("OAI-Language", "zh-CN")
-	req.Header.Set("Originator", "Codex Desktop")
+	applyCodexOAuthIdentity(req.Header, "")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Sec-Fetch-Site", "none")
 	req.Header.Set("Sec-Fetch-Mode", "no-cors")

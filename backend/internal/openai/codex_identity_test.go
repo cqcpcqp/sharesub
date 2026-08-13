@@ -22,7 +22,7 @@ func TestApplyCodexOAuthIdentity(t *testing.T) {
 	}
 
 	applyCodexOAuthIdentity(header, "0.137.0")
-	if header.Get("Originator") != codexDefaultOriginator || header.Get("Version") != "0.137.0" || header.Get("User-Agent") != codexProbeUserAgent {
+	if header.Get("Originator") != codexDefaultOriginator || header.Get("Version") != codexProbeVersion || header.Get("User-Agent") != codexProbeUserAgent {
 		t.Fatalf("explicit-version identity = %#v", header)
 	}
 }

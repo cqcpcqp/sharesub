@@ -27,6 +27,7 @@ type Server struct {
 	webSocketConfig    ResponsesWebSocketConfig
 	webSocketIngress   *responsesWebSocketIngressLimiter
 	webSocketSessions  *responsesWebSocketSessionRegistry
+	protections        *gatewayProtectionState
 	logger             *slog.Logger
 	mux                *http.ServeMux
 	closeOnce          sync.Once
@@ -45,12 +46,14 @@ func New(app *application.Service, gateway *openai.Gateway, logger *slog.Logger,
 		webSocketConfig:   config,
 		webSocketIngress:  newResponsesWebSocketIngressLimiter(config.MaxConnectionsPerAPIKey),
 		webSocketSessions: newResponsesWebSocketSessionRegistry(),
+		protections:       newGatewayProtectionState(config.MaxRequestsPerMinutePerAPIKey),
 	}
 	s.responsesWebSocket = openai.NewResponsesWebSocketSession(openai.ResponsesWebSocketOptions{
 		OutboundProxyURL: config.OutboundProxyURL,
 		DialTimeout:      config.DialTimeout, ReadTimeout: config.ReadTimeout,
 		WriteTimeout: config.WriteTimeout, InterTurnIdleTimeout: config.InterTurnIdleTimeout,
 		UpstreamDrainTimeout: config.UpstreamDrainTimeout, UpstreamReadLimit: config.UpstreamReadLimitBytes,
+		FirstOutputTimeout: config.FirstOutputTimeout,
 	})
 	s.routes()
 	return s

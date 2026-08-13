@@ -69,6 +69,9 @@ func main() {
 	oauthClient := openai.NewOAuthClient(cfg.OutboundProxy)
 	gateway := openai.NewGateway(httpClient)
 	defer gateway.Close()
+	go openai.RunCodexVersionSync(ctx, httpClient, 6*time.Hour, func(syncErr error) {
+		logger.Warn("sync official Codex version", "error", syncErr, "effective_version", openai.EffectiveCodexVersion())
+	})
 	app := application.NewService(store, securityManager, oauthClient, cfg.SessionTTL, cfg.OAuthRedirect, cfg.PublicURL, gateway)
 	bootstrapAdmin, err := app.EnsureBootstrapAdmin(ctx)
 	if err != nil {
@@ -79,17 +82,19 @@ func main() {
 		logger.Warn("bootstrap admin created; change this temporary password after login", "email", bootstrapAdmin.Email, "temporary_password", bootstrapAdmin.TemporaryPassword)
 	}
 	api := httpapi.New(app, gateway, logger, httpapi.ResponsesWebSocketConfig{
-		FirstMessageTimeout:     cfg.ResponsesWSFirstMessageTimeout,
-		InterTurnIdleTimeout:    cfg.ResponsesWSInterTurnIdleTimeout,
-		MaxSessionDuration:      cfg.ResponsesWSMaxSessionDuration,
-		MaxConnectionsPerAPIKey: cfg.ResponsesWSMaxConnectionsPerAPIKey,
-		OutboundProxyURL:        cfg.OutboundProxy,
-		DialTimeout:             cfg.ResponsesWSDialTimeout,
-		ReadTimeout:             cfg.ResponsesWSReadTimeout,
-		WriteTimeout:            cfg.ResponsesWSWriteTimeout,
-		UpstreamDrainTimeout:    cfg.ResponsesWSUpstreamDrainTimeout,
-		ClientReadLimitBytes:    cfg.ResponsesWSClientReadLimitBytes,
-		UpstreamReadLimitBytes:  cfg.ResponsesWSUpstreamReadLimitBytes,
+		FirstMessageTimeout:           cfg.ResponsesWSFirstMessageTimeout,
+		InterTurnIdleTimeout:          cfg.ResponsesWSInterTurnIdleTimeout,
+		MaxSessionDuration:            cfg.ResponsesWSMaxSessionDuration,
+		MaxConnectionsPerAPIKey:       cfg.ResponsesWSMaxConnectionsPerAPIKey,
+		OutboundProxyURL:              cfg.OutboundProxy,
+		DialTimeout:                   cfg.ResponsesWSDialTimeout,
+		ReadTimeout:                   cfg.ResponsesWSReadTimeout,
+		WriteTimeout:                  cfg.ResponsesWSWriteTimeout,
+		UpstreamDrainTimeout:          cfg.ResponsesWSUpstreamDrainTimeout,
+		ClientReadLimitBytes:          cfg.ResponsesWSClientReadLimitBytes,
+		UpstreamReadLimitBytes:        cfg.ResponsesWSUpstreamReadLimitBytes,
+		MaxRequestsPerMinutePerAPIKey: cfg.GatewayMaxRequestsPerMinutePerAPIKey,
+		FirstOutputTimeout:            cfg.GatewayFirstOutputTimeout,
 	})
 	defer api.Close()
 	server := &http.Server{

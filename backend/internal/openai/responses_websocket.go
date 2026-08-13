@@ -62,6 +62,8 @@ type ResponsesWebSocketDialConfig struct {
 	Fingerprint       *CodexFingerprint
 	ProxyURL          string
 	InboundHeader     http.Header
+	Model             string
+	ServiceTier       string
 }
 
 type ResponsesWebSocketTurnRequest struct {
@@ -103,6 +105,7 @@ type ResponsesWebSocketOptions struct {
 	InterTurnIdleTimeout time.Duration
 	UpstreamDrainTimeout time.Duration
 	UpstreamReadLimit    int64
+	FirstOutputTimeout   time.Duration
 }
 
 type ResponsesWebSocketSession struct {
@@ -113,6 +116,7 @@ type ResponsesWebSocketSession struct {
 	writeTimeout         time.Duration
 	interTurnIdleTimeout time.Duration
 	upstreamDrainTimeout time.Duration
+	firstOutputTimeout   time.Duration
 }
 
 // PrepareResponsesWebSocketFrame is the public frame normalizer used by
@@ -381,13 +385,19 @@ func NewResponsesWebSocketSession(options ResponsesWebSocketOptions) *ResponsesW
 			proxyClients:     make(map[string]*responsesWebSocketProxyClientEntry),
 		}
 	}
+	readTimeout := positiveDuration(options.ReadTimeout, defaultWSReadTimeout)
+	firstOutputTimeout := options.FirstOutputTimeout
+	if firstOutputTimeout <= 0 {
+		firstOutputTimeout = readTimeout
+	}
 	return &ResponsesWebSocketSession{
 		targetURL: options.TargetURL, dialer: options.Dialer,
 		dialTimeout:          positiveDuration(options.DialTimeout, defaultWSDialTimeout),
-		readTimeout:          positiveDuration(options.ReadTimeout, defaultWSReadTimeout),
+		readTimeout:          readTimeout,
 		writeTimeout:         positiveDuration(options.WriteTimeout, defaultWSWriteTimeout),
 		interTurnIdleTimeout: positiveDuration(options.InterTurnIdleTimeout, defaultWSInterTurnTimeout),
 		upstreamDrainTimeout: positiveDuration(options.UpstreamDrainTimeout, defaultWSDrainTimeout),
+		firstOutputTimeout:   firstOutputTimeout,
 	}
 }
 
@@ -533,7 +543,7 @@ func (s *ResponsesWebSocketSession) Run(ctx context.Context, client ResponsesWeb
 					}
 
 					dialErr := normalizeResponsesWebSocketDialError(err, dialStatus, handshakeHeaders)
-					if turn == 1 && dialErr.StatusCode == http.StatusTooManyRequests && hooks.OnFirstDialError != nil {
+					if turn == 1 && (dialErr.StatusCode == http.StatusTooManyRequests || dialErr.StatusCode == http.StatusUnauthorized) && hooks.OnFirstDialError != nil {
 						nextConfig, retryErr := hooks.OnFirstDialError(ctx, turnRequest, result, dialErr)
 						if retryErr != nil {
 							return normalizeResponsesWebSocketHookError(retryErr)
@@ -726,7 +736,8 @@ func (s *ResponsesWebSocketSession) relayTurn(
 	clientDisconnected := false
 	wroteDownstream := false
 	var clientErr error
-	readTimer := time.NewTimer(s.readTimeout)
+	firstOutputDeadline := time.Now().Add(s.firstOutputTimeout)
+	readTimer := time.NewTimer(s.firstOutputTimeout)
 	defer func() {
 		stopResponsesWebSocketTimer(readTimer)
 		stopResponsesWebSocketTimer(drainTimer)
@@ -869,7 +880,14 @@ func (s *ResponsesWebSocketSession) relayTurn(
 				return result, clientErr
 			}
 			if !clientDisconnected {
-				resetResponsesWebSocketTimer(readTimer, s.readTimeout)
+				readTimeout := time.Until(firstOutputDeadline)
+				if !firstTokenAt.IsZero() {
+					readTimeout = s.readTimeout
+				} else if readTimeout <= 0 {
+					finishMetrics()
+					return result, NewResponsesWebSocketCloseError(websocket.StatusInternalError, "upstream Responses WebSocket read timeout", context.DeadlineExceeded)
+				}
+				resetResponsesWebSocketTimer(readTimer, readTimeout)
 			}
 		case <-readTimer.C:
 			finishMetrics()
@@ -1262,6 +1280,7 @@ func responsesWebSocketHeaders(config ResponsesWebSocketDialConfig, promptCacheK
 	}
 	headers.Set("OpenAI-Beta", responsesWebSocketBetaV2)
 	applyCodexOAuthIdentity(headers, "")
+	applyCodexRoutingHint(headers, config.Model, config.ServiceTier)
 	for _, name := range []string{"Accept-Language", "X-Codex-Beta-Features", "X-Codex-Window-Id", "X-Codex-Installation-Id", "X-Codex-Turn-State", "X-Codex-Turn-Metadata"} {
 		for _, value := range config.InboundHeader.Values(name) {
 			if strings.TrimSpace(value) != "" {

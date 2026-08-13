@@ -366,6 +366,40 @@ func (s *Service) RecordGatewayAccountQuota(ctx context.Context, access GatewayA
 	)
 }
 
+func (s *Service) MarkGatewayAccountRefreshRequired(ctx context.Context, access GatewayAccess, message string) error {
+	updated, err := s.store.MarkAccountErrorIfRefreshTokenUnchanged(
+		ctx, access.Credential.Account.ID, access.Credential.RefreshTokenCiphertext, message,
+	)
+	if err != nil {
+		return err
+	}
+	if !updated {
+		return errors.New("account credentials changed before refresh-required update")
+	}
+	return nil
+}
+
+func (s *Service) RefreshGatewayAccountAccess(ctx context.Context, access GatewayAccess) (string, error) {
+	if s == nil || s.oauth == nil {
+		return "", errors.New("OpenAI OAuth refresh client is unavailable")
+	}
+	refreshBefore := access.Credential.TokenExpiresAt.Sub(s.now()) + time.Minute
+	if refreshBefore < time.Minute {
+		refreshBefore = time.Minute
+	}
+	token, _, err := s.refreshAccountToken(ctx, domain.Account{
+		ID: access.Credential.Account.ID, OwnerUserID: access.Credential.Account.OwnerUserID,
+		ChatGPTAccountID: access.Credential.Account.ChatGPTAccountID, Status: access.Credential.Account.Status,
+		AccessTokenCiphertext:  access.Credential.AccessTokenCiphertext,
+		RefreshTokenCiphertext: access.Credential.RefreshTokenCiphertext,
+		TokenExpiresAt:         access.Credential.TokenExpiresAt,
+	}, refreshBefore, true)
+	if err != nil {
+		return "", err
+	}
+	return token, nil
+}
+
 func (s *Service) RecordGatewayMetric(ctx context.Context, access GatewayAccess, metric domain.GatewayMetric, recordedAt time.Time) error {
 	metric.APIKeyID = access.Credential.APIKeyID
 	metric.PlanID = access.Credential.Plan.ID

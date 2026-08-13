@@ -18,17 +18,19 @@ import (
 // ResponsesWebSocketConfig contains the HTTP ingress policy for Responses
 // WebSocket v2. Transport details are passed through to the OpenAI session.
 type ResponsesWebSocketConfig struct {
-	FirstMessageTimeout     time.Duration
-	InterTurnIdleTimeout    time.Duration
-	MaxSessionDuration      time.Duration
-	MaxConnectionsPerAPIKey int
-	OutboundProxyURL        string
-	DialTimeout             time.Duration
-	ReadTimeout             time.Duration
-	WriteTimeout            time.Duration
-	UpstreamDrainTimeout    time.Duration
-	ClientReadLimitBytes    int64
-	UpstreamReadLimitBytes  int64
+	FirstMessageTimeout           time.Duration
+	InterTurnIdleTimeout          time.Duration
+	MaxSessionDuration            time.Duration
+	MaxConnectionsPerAPIKey       int
+	OutboundProxyURL              string
+	DialTimeout                   time.Duration
+	ReadTimeout                   time.Duration
+	WriteTimeout                  time.Duration
+	UpstreamDrainTimeout          time.Duration
+	ClientReadLimitBytes          int64
+	UpstreamReadLimitBytes        int64
+	MaxRequestsPerMinutePerAPIKey int
+	FirstOutputTimeout            time.Duration
 }
 
 func DefaultResponsesWebSocketConfig() ResponsesWebSocketConfig {
@@ -37,8 +39,10 @@ func DefaultResponsesWebSocketConfig() ResponsesWebSocketConfig {
 		MaxSessionDuration: time.Hour, MaxConnectionsPerAPIKey: 64,
 		DialTimeout: 10 * time.Second, ReadTimeout: 15 * time.Minute,
 		WriteTimeout: 2 * time.Minute, UpstreamDrainTimeout: 1200 * time.Millisecond,
-		ClientReadLimitBytes:   64 << 20,
-		UpstreamReadLimitBytes: 16 << 20,
+		ClientReadLimitBytes:          64 << 20,
+		UpstreamReadLimitBytes:        16 << 20,
+		MaxRequestsPerMinutePerAPIKey: defaultGatewayAPIKeyRPM,
+		FirstOutputTimeout:            2 * time.Minute,
 	}
 }
 
@@ -98,6 +102,11 @@ func (s *Server) responsesWebSocketHandler(w http.ResponseWriter, r *http.Reques
 		writeGatewayDomainError(w, err)
 		return
 	}
+	if allowed, retryAfter := s.protections.admitAPIKey(apiKeyID); !allowed {
+		w.Header().Set("Retry-After", retryAfterSeconds(retryAfter))
+		writeGatewayErrorStatus(w, http.StatusTooManyRequests, "api_key_rate_limited", "API key request rate limit reached")
+		return
+	}
 	releaseIngress, acquired := s.webSocketIngress.acquire(apiKeyID)
 	if !acquired {
 		w.Header().Set("Retry-After", "5")
@@ -150,10 +159,11 @@ func (s *Server) responsesWebSocketHandler(w http.ResponseWriter, r *http.Reques
 	var firstQuotaRecorded bool
 	failedFirstAccountIDs := make([]string, 0, maxUpstreamAccountSwitches)
 	firstAccountSwitches := 0
+	authRefreshed := make(map[string]bool)
 	setTurnAccess := func(access application.GatewayAccess, request openai.ResponsesWebSocketTurnRequest) (openai.ResponsesWebSocketTurnConfig, error) {
 		turnAccess = access
 		policyStartedAt := time.Now()
-		policyFrame, _, policyErr := openai.ApplyFastPolicy(
+		policyFrame, policyBilling, policyErr := openai.ApplyFastPolicy(
 			request.Frame, request.Billing,
 			access.Credential.Account.FastPolicy,
 			access.Credential.APIKeyFastPolicy,
@@ -184,6 +194,7 @@ func (s *Server) responsesWebSocketHandler(w http.ResponseWriter, r *http.Reques
 			AccessToken: access.AccessToken, ChatGPTAccountID: access.Credential.Account.ChatGPTAccountID,
 			APIKeyID: access.Credential.APIKeyID, InternalAccountID: access.Credential.Account.ID,
 			FingerprintMode: access.Credential.Account.CodexFingerprintMode, ProxyURL: access.ProxyURL, InboundHeader: r.Header,
+			Model: policyBilling.Model, ServiceTier: policyBilling.ServiceTier,
 		}
 		policyFrame, fingerprintErr := openai.PrepareResponsesWebSocketFingerprint(dial, policyFrame, request.Billing.PromptCacheKey)
 		if fingerprintErr != nil {
@@ -230,6 +241,11 @@ func (s *Server) responsesWebSocketHandler(w http.ResponseWriter, r *http.Reques
 	}
 	hooks := openai.ResponsesWebSocketHooks{
 		BeforeTurn: func(ctx context.Context, request openai.ResponsesWebSocketTurnRequest) (openai.ResponsesWebSocketTurnConfig, error) {
+			if request.Turn > 1 {
+				if allowed, _ := s.protections.admitAPIKey(apiKeyID); !allowed {
+					return openai.ResponsesWebSocketTurnConfig{}, openai.NewResponsesWebSocketCloseError(websocket.StatusTryAgainLater, "API key request rate limit reached", nil)
+				}
+			}
 			turnAccess = application.GatewayAccess{}
 			if firstTurn {
 				access, resolveErr := s.app.ResolveGatewayAccess(ctx, apiKey, failedFirstAccountIDs...)
@@ -245,6 +261,20 @@ func (s *Server) responsesWebSocketHandler(w http.ResponseWriter, r *http.Reques
 			return setTurnAccess(access, request)
 		},
 		OnFirstDialError: func(ctx context.Context, request openai.ResponsesWebSocketTurnRequest, result openai.ResponsesWebSocketTurnResult, dialErr *openai.ResponsesWebSocketDialError) (openai.ResponsesWebSocketTurnConfig, error) {
+			if dialErr != nil && dialErr.StatusCode == http.StatusUnauthorized && turnAccess.Credential.APIKeyID != "" {
+				if s.refreshRejectedGatewayAccess(ctx, &turnAccess, dialErr.StatusCode, nil, authRefreshed) {
+					return setTurnAccess(turnAccess, request)
+				}
+				recordedAt := result.StartedAt
+				if recordedAt.IsZero() {
+					recordedAt = time.Now()
+				}
+				requestID := connectionRequestID + "-ws-" + strconv.Itoa(request.Turn) + "-attempt-1"
+				metric := gatewayErrorMetric(requestID, r.URL.Path, request.Billing.Model, result.Billing, http.StatusUnauthorized, domain.GatewayErrorSourceUpstream, "websocket_handshake_error", dialErr.Error(), time.Since(recordedAt))
+				metric.IsStream = true
+				s.recordGatewayMetric(ctx, turnAccess, metric, recordedAt)
+				return openai.ResponsesWebSocketTurnConfig{}, openai.NewResponsesWebSocketCloseError(websocket.StatusPolicyViolation, "upstream Responses WebSocket authentication failed", dialErr)
+			}
 			if dialErr == nil || dialErr.StatusCode != http.StatusTooManyRequests {
 				return openai.ResponsesWebSocketTurnConfig{}, openai.NewResponsesWebSocketCloseError(websocket.StatusInternalError, "upstream Responses WebSocket handshake failed", dialErr)
 			}
@@ -399,12 +429,14 @@ func writeResponsesWebSocketError(client openai.ResponsesWebSocketConn, timeout 
 }
 
 func responsesWebSocketTurnConfig(access application.GatewayAccess, frame []byte, inboundHeader http.Header) openai.ResponsesWebSocketTurnConfig {
+	metadata, _ := openai.ParseRequestBilling(frame)
 	return openai.ResponsesWebSocketTurnConfig{
 		Frame: frame,
 		Dial: &openai.ResponsesWebSocketDialConfig{
 			AccessToken: access.AccessToken, ChatGPTAccountID: access.Credential.Account.ChatGPTAccountID,
 			APIKeyID: access.Credential.APIKeyID, InternalAccountID: access.Credential.Account.ID,
 			FingerprintMode: access.Credential.Account.CodexFingerprintMode, ProxyURL: access.ProxyURL, InboundHeader: inboundHeader,
+			Model: metadata.Model, ServiceTier: metadata.ServiceTier,
 		},
 	}
 }

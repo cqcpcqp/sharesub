@@ -18,6 +18,9 @@ func (s *Server) alphaSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { releaseGatewayAccess(&access) }()
+	if !s.admitGatewayAPIKey(w, access.Credential.APIKeyID) {
+		return
+	}
 	requestID := gatewayRequestID(r)
 
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxTextGatewayBody))
@@ -34,6 +37,7 @@ func (s *Server) alphaSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	excludedAccountIDs := make([]string, 0, maxUpstreamAccountSwitches)
+	authRefreshed := make(map[string]bool)
 	for switches := 0; ; {
 		attemptStartedAt := time.Now()
 		attemptCtx, cancelAttempt := upstreamAttemptContext(r.Context())
@@ -75,6 +79,12 @@ func (s *Server) alphaSearch(w http.ResponseWriter, r *http.Request) {
 			cancelAttempt()
 			if drainErr != nil {
 				s.logger.Warn("drain rejected alpha search response", "request_id", selectedRequestID, "error", drainErr)
+			}
+			if s.refreshRejectedGatewayAccess(r.Context(), &access, upstream.StatusCode, rejectedBody, authRefreshed) {
+				continue
+			}
+			if isTransientUpstreamStatus(upstream.StatusCode) {
+				s.protections.backoffAPIKey(access.Credential.APIKeyID, upstream.Header)
 			}
 			s.recordGatewayMetric(r.Context(), access, gatewayMetric(selectedRequestID, metadata.Model, r.URL.Path, metadata, upstream.StatusCode, metrics), attemptStartedAt)
 			if err := s.recordGatewayAccountQuota(r.Context(), access, upstream.Header, quotaObservedAt); err != nil {

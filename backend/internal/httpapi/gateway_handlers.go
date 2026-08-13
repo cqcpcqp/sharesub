@@ -36,13 +36,25 @@ func (s *Server) codexModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { releaseGatewayAccess(&access) }()
+	if !s.admitGatewayAPIKey(w, access.Credential.APIKeyID) {
+		return
+	}
 
 	excludedAccountIDs := make([]string, 0, maxUpstreamAccountSwitches)
 	var upstream *http.Response
+	authRefreshed := make(map[string]bool)
 	for switches := 0; ; {
 		upstream, err = s.gateway.FetchModels(r.Context(), r, access.AccessToken, access.Credential.Account.ChatGPTAccountID, access.ProxyURL)
 		if err == nil && !shouldSwitchModelsAccount(upstream.StatusCode) {
 			break
+		}
+		if err == nil && upstream.StatusCode == http.StatusUnauthorized {
+			_, rejectedBody, _ := openai.DrainResponse(upstream, time.Now())
+			_ = upstream.Body.Close()
+			if s.refreshRejectedGatewayAccess(r.Context(), &access, upstream.StatusCode, rejectedBody, authRefreshed) {
+				continue
+			}
+			upstream.Body = io.NopCloser(strings.NewReader(string(rejectedBody)))
 		}
 		if switches >= maxUpstreamAccountSwitches {
 			break
@@ -90,6 +102,9 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { releaseGatewayAccess(&access) }()
+	if !s.admitGatewayAPIKey(w, access.Credential.APIKeyID) {
+		return
+	}
 	gatewayRequestID := gatewayRequestID(r)
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxGatewayBody))
 	if err != nil {
@@ -106,8 +121,20 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 	}
 
 	excludedAccountIDs := make([]string, 0, maxUpstreamAccountSwitches)
+	authRefreshed := make(map[string]bool)
 	clientWantsStream := billingMetadata.Stream && !compact
 	for switches := 0; ; {
+		if s.protections.modelBlocked(access.Credential.Account.ID, billingMetadata.Model) {
+			excludedAccountIDs = append(excludedAccountIDs, access.Credential.Account.ID)
+			releaseGatewayAccess(&access)
+			next, resolveErr := s.app.ResolveGatewayAccess(r.Context(), apiKey, excludedAccountIDs...)
+			if resolveErr != nil {
+				writeGatewayErrorStatus(w, http.StatusBadRequest, "model_not_available", "model is temporarily unavailable for the configured Plan")
+				return
+			}
+			access = next
+			continue
+		}
 		attemptStartedAt := time.Now()
 		policyBody, policyMetadata := forwardBody, billingMetadata
 		var policyErr error
@@ -157,12 +184,27 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 
 		requestID := upstreamRequestID(upstream, gatewayRequestID)
 		quotaObservedAt := time.Now()
-		if shouldSwitchUpstreamAccount(upstream.StatusCode) {
+		if shouldSwitchUpstreamAccount(upstream.StatusCode) || upstream.StatusCode == http.StatusBadRequest {
 			metrics, rejectedBody, drainErr := openai.DrainResponse(upstream, attemptStartedAt)
 			_ = upstream.Body.Close()
 			cancelAttempt()
 			if drainErr != nil {
 				s.logger.Warn("drain rejected upstream response", "request_id", requestID, "error", drainErr)
+			}
+			planGated := openai.IsCodexPlanGatedModelError(upstream.StatusCode, rejectedBody)
+			if planGated {
+				s.protections.blockModel(access.Credential.Account.ID, policyMetadata.Model)
+			}
+			if upstream.StatusCode == http.StatusBadRequest && !planGated {
+				s.recordGatewayMetric(r.Context(), access, gatewayMetric(requestID, billingMetadata.Model, r.URL.Path, policyMetadata, upstream.StatusCode, metrics), attemptStartedAt)
+				_ = openai.WriteDrainedResponse(w, upstream, rejectedBody)
+				return
+			}
+			if s.refreshRejectedGatewayAccess(r.Context(), &access, upstream.StatusCode, rejectedBody, authRefreshed) {
+				continue
+			}
+			if isTransientUpstreamStatus(upstream.StatusCode) {
+				s.protections.backoffAPIKey(access.Credential.APIKeyID, upstream.Header)
 			}
 			s.recordGatewayMetric(r.Context(), access, gatewayMetric(requestID, billingMetadata.Model, r.URL.Path, policyMetadata, upstream.StatusCode, metrics), attemptStartedAt)
 			if err := s.recordGatewayAccountQuota(r.Context(), access, upstream.Header, quotaObservedAt); err != nil {
@@ -191,7 +233,7 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		metrics, copyErr := openai.CopyResponseForRequest(w, upstream, attemptStartedAt, policyMetadata.Stream && !compact)
+		metrics, copyErr := openai.CopyResponseForRequest(w, upstream, attemptStartedAt, policyMetadata.Stream && !compact, s.webSocketConfig.FirstOutputTimeout)
 		_ = upstream.Body.Close()
 		cancelAttempt()
 		metricStatus := gatewayMetricStatus(upstream.StatusCode, metrics, copyErr)
@@ -213,6 +255,9 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if errors.As(copyErr, &failoverErr) && switches < maxUpstreamAccountSwitches && r.Context().Err() == nil {
+			if isTransientUpstreamStatus(failoverErr.StatusCode) {
+				s.protections.backoffAPIKey(access.Credential.APIKeyID, upstream.Header)
+			}
 			excludedAccountIDs = append(excludedAccountIDs, access.Credential.Account.ID)
 			releaseGatewayAccess(&access)
 			next, resolveErr := s.app.ResolveGatewayAccess(r.Context(), apiKey, excludedAccountIDs...)
@@ -243,6 +288,9 @@ func (s *Server) images(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { releaseGatewayAccess(&access) }()
+	if !s.admitGatewayAPIKey(w, access.Credential.APIKeyID) {
+		return
+	}
 	gatewayRequestID := gatewayRequestID(r)
 
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxGatewayBody))
@@ -259,7 +307,19 @@ func (s *Server) images(w http.ResponseWriter, r *http.Request) {
 	}
 
 	excludedAccountIDs := make([]string, 0, maxUpstreamAccountSwitches)
+	authRefreshed := make(map[string]bool)
 	for switches := 0; ; {
+		if s.protections.modelBlocked(access.Credential.Account.ID, imageRequest.Model) {
+			excludedAccountIDs = append(excludedAccountIDs, access.Credential.Account.ID)
+			releaseGatewayAccess(&access)
+			next, resolveErr := s.app.ResolveGatewayAccess(r.Context(), apiKey, excludedAccountIDs...)
+			if resolveErr != nil {
+				writeGatewayErrorStatus(w, http.StatusBadRequest, "model_not_available", "image model is temporarily unavailable for the configured Plan")
+				return
+			}
+			access = next
+			continue
+		}
 		attemptStartedAt := time.Now()
 		attemptCtx, cancelAttempt := upstreamAttemptContext(r.Context())
 		upstream, forwardErr := s.gateway.Forward(attemptCtx, r, forwardBody, billingMetadata, access.AccessToken, access.Credential.Account.ChatGPTAccountID, access.Credential.APIKeyID, access.ProxyURL, openai.CodexFingerprintContext{
@@ -296,13 +356,25 @@ func (s *Server) images(w http.ResponseWriter, r *http.Request) {
 
 		requestID := upstreamRequestID(upstream, gatewayRequestID)
 		quotaObservedAt := time.Now()
-		if shouldSwitchUpstreamAccount(upstream.StatusCode) {
+		if shouldSwitchUpstreamAccount(upstream.StatusCode) || upstream.StatusCode == http.StatusBadRequest {
 			metrics, rejectedBody, drainErr := openai.DrainResponse(upstream, attemptStartedAt)
 			metrics.UpstreamModel = imageRequest.Model
 			_ = upstream.Body.Close()
 			cancelAttempt()
 			if drainErr != nil {
 				s.logger.Warn("drain rejected images response", "request_id", requestID, "error", drainErr)
+			}
+			if s.refreshRejectedGatewayAccess(r.Context(), &access, upstream.StatusCode, rejectedBody, authRefreshed) {
+				continue
+			}
+			planGated := openai.IsCodexPlanGatedModelError(upstream.StatusCode, rejectedBody)
+			if planGated {
+				s.protections.blockModel(access.Credential.Account.ID, imageRequest.Model)
+			}
+			if upstream.StatusCode == http.StatusBadRequest && !planGated {
+				s.recordGatewayMetric(r.Context(), access, gatewayMetric(requestID, imageRequest.Model, r.URL.Path, billingMetadata, upstream.StatusCode, metrics), attemptStartedAt)
+				_ = openai.WriteDrainedResponse(w, upstream, rejectedBody)
+				return
 			}
 			s.recordGatewayMetric(r.Context(), access, gatewayMetric(requestID, imageRequest.Model, r.URL.Path, billingMetadata, upstream.StatusCode, metrics), attemptStartedAt)
 			if err := s.recordGatewayAccountQuota(r.Context(), access, upstream.Header, quotaObservedAt); err != nil {

@@ -28,6 +28,9 @@ func TestLoadResourceDefaults(t *testing.T) {
 		config.TokenRefreshConcurrency != 4 || config.TokenRefreshMaxRetries != 3 {
 		t.Fatalf("resource defaults = %+v", config)
 	}
+	if config.GatewayMaxRequestsPerMinutePerAPIKey != 300 || config.GatewayFirstOutputTimeout != 2*time.Minute {
+		t.Fatalf("gateway protection defaults = %+v", config)
+	}
 }
 
 func TestLoadResponsesWSDefaults(t *testing.T) {
@@ -83,21 +86,23 @@ func TestLoadResponsesWSOverrides(t *testing.T) {
 
 func TestLoadRejectsInvalidResourceLimits(t *testing.T) {
 	for name, value := range map[string]string{
-		"SHARESUB_CLEANUP_INTERVAL":                         "never",
-		"SHARESUB_GATEWAY_METRIC_RETENTION":                 "167h59m59s",
-		"SHARESUB_TOKEN_REFRESH_INTERVAL":                   "never",
-		"SHARESUB_TOKEN_REFRESH_CONCURRENCY":                "0",
-		"SHARESUB_TOKEN_REFRESH_ENABLED":                    "sometimes",
-		"SHARESUB_RESPONSES_WS_FIRST_MESSAGE_TIMEOUT":       "never",
-		"SHARESUB_RESPONSES_WS_INTER_TURN_IDLE_TIMEOUT":     "0s",
-		"SHARESUB_RESPONSES_WS_MAX_SESSION_DURATION":        "-1m",
-		"SHARESUB_RESPONSES_WS_MAX_CONNECTIONS_PER_API_KEY": "0",
-		"SHARESUB_RESPONSES_WS_DIAL_TIMEOUT":                "0s",
-		"SHARESUB_RESPONSES_WS_READ_TIMEOUT":                "never",
-		"SHARESUB_RESPONSES_WS_WRITE_TIMEOUT":               "-1s",
-		"SHARESUB_RESPONSES_WS_UPSTREAM_DRAIN_TIMEOUT":      "0s",
-		"SHARESUB_RESPONSES_WS_CLIENT_READ_LIMIT_BYTES":     "0",
-		"SHARESUB_RESPONSES_WS_UPSTREAM_READ_LIMIT_BYTES":   "9223372036854775808",
+		"SHARESUB_CLEANUP_INTERVAL":                            "never",
+		"SHARESUB_GATEWAY_METRIC_RETENTION":                    "167h59m59s",
+		"SHARESUB_TOKEN_REFRESH_INTERVAL":                      "never",
+		"SHARESUB_TOKEN_REFRESH_CONCURRENCY":                   "0",
+		"SHARESUB_TOKEN_REFRESH_ENABLED":                       "sometimes",
+		"SHARESUB_RESPONSES_WS_FIRST_MESSAGE_TIMEOUT":          "never",
+		"SHARESUB_RESPONSES_WS_INTER_TURN_IDLE_TIMEOUT":        "0s",
+		"SHARESUB_RESPONSES_WS_MAX_SESSION_DURATION":           "-1m",
+		"SHARESUB_RESPONSES_WS_MAX_CONNECTIONS_PER_API_KEY":    "0",
+		"SHARESUB_RESPONSES_WS_DIAL_TIMEOUT":                   "0s",
+		"SHARESUB_RESPONSES_WS_READ_TIMEOUT":                   "never",
+		"SHARESUB_RESPONSES_WS_WRITE_TIMEOUT":                  "-1s",
+		"SHARESUB_RESPONSES_WS_UPSTREAM_DRAIN_TIMEOUT":         "0s",
+		"SHARESUB_RESPONSES_WS_CLIENT_READ_LIMIT_BYTES":        "0",
+		"SHARESUB_RESPONSES_WS_UPSTREAM_READ_LIMIT_BYTES":      "9223372036854775808",
+		"SHARESUB_GATEWAY_MAX_REQUESTS_PER_MINUTE_PER_API_KEY": "0",
+		"SHARESUB_GATEWAY_FIRST_OUTPUT_TIMEOUT":                "0s",
 	} {
 		t.Run(name, func(t *testing.T) {
 			setRequiredEnvironment(t)

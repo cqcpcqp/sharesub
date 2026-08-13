@@ -129,6 +129,8 @@ openssl rand -base64 32
 | `SHARESUB_SESSION_TTL` | 登录会话有效期 | `720h` |
 | `SHARESUB_CLEANUP_INTERVAL` | 过期资源清理周期 | `6h` |
 | `SHARESUB_GATEWAY_METRIC_RETENTION` | 网关请求明细保留期；至少 7 天，清理边界按 UTC 整日对齐，清理前会汇总 | `2160h`（90 天） |
+| `SHARESUB_GATEWAY_MAX_REQUESTS_PER_MINUTE_PER_API_KEY` | 每个 API Key 的网关请求分钟上限，用于抑制突发重试风暴 | `300` |
+| `SHARESUB_GATEWAY_FIRST_OUTPUT_TIMEOUT` | HTTP Responses 等待上游首个有效语义输出的最长时间 | `2m` |
 | `SHARESUB_AUDIT_EVENT_RETENTION` | 审计记录保留期 | `8760h`（365 天） |
 | `SHARESUB_READ_NOTIFICATION_RETENTION` | 已读通知保留期；未读通知不自动删除 | `2160h`（90 天） |
 | `SHARESUB_TERMINAL_RECORD_RETENTION` | 已结束邀请、申请及撤销 Key 保留期 | `2160h`（90 天） |

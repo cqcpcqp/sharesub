@@ -1577,6 +1577,39 @@ func TestResponsesWebSocketSessionPreservesPendingErrorAfterReadTimeout(t *testi
 	}
 }
 
+func TestResponsesWebSocketFirstOutputTimeoutIsNotExtendedByPreamble(t *testing.T) {
+	upstream := newResponsesWebSocketTestConn()
+	client := newResponsesWebSocketTestConn()
+	session := NewResponsesWebSocketSession(ResponsesWebSocketOptions{
+		Dialer: &responsesWebSocketTestDialer{conn: upstream}, DialTimeout: time.Second,
+		FirstOutputTimeout: 100 * time.Millisecond, ReadTimeout: time.Second,
+		WriteTimeout: time.Second, InterTurnIdleTimeout: time.Second,
+	})
+	runErr := make(chan error, 1)
+	go func() {
+		runErr <- session.Run(context.Background(), client, []byte(`{"model":"gpt-5.6-sol"}`), ResponsesWebSocketHooks{
+			BeforeTurn: func(_ context.Context, request ResponsesWebSocketTurnRequest) (ResponsesWebSocketTurnConfig, error) {
+				return ResponsesWebSocketTurnConfig{Frame: request.Frame, Dial: &ResponsesWebSocketDialConfig{
+					AccessToken: "token", ChatGPTAccountID: "account", APIKeyID: "key",
+				}}, nil
+			},
+		})
+	}()
+	waitForResponsesWebSocketWrites(t, upstream, 1)
+	started := time.Now()
+	upstream.send(`{"type":"response.created","response":{"id":"resp_timeout"}}`)
+	time.Sleep(70 * time.Millisecond)
+	upstream.send(`{"type":"response.in_progress","response":{"id":"resp_timeout"}}`)
+	err := <-runErr
+	var closeErr *ResponsesWebSocketCloseError
+	if !errors.As(err, &closeErr) || closeErr.Reason() != "upstream Responses WebSocket read timeout" {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if elapsed := time.Since(started); elapsed >= 160*time.Millisecond {
+		t.Fatalf("first-output timeout was extended by preamble events: %v", elapsed)
+	}
+}
+
 func TestResponsesWebSocketSessionBeforeTurnFailureDoesNotCallAfterTurn(t *testing.T) {
 	hookErr := NewResponsesWebSocketCloseError(websocket.StatusTryAgainLater, "busy", errors.New("no slot"))
 	var afterCalls int

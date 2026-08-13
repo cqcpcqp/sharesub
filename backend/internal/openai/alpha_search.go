@@ -76,6 +76,11 @@ func (g *Gateway) ForwardAlphaSearch(ctx context.Context, inbound *http.Request,
 		req.Header.Set("X-Codex-Turn-Metadata", metadata)
 	}
 	applyCodexOAuthIdentity(req.Header, "")
+	model := ""
+	if _, parsed, parseErr := PrepareAlphaSearchRequest(body); parseErr == nil {
+		model = parsed.Model
+	}
+	applyCodexRoutingHint(req.Header, model, "")
 	var fingerprint *CodexFingerprint
 	if len(fingerprintContext) > 0 {
 		config := fingerprintContext[0]

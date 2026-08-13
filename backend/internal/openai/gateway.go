@@ -264,7 +264,7 @@ func (g *Gateway) ProbeQuota(ctx context.Context, accessToken, chatgptAccountID,
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("OpenAI-Beta", "codex-1")
 	req.Header.Set("OAI-Language", "zh-CN")
-	req.Header.Set("Originator", "Codex Desktop")
+	applyCodexOAuthIdentity(req.Header, "")
 	req.Header.Set("Priority", "u=4, i")
 	req.Header.Set("Sec-Fetch-Dest", "empty")
 	req.Header.Set("Sec-Fetch-Mode", "no-cors")
@@ -395,6 +395,7 @@ func (g *Gateway) Forward(ctx context.Context, inbound *http.Request, body []byt
 		req.Header.Set("Accept", "text/event-stream")
 	}
 	applyCodexOAuthIdentity(req.Header, "")
+	applyCodexRoutingHint(req.Header, metadata.Model, metadata.ServiceTier)
 
 	clientConversationID := strings.TrimSpace(req.Header.Get("Conversation_Id"))
 	seed := clientSessionID
@@ -444,10 +445,7 @@ func stripLegacyResponsesBeta(headers http.Header) {
 // FetchModels forwards Codex model discovery to the selected ChatGPT OAuth
 // account. The upstream manifest is returned unchanged to the caller.
 func (g *Gateway) FetchModels(ctx context.Context, inbound *http.Request, accessToken, accountID, proxyURL string) (*http.Response, error) {
-	clientVersion := strings.TrimSpace(inbound.URL.Query().Get("client_version"))
-	if clientVersion == "" {
-		clientVersion = codexProbeVersion
-	}
+	clientVersion := EffectiveCodexVersion()
 	target, err := url.Parse(codexModelsURL)
 	if err != nil {
 		return nil, err

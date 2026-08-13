@@ -139,7 +139,9 @@ func assertProbeRequest(t *testing.T, req *http.Request) {
 		"Accept":             "application/json",
 		"OpenAI-Beta":        "codex-1",
 		"OAI-Language":       "zh-CN",
-		"Originator":         "Codex Desktop",
+		"Originator":         codexDefaultOriginator,
+		"Version":            codexProbeVersion,
+		"User-Agent":         codexProbeUserAgent,
 		"Priority":           "u=4, i",
 		"Sec-Fetch-Dest":     "empty",
 		"Sec-Fetch-Mode":     "no-cors",
@@ -588,7 +590,7 @@ func TestFetchModelsForwardsCodexDiscoveryHeaders(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer response.Body.Close()
-	if captured.URL.String() != codexModelsURL+"?client_version=0.137.0" || captured.Host != "chatgpt.com" {
+	if captured.URL.String() != codexModelsURL+"?client_version="+codexProbeVersion || captured.Host != "chatgpt.com" {
 		t.Fatalf("request target = %s (Host %q)", captured.URL, captured.Host)
 	}
 	wantHeaders := map[string]string{
@@ -596,7 +598,7 @@ func TestFetchModelsForwardsCodexDiscoveryHeaders(t *testing.T) {
 		"Chatgpt-Account-Id": "account",
 		"Accept":             "application/json",
 		"Originator":         codexDefaultOriginator,
-		"Version":            "0.137.0",
+		"Version":            codexProbeVersion,
 		"User-Agent":         codexProbeUserAgent,
 		"If-None-Match":      `"previous"`,
 	}
@@ -1057,6 +1059,49 @@ func TestCopyResponseCarriesTopLevelErrorIntoNonStreamingTerminalResponse(t *tes
 	}
 	if metrics.ErrorCode != "invalid_request" || metrics.ErrorMessage != "invalid input" || metrics.ErrorStatusCode != http.StatusBadRequest {
 		t.Fatalf("metrics = %+v", metrics)
+	}
+}
+
+func TestCopyResponseFailsOverEmptyCompleted(t *testing.T) {
+	body := "data: {\"type\":\"response.created\"}\n\n" +
+		"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_empty\",\"status\":\"completed\"}}\n\n"
+	source := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}
+	recorder := httptest.NewRecorder()
+	_, err := CopyResponseForRequest(recorder, source, time.Now(), true)
+	var failure *StreamFailoverError
+	if !errors.As(err, &failure) || failure.StatusCode != http.StatusBadGateway {
+		t.Fatalf("error = %#v", err)
+	}
+	if recorder.Body.Len() != 0 {
+		t.Fatalf("empty response was committed: %q", recorder.Body.String())
+	}
+}
+
+func TestCopyResponseAllowsCompletedWithUsage(t *testing.T) {
+	body := "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_usage\",\"status\":\"completed\",\"usage\":{\"input_tokens\":1,\"output_tokens\":0}}}\n\n"
+	source := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}
+	recorder := httptest.NewRecorder()
+	if _, err := CopyResponseForRequest(recorder, source, time.Now(), true); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(recorder.Body.String(), "response.completed") {
+		t.Fatalf("completed response missing: %q", recorder.Body.String())
+	}
+}
+
+func TestCopyResponseFirstOutputTimeout(t *testing.T) {
+	reader, writer := io.Pipe()
+	defer writer.Close()
+	source := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: reader}
+	recorder := httptest.NewRecorder()
+	started := time.Now()
+	_, err := CopyResponseForRequest(recorder, source, started, true, 20*time.Millisecond)
+	var failure *StreamFailoverError
+	if !errors.As(err, &failure) || failure.StatusCode != http.StatusGatewayTimeout {
+		t.Fatalf("error = %#v", err)
+	}
+	if time.Since(started) > time.Second || recorder.Body.Len() != 0 {
+		t.Fatalf("timeout duration=%v body=%q", time.Since(started), recorder.Body.String())
 	}
 }
 

@@ -67,14 +67,18 @@ func CopyResponse(dst http.ResponseWriter, src *http.Response, startedAt time.Ti
 // CopyResponseForRequest preserves streaming Responses payloads and converts
 // the ChatGPT SSE upstream back to a regular JSON response when the caller did
 // not request streaming.
-func CopyResponseForRequest(dst http.ResponseWriter, src *http.Response, startedAt time.Time, clientWantsStream bool) (ProxyMetrics, error) {
+func CopyResponseForRequest(dst http.ResponseWriter, src *http.Response, startedAt time.Time, clientWantsStream bool, firstOutputTimeout ...time.Duration) (ProxyMetrics, error) {
+	timeout := time.Duration(0)
+	if len(firstOutputTimeout) > 0 {
+		timeout = firstOutputTimeout[0]
+	}
 	contentType := strings.ToLower(src.Header.Get("Content-Type"))
 	isSSE := strings.Contains(contentType, "text/event-stream") || (contentType == "" && clientWantsStream)
 	if isSSE && !clientWantsStream && src.StatusCode >= 200 && src.StatusCode < 300 {
-		return copySSEAsJSON(dst, src, startedAt)
+		return copySSEAsJSON(dst, src, startedAt, timeout)
 	}
 	if isSSE {
-		return copySSE(dst, src, startedAt)
+		return copySSEWithPendingLimitAndTimeout(dst, src, startedAt, maxBufferedResponseBytes, timeout)
 	}
 	return copyBufferedResponse(dst, src, startedAt)
 }
@@ -146,6 +150,10 @@ func copySSE(dst http.ResponseWriter, src *http.Response, startedAt time.Time) (
 }
 
 func copySSEWithPendingLimit(dst http.ResponseWriter, src *http.Response, startedAt time.Time, pendingLimit int) (ProxyMetrics, error) {
+	return copySSEWithPendingLimitAndTimeout(dst, src, startedAt, pendingLimit, 0)
+}
+
+func copySSEWithPendingLimitAndTimeout(dst http.ResponseWriter, src *http.Response, startedAt time.Time, pendingLimit int, firstOutputTimeout time.Duration) (ProxyMetrics, error) {
 	flusher, _ := dst.(http.Flusher)
 	reader := bufio.NewReader(src.Body)
 	var firstByteAt, firstTokenAt time.Time
@@ -180,8 +188,15 @@ func copySSEWithPendingLimit(dst http.ResponseWriter, src *http.Response, starte
 		writeClient(sanitizeCapacityShedSSEForClient(pending))
 		pending = pending[:0]
 	}
+	deadline := time.Time{}
+	if firstOutputTimeout > 0 {
+		deadline = time.Now().Add(firstOutputTimeout)
+	}
 	for {
-		line, err := readLimitedLine(reader)
+		line, err, timedOut := readLimitedLineBefore(reader, deadline, clientOutputStarted)
+		if timedOut {
+			return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, clientDisconnected), &StreamFailoverError{StatusCode: http.StatusGatewayTimeout, StreamBody: append([]byte(nil), pending...)}
+		}
 		if len(line) > 0 {
 			now := time.Now()
 			if firstByteAt.IsZero() {
@@ -209,6 +224,10 @@ func copySSEWithPendingLimit(dst http.ResponseWriter, src *http.Response, starte
 			}
 			if hasEvent && isTerminalResponseEvent(eventType) {
 				terminalSeen = true
+				if (eventType == "response.completed" || eventType == "response.done") && !clientOutputStarted && terminal.emptyCompleted() {
+					pending = append(pending, line...)
+					return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, clientDisconnected), &StreamFailoverError{StatusCode: http.StatusBadGateway, StreamBody: append([]byte(nil), pending...)}
+				}
 				if eventType == "response.failed" && !clientOutputStarted {
 					pending = append(pending, line...)
 					if status, retryable := retryableTerminalFailure(terminal); retryable {
@@ -279,15 +298,23 @@ func copySSEWithPendingLimit(dst http.ResponseWriter, src *http.Response, starte
 	}
 }
 
-func copySSEAsJSON(dst http.ResponseWriter, src *http.Response, startedAt time.Time) (ProxyMetrics, error) {
+func copySSEAsJSON(dst http.ResponseWriter, src *http.Response, startedAt time.Time, firstOutputTimeout time.Duration) (ProxyMetrics, error) {
 	reader := bufio.NewReader(src.Body)
 	var firstByteAt, firstTokenAt time.Time
 	var terminal terminalResponse
 	var finalResponse json.RawMessage
 	var terminalType string
 	var topLevelError *responseError
+	deadline := time.Time{}
+	if firstOutputTimeout > 0 {
+		deadline = time.Now().Add(firstOutputTimeout)
+	}
+	outputSeen := false
 	for {
-		line, err := readLimitedLine(reader)
+		line, err, timedOut := readLimitedLineBefore(reader, deadline, outputSeen)
+		if timedOut {
+			return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), &StreamFailoverError{StatusCode: http.StatusGatewayTimeout}
+		}
 		if len(line) > 0 {
 			now := time.Now()
 			if firstByteAt.IsZero() {
@@ -295,6 +322,7 @@ func copySSEAsJSON(dst http.ResponseWriter, src *http.Response, startedAt time.T
 			}
 			if firstTokenAt.IsZero() && isClientOutputEvent(line) {
 				firstTokenAt = now
+				outputSeen = true
 			}
 			payload, ok := ssePayload(line)
 			if ok {
@@ -366,11 +394,43 @@ func copySSEAsJSON(dst http.ResponseWriter, src *http.Response, startedAt time.T
 		_, err := dst.Write(finalResponse)
 		return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), err
 	}
+	if (terminalType == "response.completed" || terminalType == "response.done") && terminal.emptyCompleted() {
+		return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), &StreamFailoverError{StatusCode: http.StatusBadGateway, Response: append(json.RawMessage(nil), finalResponse...)}
+	}
 	copyResponseHeaders(dst.Header(), src.Header)
 	dst.Header().Set("Content-Type", "application/json")
 	dst.WriteHeader(src.StatusCode)
 	_, err := dst.Write(finalResponse)
 	return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), err
+}
+
+type limitedLineResult struct {
+	line []byte
+	err  error
+}
+
+func readLimitedLineBefore(reader *bufio.Reader, deadline time.Time, outputStarted bool) ([]byte, error, bool) {
+	if deadline.IsZero() || outputStarted {
+		line, err := readLimitedLine(reader)
+		return line, err, false
+	}
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		return nil, nil, true
+	}
+	result := make(chan limitedLineResult, 1)
+	go func() {
+		line, err := readLimitedLine(reader)
+		result <- limitedLineResult{line: line, err: err}
+	}()
+	timer := time.NewTimer(remaining)
+	defer timer.Stop()
+	select {
+	case value := <-result:
+		return value.line, value.err, false
+	case <-timer.C:
+		return nil, nil, true
+	}
 }
 
 func responseJSONWithError(payload json.RawMessage, responseError *responseError) (json.RawMessage, error) {
@@ -528,11 +588,17 @@ type responseError struct {
 }
 
 type terminalResponse struct {
-	ID     string               `json:"id"`
-	Model  string               `json:"model"`
-	Usage  responseUsage        `json:"usage"`
-	Output []responseOutputItem `json:"output"`
-	Error  *responseError       `json:"error"`
+	ID        string               `json:"id"`
+	Model     string               `json:"model"`
+	Usage     responseUsage        `json:"usage"`
+	Output    []responseOutputItem `json:"output"`
+	Error     *responseError       `json:"error"`
+	hasUsage  bool
+	hasOutput bool
+}
+
+func (r terminalResponse) emptyCompleted() bool {
+	return !r.hasUsage && !r.hasOutput && r.Error == nil
 }
 
 func (r terminalResponse) imageCount() int64 {
@@ -560,6 +626,12 @@ func parseJSONResponseUsage(payload []byte) (terminalResponse, bool) {
 	if json.Unmarshal(payload, &response) != nil {
 		return terminalResponse{}, false
 	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(payload, &fields) == nil {
+		_, response.hasUsage = fields["usage"]
+		_, outputPresent := fields["output"]
+		response.hasOutput = outputPresent && len(response.Output) > 0
+	}
 	return response, true
 }
 
@@ -579,13 +651,13 @@ func parseResponseUsage(line []byte) (terminalResponse, bool) {
 		return terminalResponse{}, false
 	}
 	var event struct {
-		Type     string           `json:"type"`
-		Response terminalResponse `json:"response"`
+		Type     string          `json:"type"`
+		Response json.RawMessage `json:"response"`
 	}
 	if json.Unmarshal(payload, &event) != nil || !isTerminalResponseEvent(event.Type) {
 		return terminalResponse{}, false
 	}
-	return event.Response, true
+	return parseJSONResponseUsage(event.Response)
 }
 
 func parseSSEError(line []byte) *responseError {

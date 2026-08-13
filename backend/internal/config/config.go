@@ -12,35 +12,37 @@ import (
 const minimumGatewayMetricRetention = 7 * 24 * time.Hour
 
 type Config struct {
-	HTTPAddr                           string
-	DatabaseURL                        string
-	PublicURL                          string
-	OAuthRedirect                      string
-	OutboundProxy                      string
-	SessionTTL                         time.Duration
-	TokenPepper                        []byte
-	CredentialKey                      []byte
-	CleanupInterval                    time.Duration
-	GatewayMetricRetention             time.Duration
-	AuditEventRetention                time.Duration
-	ReadNotificationRetention          time.Duration
-	TerminalRecordRetention            time.Duration
-	TokenRefreshEnabled                bool
-	TokenRefreshInterval               time.Duration
-	TokenRefreshBeforeExpiry           time.Duration
-	TokenRefreshBatchSize              int
-	TokenRefreshConcurrency            int
-	TokenRefreshMaxRetries             int
-	ResponsesWSFirstMessageTimeout     time.Duration
-	ResponsesWSInterTurnIdleTimeout    time.Duration
-	ResponsesWSMaxSessionDuration      time.Duration
-	ResponsesWSMaxConnectionsPerAPIKey int
-	ResponsesWSDialTimeout             time.Duration
-	ResponsesWSReadTimeout             time.Duration
-	ResponsesWSWriteTimeout            time.Duration
-	ResponsesWSUpstreamDrainTimeout    time.Duration
-	ResponsesWSClientReadLimitBytes    int64
-	ResponsesWSUpstreamReadLimitBytes  int64
+	HTTPAddr                             string
+	DatabaseURL                          string
+	PublicURL                            string
+	OAuthRedirect                        string
+	OutboundProxy                        string
+	SessionTTL                           time.Duration
+	TokenPepper                          []byte
+	CredentialKey                        []byte
+	CleanupInterval                      time.Duration
+	GatewayMetricRetention               time.Duration
+	AuditEventRetention                  time.Duration
+	ReadNotificationRetention            time.Duration
+	TerminalRecordRetention              time.Duration
+	TokenRefreshEnabled                  bool
+	TokenRefreshInterval                 time.Duration
+	TokenRefreshBeforeExpiry             time.Duration
+	TokenRefreshBatchSize                int
+	TokenRefreshConcurrency              int
+	TokenRefreshMaxRetries               int
+	ResponsesWSFirstMessageTimeout       time.Duration
+	ResponsesWSInterTurnIdleTimeout      time.Duration
+	ResponsesWSMaxSessionDuration        time.Duration
+	ResponsesWSMaxConnectionsPerAPIKey   int
+	ResponsesWSDialTimeout               time.Duration
+	ResponsesWSReadTimeout               time.Duration
+	ResponsesWSWriteTimeout              time.Duration
+	ResponsesWSUpstreamDrainTimeout      time.Duration
+	ResponsesWSClientReadLimitBytes      int64
+	ResponsesWSUpstreamReadLimitBytes    int64
+	GatewayMaxRequestsPerMinutePerAPIKey int
+	GatewayFirstOutputTimeout            time.Duration
 }
 
 func Load() (Config, error) {
@@ -151,36 +153,46 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	gatewayMaxRequestsPerMinutePerAPIKey, err := positiveIntEnv("SHARESUB_GATEWAY_MAX_REQUESTS_PER_MINUTE_PER_API_KEY", 300)
+	if err != nil {
+		return Config{}, err
+	}
+	gatewayFirstOutputTimeout, err := positiveDurationEnv("SHARESUB_GATEWAY_FIRST_OUTPUT_TIMEOUT", 2*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
 	return Config{
-		HTTPAddr:                           envOr("SHARESUB_HTTP_ADDR", "127.0.0.1:8080"),
-		DatabaseURL:                        databaseURL,
-		PublicURL:                          envOr("SHARESUB_PUBLIC_URL", "http://127.0.0.1:5173"),
-		OAuthRedirect:                      envOr("SHARESUB_OAUTH_REDIRECT_URI", "http://localhost:1455/auth/callback"),
-		OutboundProxy:                      os.Getenv("SHARESUB_OUTBOUND_PROXY"),
-		SessionTTL:                         ttl,
-		TokenPepper:                        pepper,
-		CredentialKey:                      credentialKey,
-		CleanupInterval:                    cleanupInterval,
-		GatewayMetricRetention:             gatewayMetricRetention,
-		AuditEventRetention:                auditEventRetention,
-		ReadNotificationRetention:          readNotificationRetention,
-		TerminalRecordRetention:            terminalRecordRetention,
-		TokenRefreshEnabled:                tokenRefreshEnabled,
-		TokenRefreshInterval:               tokenRefreshInterval,
-		TokenRefreshBeforeExpiry:           tokenRefreshBeforeExpiry,
-		TokenRefreshBatchSize:              tokenRefreshBatchSize,
-		TokenRefreshConcurrency:            tokenRefreshConcurrency,
-		TokenRefreshMaxRetries:             tokenRefreshMaxRetries,
-		ResponsesWSFirstMessageTimeout:     responsesWSFirstMessageTimeout,
-		ResponsesWSInterTurnIdleTimeout:    responsesWSInterTurnIdleTimeout,
-		ResponsesWSMaxSessionDuration:      responsesWSMaxSessionDuration,
-		ResponsesWSMaxConnectionsPerAPIKey: responsesWSMaxConnectionsPerAPIKey,
-		ResponsesWSDialTimeout:             responsesWSDialTimeout,
-		ResponsesWSReadTimeout:             responsesWSReadTimeout,
-		ResponsesWSWriteTimeout:            responsesWSWriteTimeout,
-		ResponsesWSUpstreamDrainTimeout:    responsesWSUpstreamDrainTimeout,
-		ResponsesWSClientReadLimitBytes:    responsesWSClientReadLimitBytes,
-		ResponsesWSUpstreamReadLimitBytes:  responsesWSUpstreamReadLimitBytes,
+		HTTPAddr:                             envOr("SHARESUB_HTTP_ADDR", "127.0.0.1:8080"),
+		DatabaseURL:                          databaseURL,
+		PublicURL:                            envOr("SHARESUB_PUBLIC_URL", "http://127.0.0.1:5173"),
+		OAuthRedirect:                        envOr("SHARESUB_OAUTH_REDIRECT_URI", "http://localhost:1455/auth/callback"),
+		OutboundProxy:                        os.Getenv("SHARESUB_OUTBOUND_PROXY"),
+		SessionTTL:                           ttl,
+		TokenPepper:                          pepper,
+		CredentialKey:                        credentialKey,
+		CleanupInterval:                      cleanupInterval,
+		GatewayMetricRetention:               gatewayMetricRetention,
+		AuditEventRetention:                  auditEventRetention,
+		ReadNotificationRetention:            readNotificationRetention,
+		TerminalRecordRetention:              terminalRecordRetention,
+		TokenRefreshEnabled:                  tokenRefreshEnabled,
+		TokenRefreshInterval:                 tokenRefreshInterval,
+		TokenRefreshBeforeExpiry:             tokenRefreshBeforeExpiry,
+		TokenRefreshBatchSize:                tokenRefreshBatchSize,
+		TokenRefreshConcurrency:              tokenRefreshConcurrency,
+		TokenRefreshMaxRetries:               tokenRefreshMaxRetries,
+		ResponsesWSFirstMessageTimeout:       responsesWSFirstMessageTimeout,
+		ResponsesWSInterTurnIdleTimeout:      responsesWSInterTurnIdleTimeout,
+		ResponsesWSMaxSessionDuration:        responsesWSMaxSessionDuration,
+		ResponsesWSMaxConnectionsPerAPIKey:   responsesWSMaxConnectionsPerAPIKey,
+		ResponsesWSDialTimeout:               responsesWSDialTimeout,
+		ResponsesWSReadTimeout:               responsesWSReadTimeout,
+		ResponsesWSWriteTimeout:              responsesWSWriteTimeout,
+		ResponsesWSUpstreamDrainTimeout:      responsesWSUpstreamDrainTimeout,
+		ResponsesWSClientReadLimitBytes:      responsesWSClientReadLimitBytes,
+		ResponsesWSUpstreamReadLimitBytes:    responsesWSUpstreamReadLimitBytes,
+		GatewayMaxRequestsPerMinutePerAPIKey: gatewayMaxRequestsPerMinutePerAPIKey,
+		GatewayFirstOutputTimeout:            gatewayFirstOutputTimeout,
 	}, nil
 }
 
