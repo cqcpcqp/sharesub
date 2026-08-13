@@ -206,6 +206,9 @@ Plan 详情的 `insights.window_usage` 按当前 OpenAI 账号实际返回的 5h
 | `GET` | `/v1/models` | 用户 API Key | 列出支持配置的 Codex 模型；携带 `client_version` 时返回实时 Codex manifest |
 | `GET` | `/models` | 用户 API Key | 不带 `/v1` 的模型列表与 Codex manifest 兼容入口 |
 | `GET` | `/backend-api/codex/models` | 用户 API Key | 转发实时 Codex models manifest |
+| `GET` | `/v1/responses` | 用户 API Key | Upgrade 到 Responses WebSocket v2 |
+| `GET` | `/responses` | 用户 API Key | 不带 `/v1` 的 Responses WebSocket v2 兼容入口 |
+| `GET` | `/backend-api/codex/responses` | 用户 API Key | Codex Responses WebSocket v2 兼容入口 |
 | `POST` | `/v1/responses` | 用户 API Key | 转发 OpenAI Responses 请求 |
 | `POST` | `/v1/responses/compact` | 用户 API Key | 请求远程上下文压缩 |
 | `POST` | `/responses` | 用户 API Key | 不带 `/v1` 的 Responses 兼容入口 |
@@ -221,6 +224,8 @@ Plan 详情的 `insights.window_usage` 按当前 OpenAI 账号实际返回的 5h
 | `POST` | `/images/edits` | 用户 API Key | 不带 `/v1` 的图片编辑兼容入口 |
 
 Responses 与图片端点的请求体上限为 256 MiB；纯文本 Alpha Search 端点的请求体上限为 32 MiB。`priority` 按数字从小到大选路，并在请求发出前跳过不可用路由；`balanced` 在固定分配模式按当前成员消耗占个人份额的比例选择，在共享模式按账号总额度使用比例选择。Responses 上游明确返回 `429` 或 `529` 时最多切换 3 个账号；models manifest 在连接失败或上游返回 `401`、`429`、`5xx` 时最多切换 3 个账号。Alpha Search 请求体必须包含固定字符串字段 `model`，其余 SearchClient 字段按原协议转发；成功的 2xx 响应计为一次 Web Search，非 2xx 不计费。
+
+三个非 compact Responses 路径的 `GET` 请求必须执行 WebSocket Upgrade，并在握手中使用用户 API Key。首个 `response.create` 选定 Plan 和 ChatGPT 账号后，整条连接固定该 API Key、Plan、成员、账号和账号绑定代次，并复用同一条 ChatGPT Codex 上游 WebSocket；同一连接一次只允许一个执行中的 response。仅首轮在尚未向客户端发送任何上游帧时，上游握手 `429` 或明确的 rate/usage/quota error 才允许换号，最多切换 3 次；收到任一下行帧后、客户端已发送 `response.cancel` 后以及后续 turn 均不换号、不重放。每个 turn 开始前重新校验固定绑定与账号/成员额度，并重新获取账号并发槽、计入 RPM；终止事件后立即释放槽位，轮间空闲不占账号业务并发。固定账号在后续 turn 不可用时以 WebSocket `1013` 要求客户端重连。每个终止 turn 独立记录 usage 和性能指标。账号独立代理优先于 `SHARESUB_OUTBOUND_PROXY`，代理失败不会回退直连。默认首包超时 30 秒、轮间空闲超时 5 分钟、会话上限 1 小时，并在单实例内限制每个用户 API Key 最多 64 条连接。
 
 固定分配模式分别计算成员在账号 5 小时和 7 天窗口内的估算用量：`max(账号当前已用额度 - 本次 Plan–账号绑定的当前窗口基线, 0) × 成员同期请求费用 ÷ 全部成员同期请求费用`。同期请求费用只统计当前绑定代次和对应额度窗口内的 `estimated_cost_micros`。候选成员份额为 0，或任一窗口的估算用量达到个人份额后不可用；共享模式不限制个人用量，但账号任一有效窗口达到 100% 后不可用。所有候选都不可用时返回 `429 quota_exhausted`；没有有效路由时返回 `503 no_route_available`。只有完整额度响应头会更新额度快照；额度头缺失不会篡改或拦截上游成功响应。指标记录状态码、TTFT、总耗时、终止事件中的 Input/Output/Cached/Image Token、图片数量与关联成员，不记录请求或响应内容。图片按 sub2api 默认档位计费：1K、2K、4K 每张分别为 134000、201000、268000 micro-USD，优先采用上游输出尺寸，尺寸缺失时按 2K。
 

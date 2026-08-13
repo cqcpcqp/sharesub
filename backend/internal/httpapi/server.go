@@ -1,8 +1,10 @@
 package httpapi
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
+	"sync"
 
 	"github.com/sharesub/sharesub/backend/internal/application"
 	"github.com/sharesub/sharesub/backend/internal/buildinfo"
@@ -19,23 +21,79 @@ const gatewayBodyTooLargeMessage = "request body exceeds 256 MiB"
 const textGatewayBodyTooLargeMessage = "request body exceeds 32 MiB"
 
 type Server struct {
-	app     *application.Service
-	gateway *openai.Gateway
-	logger  *slog.Logger
-	mux     *http.ServeMux
+	app                *application.Service
+	gateway            *openai.Gateway
+	responsesWebSocket *openai.ResponsesWebSocketSession
+	webSocketConfig    ResponsesWebSocketConfig
+	webSocketIngress   *responsesWebSocketIngressLimiter
+	webSocketSessions  *responsesWebSocketSessionRegistry
+	logger             *slog.Logger
+	mux                *http.ServeMux
+	closeOnce          sync.Once
 }
 
 type userContextKey struct{}
 type tokenContextKey struct{}
 
-func New(app *application.Service, gateway *openai.Gateway, logger *slog.Logger) *Server {
-	s := &Server{app: app, gateway: gateway, logger: logger, mux: http.NewServeMux()}
+func New(app *application.Service, gateway *openai.Gateway, logger *slog.Logger, webSocketConfig ...ResponsesWebSocketConfig) *Server {
+	config := DefaultResponsesWebSocketConfig()
+	if len(webSocketConfig) > 0 {
+		config = webSocketConfig[0]
+	}
+	s := &Server{
+		app: app, gateway: gateway, logger: logger, mux: http.NewServeMux(),
+		webSocketConfig:   config,
+		webSocketIngress:  newResponsesWebSocketIngressLimiter(config.MaxConnectionsPerAPIKey),
+		webSocketSessions: newResponsesWebSocketSessionRegistry(),
+	}
+	s.responsesWebSocket = openai.NewResponsesWebSocketSession(openai.ResponsesWebSocketOptions{
+		OutboundProxyURL: config.OutboundProxyURL,
+		DialTimeout:      config.DialTimeout, ReadTimeout: config.ReadTimeout,
+		WriteTimeout: config.WriteTimeout, InterTurnIdleTimeout: config.InterTurnIdleTimeout,
+		UpstreamDrainTimeout: config.UpstreamDrainTimeout, UpstreamReadLimit: config.UpstreamReadLimitBytes,
+	})
 	s.routes()
 	return s
 }
 
 func (s *Server) Handler() http.Handler {
 	return s.recoverPanic(s.securityHeaders(s.requestLog(s.mux)))
+}
+
+// Shutdown stops accepting Responses WebSocket upgrades, closes active
+// sessions, and waits for their handlers to finish. The caller controls the
+// maximum wait through ctx.
+func (s *Server) Shutdown(ctx context.Context) error {
+	if s == nil {
+		return nil
+	}
+	defer s.closeResponsesWebSocketTransport()
+	if s.webSocketSessions != nil {
+		if err := s.webSocketSessions.shutdown(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Close immediately stops active Responses WebSocket sessions and releases
+// idle transports. It is safe to call more than once.
+func (s *Server) Close() {
+	if s == nil {
+		return
+	}
+	if s.webSocketSessions != nil {
+		s.webSocketSessions.closeNow()
+	}
+	s.closeResponsesWebSocketTransport()
+}
+
+func (s *Server) closeResponsesWebSocketTransport() {
+	s.closeOnce.Do(func() {
+		if s.responsesWebSocket != nil {
+			s.responsesWebSocket.Close()
+		}
+	})
 }
 
 func (s *Server) routes() {
@@ -115,6 +173,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /responses/compact", s.responses)
 	s.mux.HandleFunc("POST /backend-api/codex/responses", s.responses)
 	s.mux.HandleFunc("POST /backend-api/codex/responses/compact", s.responses)
+	s.mux.HandleFunc("GET /v1/responses", s.responsesWebSocketHandler)
+	s.mux.HandleFunc("GET /responses", s.responsesWebSocketHandler)
+	s.mux.HandleFunc("GET /backend-api/codex/responses", s.responsesWebSocketHandler)
 	s.mux.HandleFunc("POST /v1/alpha/search", s.alphaSearch)
 	s.mux.HandleFunc("POST /alpha/search", s.alphaSearch)
 	s.mux.HandleFunc("POST /backend-api/codex/alpha/search", s.alphaSearch)

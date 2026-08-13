@@ -58,7 +58,9 @@ OpenAI 会在 Codex 响应头中返回主窗口和次窗口的使用信息。Sha
 
 只有完整、可识别的 5 小时或 7 天额度信号才会写入额度快照。额度头缺失时不会猜测窗口或使用其他字段替代，也不会把已经成功的上游响应改写成网关错误。
 
-网关不设置应用级总请求并发上限，避免少量长时间 SSE 请求阻塞其他用户和账号。请求发出前按账号执行最大并发与固定自然分钟 RPM 限制；某个候选账号达到限制时，路由器会继续尝试当前 API Key 的下一个候选 Plan，全部候选都受限时返回对应的 `429`。限制器位于 API 进程内，单实例部署时覆盖全部请求。
+网关不设置应用级总请求并发上限，避免少量长时间 SSE 请求阻塞其他用户和账号。HTTP 请求与 Responses WebSocket 的每个 turn 发出前，都按账号执行最大并发与固定自然分钟 RPM 限制。HTTP 请求以及 WebSocket 首轮选路时，某个候选账号达到限制会继续尝试当前 API Key 的下一个候选 Plan；WebSocket 后续 turn 固定原账号，不再切换账号，固定账号不可用时要求客户端重连。账号限制器位于 API 进程内，单实例部署时覆盖全部请求。
+
+Responses WebSocket 连接另有独立的进程内入口限制，默认每个用户 API Key 最多 64 条连接；这项连接限制不替代账号业务并发。连接只在活跃 turn 期间占用账号并发槽，终止事件后立即释放，轮间保持上游热连接但不占业务并发。首轮固定 `(API Key, Plan, Member, Account, Account Binding Generation)`；后续 turn 必须重新验证该绑定、额度、RPM 和并发，不能把会话状态迁移到其他账号。
 
 账号当前配额窗口以 `(account_id, window_type)` 唯一标识。上游 `reset-after` 响应头存在秒级漂移时，网关复用已锁定窗口的起止时间，避免同一窗口被拆分成多份。
 
@@ -66,7 +68,9 @@ Plan 详情与固定份额网关限制使用同一口径：在当前 Plan–账�
 
 ## 仪表盘口径
 
-流式请求在首个语义输出前暂存 SSE 前导事件；若此时收到可重试的 `response.failed`，可以安全切换账号。前导事件累计达到响应缓冲上限时会立即开始透传并放弃后续切换，避免无界占用内存。首个语义输出发出后不再切换。客户端中途断开时会取消当前上游请求并释放在线并发，不再继续读取响应或发起新账号尝试。usage 只从固定终止事件读取，包含 Input/Output/Cached/Cache Creation/图片 token，并统计完成的图片生成与 Web Search 调用；若流在终止事件前异常关闭，网关补发 `response.failed`。非流式请求会读取上游 SSE 直到终止事件并返回对应的 JSON response，compact 的 JSON 响应直接转发。每个账号尝试独立、幂等地记录指标，个人仪表盘通过指标关联的成员归属隔离用户数据。
+HTTP 流式请求在首个语义输出前暂存 SSE 前导事件；若此时收到可重试的 `response.failed`，可以安全切换账号。前导事件累计达到响应缓冲上限时会立即开始透传并放弃后续切换，避免无界占用内存。首个语义输出发出后不再切换。HTTP 客户端中途断开时会取消当前上游请求并释放在线并发，不再继续读取响应或发起新账号尝试。usage 只从固定终止事件读取，包含 Input/Output/Cached/Cache Creation/图片 token，并统计完成的图片生成与 Web Search 调用；若流在终止事件前异常关闭，网关补发 `response.failed`。非流式请求会读取上游 SSE 直到终止事件并返回对应的 JSON response，compact 的 JSON 响应直接转发。
+
+Responses WebSocket 端到端复用一条 ChatGPT Codex 上游连接，每个 `response.create` 到固定终止事件构成独立 turn，并分别记录 usage、TTFT、总耗时与成本。仅首轮零下行时，握手 `429` 或明确的 rate/usage/quota error 可触发换号，最多切换 3 次；任一下行后、客户端发出 `response.cancel` 后及后续 turn 不换号、不重放。首下行前的 cancel 会立即发给当前上游，并将当前 attempt 固定为不可换号。客户端在活跃 turn 中断开后，网关停止向客户端写帧，并在默认 1.2 秒的短窗口内继续读取上游终止事件以尽量保留真实 usage；到期会立即释放本 turn 的账号槽位，不会长期占用并发。账号代理优先于全局出站代理，连接建立后若账号代理配置发生变化，后续 turn 会关闭连接并要求客户端重新建立新连接。
 
 “今日”按前端提交的 IANA 时区计算，趋势始终返回包含当前小时在内的最近 24 个小时桶。RPM 与 TPM 使用最近一分钟滚动窗口；平均 TTFT、平均总耗时、成功率与实际使用的 Plan 数使用今日窗口。Token 指标迁移前的历史记录统一为 0，因此准确累计从迁移上线后的新请求开始。
 
@@ -89,9 +93,9 @@ Plan 成功率和错误明细使用完全相同的成员权限、时间窗口和
 
 ## 请求路径
 
-管理请求通过 `ss_session_...` 登录 Token 鉴权，由 `/api` 路由处理。Codex 请求通过 `sk-sharesub-...` 用户 API Key 鉴权，由 `/v1/responses`、`/responses` 或 `/backend-api/codex/responses` 进入网关；三个前缀都支持 `/compact`，并分别提供独立 SearchClient 使用的 `/alpha/search`。
+管理请求通过 `ss_session_...` 登录 Token 鉴权，由 `/api` 路由处理。Codex 请求通过 `sk-sharesub-...` 用户 API Key 鉴权，由 `/v1/responses`、`/responses` 或 `/backend-api/codex/responses` 进入网关；三个路径的 `POST` 处理 Responses HTTP，`GET` 处理 Responses WebSocket Upgrade。三个前缀都支持仅使用 HTTP 的 `/compact`，并分别提供独立 SearchClient 使用的 `/alpha/search`。
 
-Docker 部署时，外部请求先到 Web 容器中的 Nginx。静态页面直接返回，`/api/`、`/v1/`、`/responses` 和 `/backend-api/` 转发到 API 容器。网关路径关闭代理缓冲，以支持流式响应。
+Docker 部署时，外部请求先到 Web 容器中的 Nginx。静态页面直接返回，`/api/`、`/v1/`、`/responses` 和 `/backend-api/` 转发到 API 容器。网关路径关闭代理缓冲，并为 Responses 路径透传 `Upgrade` 与 `Connection` 请求头，以同时支持 SSE 和 WebSocket。
 
 ## 代码组织
 

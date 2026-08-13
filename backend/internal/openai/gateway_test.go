@@ -405,8 +405,9 @@ func TestForwardAlphaSearchUsesStandaloneSearchProtocol(t *testing.T) {
 		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"output":"result"}`)), Request: req}, nil
 	})}
 	inbound := httptest.NewRequest(http.MethodPost, "http://gateway.test/v1/alpha/search?feature=standalone", nil)
+	inbound.Header.Set("Originator", "untrusted-client")
 	inbound.Header.Set("Version", "0.144.1")
-	inbound.Header.Set("User-Agent", codexProbeUserAgent)
+	inbound.Header.Set("User-Agent", "untrusted-client/9.9.9")
 	inbound.Header.Set("X-Codex-Turn-Metadata", `{"turn_id":"turn-1"}`)
 
 	response, err := NewGateway(client).ForwardAlphaSearch(context.Background(), inbound, []byte(`{"model":"gpt-5.6-sol"}`), "access", "account", "")
@@ -422,8 +423,8 @@ func TestForwardAlphaSearchUsesStandaloneSearchProtocol(t *testing.T) {
 		"Chatgpt-Account-Id":    "account",
 		"Content-Type":          "application/json",
 		"Accept":                "application/json",
-		"Originator":            "codex_cli_rs",
-		"Version":               "0.144.1",
+		"Originator":            codexDefaultOriginator,
+		"Version":               codexProbeVersion,
 		"User-Agent":            codexProbeUserAgent,
 		"X-Codex-Turn-Metadata": `{"turn_id":"turn-1"}`,
 	}
@@ -453,7 +454,7 @@ func TestForwardAlphaSearchNormalizesInvalidIdentityAndOldVersion(t *testing.T) 
 		t.Fatal(err)
 	}
 	response.Body.Close()
-	if captured.Header.Get("Version") != codexProbeVersion || captured.Header.Get("Originator") != "codex_cli_rs" || captured.Header.Get("User-Agent") != codexProbeUserAgent {
+	if captured.Header.Get("Version") != codexProbeVersion || captured.Header.Get("Originator") != codexDefaultOriginator || captured.Header.Get("User-Agent") != codexProbeUserAgent {
 		t.Fatalf("identity headers = %#v", captured.Header)
 	}
 	if captured.Header.Get("Chatgpt-Account-Id") != "" {
@@ -487,6 +488,8 @@ func TestForwardCompactUsesCompactEndpointAndHeaders(t *testing.T) {
 		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"id":"resp_1"}`)), Request: req}, nil
 	})}
 	inbound := httptest.NewRequest(http.MethodPost, "http://gateway.test/v1/responses/compact", nil)
+	inbound.Header.Set("Originator", "untrusted-client")
+	inbound.Header.Set("Version", "9.9.9")
 	inbound.Header.Set("User-Agent", "Mozilla/5.0")
 	metadata := RequestBilling{Model: "gpt-5.4", PromptCacheKey: "compact-session"}
 	response, err := NewGateway(client).Forward(context.Background(), inbound, []byte(`{"model":"gpt-5.4"}`), metadata, "access", "account", "key", "")
@@ -497,7 +500,7 @@ func TestForwardCompactUsesCompactEndpointAndHeaders(t *testing.T) {
 	if captured.URL.String() != codexCompactURL {
 		t.Fatalf("target = %q", captured.URL)
 	}
-	if captured.Header.Get("Accept") != "application/json" || captured.Header.Get("Version") != codexProbeVersion {
+	if captured.Header.Get("Accept") != "application/json" || captured.Header.Get("Version") != codexProbeVersion || captured.Header.Get("Originator") != codexDefaultOriginator {
 		t.Fatalf("compact headers = %#v", captured.Header)
 	}
 	if captured.Header.Get("OpenAI-Beta") != "" {
@@ -518,6 +521,9 @@ func TestForwardRemovesOnlyLegacyResponsesBeta(t *testing.T) {
 		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: http.NoBody, Request: req}, nil
 	})}
 	inbound := httptest.NewRequest(http.MethodPost, "http://gateway.test/v1/responses", nil)
+	inbound.Header.Set("Originator", "untrusted-client")
+	inbound.Header.Set("Version", "9.9.9")
+	inbound.Header.Set("User-Agent", "untrusted-client/9.9.9")
 	inbound.Header.Add("OpenAI-Beta", "responses=experimental, future_feature=v1")
 	inbound.Header.Add("OpenAI-Beta", "another_feature=v2, RESPONSES=EXPERIMENTAL")
 	response, err := NewGateway(client).Forward(context.Background(), inbound, []byte(`{"model":"gpt-5.4","input":[],"stream":true,"store":false}`), RequestBilling{Model: "gpt-5.4", Stream: true}, "access", "account", "key", "")
@@ -528,6 +534,9 @@ func TestForwardRemovesOnlyLegacyResponsesBeta(t *testing.T) {
 	values := captured.Header.Values("OpenAI-Beta")
 	if len(values) != 2 || values[0] != "future_feature=v1" || values[1] != "another_feature=v2" {
 		t.Fatalf("OpenAI-Beta = %#v", values)
+	}
+	if captured.Header.Get("Originator") != codexDefaultOriginator || captured.Header.Get("Version") != codexProbeVersion || captured.Header.Get("User-Agent") != codexProbeUserAgent {
+		t.Fatalf("identity headers = %#v", captured.Header)
 	}
 }
 
@@ -586,7 +595,7 @@ func TestFetchModelsForwardsCodexDiscoveryHeaders(t *testing.T) {
 		"Authorization":      "Bearer access",
 		"Chatgpt-Account-Id": "account",
 		"Accept":             "application/json",
-		"Originator":         "codex_cli_rs",
+		"Originator":         codexDefaultOriginator,
 		"Version":            "0.137.0",
 		"User-Agent":         codexProbeUserAgent,
 		"If-None-Match":      `"previous"`,

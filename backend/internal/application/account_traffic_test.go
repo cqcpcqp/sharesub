@@ -120,6 +120,60 @@ func TestAccountTrafficControllerReservationDoesNotConsumeRPM(t *testing.T) {
 	}
 }
 
+func TestAccountTrafficControllerPreparedRequestCommitsOrRollsBackRPM(t *testing.T) {
+	controller := newAccountTrafficController()
+	now := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
+
+	commit, release, err := controller.prepare("account", 2, 1, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := controller.prepare("account", 2, 1, now); err != domain.ErrAccountRateLimited {
+		t.Fatalf("concurrent prepared request error = %v, want rate limited", err)
+	}
+	release()
+
+	commit, release, err = controller.prepare("account", 2, 1, now)
+	if err != nil {
+		t.Fatalf("rolled-back RPM admission was not reusable: %v", err)
+	}
+	commit()
+	release()
+	if _, _, err := controller.prepare("account", 2, 1, now); err != domain.ErrAccountRateLimited {
+		t.Fatalf("request after RPM commit error = %v, want rate limited", err)
+	}
+}
+
+func TestAccountTrafficControllerPreparedRequestCommitsToOriginalMinute(t *testing.T) {
+	controller := newAccountTrafficController()
+	firstMinute := time.Date(2026, 8, 13, 12, 0, 59, 0, time.UTC)
+	secondMinute := firstMinute.Add(time.Second)
+
+	commitFirst, releaseFirst, err := controller.prepare("account", 0, 1, firstMinute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commitSecond, releaseSecond, err := controller.prepare("account", 0, 1, secondMinute)
+	if err != nil {
+		t.Fatalf("next-minute admission was blocked by a prior-minute preflight: %v", err)
+	}
+
+	commitFirst()
+	releaseFirst()
+	commitSecond()
+	releaseSecond()
+	if _, _, err := controller.prepare("account", 0, 1, secondMinute); err != domain.ErrAccountRateLimited {
+		t.Fatalf("second-minute RPM was not consumed exactly once: %v", err)
+	}
+
+	controller.mu.Lock()
+	defer controller.mu.Unlock()
+	state := controller.states["account"]
+	if state == nil || len(state.pendingMinuteRequests) != 0 {
+		t.Fatalf("pending RPM admissions leaked: %+v", state)
+	}
+}
+
 func TestAccountTrafficControllerCleanupKeepsQuiescingState(t *testing.T) {
 	controller := newAccountTrafficController()
 	now := time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)

@@ -17,12 +17,13 @@ type accountTrafficController struct {
 }
 
 type accountTrafficState struct {
-	activeRequests int
-	quiescing      bool
-	idle           chan struct{}
-	minuteStart    time.Time
-	minuteRequests int
-	lastSeen       time.Time
+	activeRequests        int
+	quiescing             bool
+	idle                  chan struct{}
+	minuteStart           time.Time
+	minuteRequests        int
+	pendingMinuteRequests map[int64]int
+	lastSeen              time.Time
 }
 
 const (
@@ -35,14 +36,28 @@ func newAccountTrafficController() *accountTrafficController {
 }
 
 func (c *accountTrafficController) acquire(accountID string, maxConcurrency, rpmLimit int, now time.Time) (func(), error) {
-	return c.acquireRequest(accountID, maxConcurrency, rpmLimit, now, true)
+	commit, release, err := c.prepareRequest(accountID, maxConcurrency, rpmLimit, now, true)
+	if err != nil {
+		return nil, err
+	}
+	commit()
+	return release, nil
 }
 
 func (c *accountTrafficController) reserve(accountID string, now time.Time) (func(), error) {
-	return c.acquireRequest(accountID, 0, 0, now, false)
+	_, release, err := c.prepareRequest(accountID, 0, 0, now, false)
+	return release, err
 }
 
-func (c *accountTrafficController) acquireRequest(accountID string, maxConcurrency, rpmLimit int, now time.Time, countRPM bool) (func(), error) {
+// prepare reserves concurrency and an RPM admission atomically, but does not
+// consume the RPM until commit is called. Releasing before commit rolls the
+// tentative RPM admission back, which keeps credential preflight failures from
+// being counted as requests while still preventing concurrent over-admission.
+func (c *accountTrafficController) prepare(accountID string, maxConcurrency, rpmLimit int, now time.Time) (commit, release func(), err error) {
+	return c.prepareRequest(accountID, maxConcurrency, rpmLimit, now, true)
+}
+
+func (c *accountTrafficController) prepareRequest(accountID string, maxConcurrency, rpmLimit int, now time.Time, countRPM bool) (commit, release func(), err error) {
 	c.mu.Lock()
 	if c.nextCleanup.IsZero() || !now.Before(c.nextCleanup) {
 		for id, cached := range c.states {
@@ -54,16 +69,20 @@ func (c *accountTrafficController) acquireRequest(accountID string, maxConcurren
 	}
 	state := c.states[accountID]
 	if state == nil {
-		state = &accountTrafficState{idle: closedSignal()}
+		state = &accountTrafficState{idle: closedSignal(), pendingMinuteRequests: make(map[int64]int)}
 		c.states[accountID] = state
+	}
+	if state.pendingMinuteRequests == nil {
+		state.pendingMinuteRequests = make(map[int64]int)
 	}
 	if state.quiescing {
 		c.mu.Unlock()
-		return nil, domain.ErrAccountUnavailable
+		return nil, nil, domain.ErrAccountUnavailable
 	}
 	state.lastSeen = now
+	minuteStart := now.Truncate(time.Minute)
+	minuteKey := minuteStart.Unix()
 	if countRPM {
-		minuteStart := now.Truncate(time.Minute)
 		if !state.minuteStart.Equal(minuteStart) {
 			state.minuteStart = minuteStart
 			state.minuteRequests = 0
@@ -71,34 +90,64 @@ func (c *accountTrafficController) acquireRequest(accountID string, maxConcurren
 	}
 	if maxConcurrency > 0 && state.activeRequests >= maxConcurrency {
 		c.mu.Unlock()
-		return nil, domain.ErrAccountConcurrency
+		return nil, nil, domain.ErrAccountConcurrency
 	}
-	if countRPM && rpmLimit > 0 && state.minuteRequests >= rpmLimit {
+	if countRPM && rpmLimit > 0 && state.minuteRequests+state.pendingMinuteRequests[minuteKey] >= rpmLimit {
 		c.mu.Unlock()
-		return nil, domain.ErrAccountRateLimited
+		return nil, nil, domain.ErrAccountRateLimited
 	}
 	if state.activeRequests == 0 {
 		state.idle = make(chan struct{})
 	}
 	state.activeRequests++
 	if countRPM {
-		state.minuteRequests++
+		state.pendingMinuteRequests[minuteKey]++
 	}
 	c.signalChangedLocked()
 	c.mu.Unlock()
 
-	var once sync.Once
-	return func() {
-		once.Do(func() {
-			c.mu.Lock()
-			state.activeRequests--
-			if state.activeRequests == 0 {
-				close(state.idle)
-			}
-			c.signalChangedLocked()
-			c.mu.Unlock()
-		})
-	}, nil
+	committed := false
+	released := false
+	decrementPending := func() {
+		if !countRPM {
+			return
+		}
+		state.pendingMinuteRequests[minuteKey]--
+		if state.pendingMinuteRequests[minuteKey] == 0 {
+			delete(state.pendingMinuteRequests, minuteKey)
+		}
+	}
+	commit = func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if committed || released {
+			return
+		}
+		committed = true
+		decrementPending()
+		// A preflight that crosses a minute boundary consumed an admission in
+		// its original minute. Do not charge it to the newer active window.
+		if countRPM && state.minuteStart.Equal(minuteStart) {
+			state.minuteRequests++
+		}
+	}
+	release = func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if released {
+			return
+		}
+		released = true
+		if !committed {
+			decrementPending()
+		}
+		state.activeRequests--
+		if state.activeRequests == 0 {
+			close(state.idle)
+		}
+		c.signalChangedLocked()
+	}
+	return commit, release, nil
 }
 
 func (c *accountTrafficController) quiesce(ctx context.Context, accountIDs ...string) (func(), error) {

@@ -138,6 +138,16 @@ openssl rand -base64 32
 | `SHARESUB_TOKEN_REFRESH_BATCH_SIZE` | 每轮最多扫描的账号数 | `200` |
 | `SHARESUB_TOKEN_REFRESH_CONCURRENCY` | 单实例后台刷新并发数 | `4` |
 | `SHARESUB_TOKEN_REFRESH_MAX_RETRIES` | 后台刷新失败最大尝试次数 | `3` |
+| `SHARESUB_RESPONSES_WS_FIRST_MESSAGE_TIMEOUT` | WebSocket Upgrade 后等待首个 `response.create` 的最长时间 | `30s` |
+| `SHARESUB_RESPONSES_WS_INTER_TURN_IDLE_TIMEOUT` | WebSocket 两个 turn 之间允许的最长空闲时间 | `5m` |
+| `SHARESUB_RESPONSES_WS_MAX_SESSION_DURATION` | 单条 Responses WebSocket 会话最长持续时间 | `1h` |
+| `SHARESUB_RESPONSES_WS_MAX_CONNECTIONS_PER_API_KEY` | 单实例中每个用户 API Key 最多同时打开的 Responses WebSocket 数 | `64` |
+| `SHARESUB_RESPONSES_WS_DIAL_TIMEOUT` | 建立上游 Responses WebSocket 的超时时间 | `10s` |
+| `SHARESUB_RESPONSES_WS_READ_TIMEOUT` | 活跃 turn 等待上游下一帧的超时时间 | `15m` |
+| `SHARESUB_RESPONSES_WS_WRITE_TIMEOUT` | 写入任一 WebSocket 帧的超时时间 | `2m` |
+| `SHARESUB_RESPONSES_WS_UPSTREAM_DRAIN_TIMEOUT` | 客户端断开后继续读取上游终态 usage 的最长时间 | `1.2s` |
+| `SHARESUB_RESPONSES_WS_CLIENT_READ_LIMIT_BYTES` | 客户端 WebSocket 单条消息上限 | `67108864`（64 MiB） |
+| `SHARESUB_RESPONSES_WS_UPSTREAM_READ_LIMIT_BYTES` | 上游 WebSocket 单条消息上限 | `16777216`（16 MiB） |
 | `SHARESUB_OAUTH_REDIRECT_URI` | OpenAI OAuth 回调地址 | `http://localhost:1455/auth/callback` |
 | `SHARESUB_OUTBOUND_PROXY` | OpenAI OAuth 和网关出站代理 | 留空，表示直连 |
 | `SHARESUB_TOKEN_PEPPER` | Token 哈希密钥 | 必填，32 字节 Base64 |
@@ -202,6 +212,9 @@ pnpm dev
 - `GET /v1/models`
 - `GET /models`
 - `GET /backend-api/codex/models`
+- `GET /v1/responses`（Responses WebSocket v2 Upgrade）
+- `GET /responses`（Responses WebSocket v2 Upgrade）
+- `GET /backend-api/codex/responses`（Responses WebSocket v2 Upgrade）
 - `POST /v1/responses`
 - `POST /v1/responses/compact`
 - `POST /responses`
@@ -230,7 +243,7 @@ curl https://sharesub.example.com/v1/responses \
 
 网关会按 Key 的配置从仍然有效的 Plan 中选路：`priority` 按数字从小到大选择，当前路由在请求发出前不可用或达到账号并发/RPM 上限时尝试下一条；`balanced` 在固定分配模式按成员消耗占个人份额的比例选择，在共享模式按账号总额度使用比例选择。固定分配模式会分别在 5 小时和 7 天窗口内，先扣除账号本次绑定 Plan 时已经消耗的额度，再按同期成员请求费用占比分摊剩余用量；任一窗口达到成员份额后停止使用该 Plan。固定份额为 0% 的成员不参与选路；共享 Plan 不执行个人额度限制，但账号任一有效窗口达到 100% 后会停止路由。账号独立代理优先于 `SHARESUB_OUTBOUND_PROXY`，代理请求失败时不会回退直连。只有上游明确以 `429` 或 `529` 拒绝执行时，网关才会切换到下一个账号，最多切换 3 次；连接错误、超时和其他状态不会重试，避免重复执行。系统不把请求或响应正文写入数据库或性能记录。
 
-OAuth 请求会移除 ChatGPT 内部接口不支持的顶层字段并强制 `store=false`。非流式请求由网关把上游 SSE 终止响应还原成 JSON；流式上游异常关闭时会发出标准 `response.failed` 终止事件。完整兼容范围见 [转发兼容说明](docs/forwarding-compatibility.md)。
+OAuth 请求会移除 ChatGPT 内部接口不支持的顶层字段并强制 `store=false`。非流式请求由网关把上游 SSE 终止响应还原成 JSON；流式上游异常关闭时会发出标准 `response.failed` 终止事件。三个 Responses 入口也支持 WebSocket v2：连接固定账号并复用一条上游 WebSocket，账号并发与 RPM 按 turn 获取和释放，每个终止 turn 独立记录 usage。仅首轮在尚未向客户端发送任何上游帧时，上游握手 `429` 或明确的 rate/usage/quota error 才允许换号，最多切换 3 次；任一下行帧之后、客户端已发送 `response.cancel` 后和后续 turn 均不换号、不重放。WebSocket 上游同样优先使用账号独立代理，账号未配置代理时使用 `SHARESUB_OUTBOUND_PROXY`。完整兼容范围见 [转发兼容说明](docs/forwarding-compatibility.md)。
 
 Codex 独立联网检索通过三个 `alpha/search` 兼容入口转发到 ChatGPT SearchClient 上游。该请求使用独立 JSON 协议，不携带 Responses 专用的 Beta 与会话头；每个成功的 2xx 搜索按一次 Web Search 计入用量与成本。
 
@@ -327,6 +340,11 @@ docker compose --env-file .env -f deploy/docker-compose.yml up -d --no-build
 宿主机 Nginx 示例：
 
 ```nginx
+map $http_upgrade $sharesub_connection_upgrade {
+    default upgrade;
+    ''      '';
+}
+
 server {
     listen 80;
     server_name sharesub.example.com;
@@ -363,14 +381,16 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $sharesub_connection_upgrade;
         proxy_connect_timeout 60s;
-        proxy_read_timeout 600s;
-        proxy_send_timeout 600s;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
     }
 }
 ```
 
-将示例域名和证书路径替换为实际值。流式响应路径需要关闭代理缓冲，并设置足够长的读取超时。
+将示例域名和证书路径替换为实际值。流式响应路径需要关闭代理缓冲，并设置足够长的读取超时；Responses WebSocket v2 还要求外层代理透传 `Upgrade` 和 `Connection`。
 
 ### 4. 升级与回滚准备
 

@@ -12,25 +12,35 @@ import (
 const minimumGatewayMetricRetention = 7 * 24 * time.Hour
 
 type Config struct {
-	HTTPAddr                  string
-	DatabaseURL               string
-	PublicURL                 string
-	OAuthRedirect             string
-	OutboundProxy             string
-	SessionTTL                time.Duration
-	TokenPepper               []byte
-	CredentialKey             []byte
-	CleanupInterval           time.Duration
-	GatewayMetricRetention    time.Duration
-	AuditEventRetention       time.Duration
-	ReadNotificationRetention time.Duration
-	TerminalRecordRetention   time.Duration
-	TokenRefreshEnabled       bool
-	TokenRefreshInterval      time.Duration
-	TokenRefreshBeforeExpiry  time.Duration
-	TokenRefreshBatchSize     int
-	TokenRefreshConcurrency   int
-	TokenRefreshMaxRetries    int
+	HTTPAddr                           string
+	DatabaseURL                        string
+	PublicURL                          string
+	OAuthRedirect                      string
+	OutboundProxy                      string
+	SessionTTL                         time.Duration
+	TokenPepper                        []byte
+	CredentialKey                      []byte
+	CleanupInterval                    time.Duration
+	GatewayMetricRetention             time.Duration
+	AuditEventRetention                time.Duration
+	ReadNotificationRetention          time.Duration
+	TerminalRecordRetention            time.Duration
+	TokenRefreshEnabled                bool
+	TokenRefreshInterval               time.Duration
+	TokenRefreshBeforeExpiry           time.Duration
+	TokenRefreshBatchSize              int
+	TokenRefreshConcurrency            int
+	TokenRefreshMaxRetries             int
+	ResponsesWSFirstMessageTimeout     time.Duration
+	ResponsesWSInterTurnIdleTimeout    time.Duration
+	ResponsesWSMaxSessionDuration      time.Duration
+	ResponsesWSMaxConnectionsPerAPIKey int
+	ResponsesWSDialTimeout             time.Duration
+	ResponsesWSReadTimeout             time.Duration
+	ResponsesWSWriteTimeout            time.Duration
+	ResponsesWSUpstreamDrainTimeout    time.Duration
+	ResponsesWSClientReadLimitBytes    int64
+	ResponsesWSUpstreamReadLimitBytes  int64
 }
 
 func Load() (Config, error) {
@@ -101,26 +111,76 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	responsesWSFirstMessageTimeout, err := positiveDurationEnv("SHARESUB_RESPONSES_WS_FIRST_MESSAGE_TIMEOUT", 30*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+	responsesWSInterTurnIdleTimeout, err := positiveDurationEnv("SHARESUB_RESPONSES_WS_INTER_TURN_IDLE_TIMEOUT", 5*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+	responsesWSMaxSessionDuration, err := positiveDurationEnv("SHARESUB_RESPONSES_WS_MAX_SESSION_DURATION", time.Hour)
+	if err != nil {
+		return Config{}, err
+	}
+	responsesWSMaxConnectionsPerAPIKey, err := positiveIntEnv("SHARESUB_RESPONSES_WS_MAX_CONNECTIONS_PER_API_KEY", 64)
+	if err != nil {
+		return Config{}, err
+	}
+	responsesWSDialTimeout, err := positiveDurationEnv("SHARESUB_RESPONSES_WS_DIAL_TIMEOUT", 10*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+	responsesWSReadTimeout, err := positiveDurationEnv("SHARESUB_RESPONSES_WS_READ_TIMEOUT", 15*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+	responsesWSWriteTimeout, err := positiveDurationEnv("SHARESUB_RESPONSES_WS_WRITE_TIMEOUT", 2*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+	responsesWSUpstreamDrainTimeout, err := positiveDurationEnv("SHARESUB_RESPONSES_WS_UPSTREAM_DRAIN_TIMEOUT", 1200*time.Millisecond)
+	if err != nil {
+		return Config{}, err
+	}
+	responsesWSClientReadLimitBytes, err := positiveInt64Env("SHARESUB_RESPONSES_WS_CLIENT_READ_LIMIT_BYTES", 64<<20)
+	if err != nil {
+		return Config{}, err
+	}
+	responsesWSUpstreamReadLimitBytes, err := positiveInt64Env("SHARESUB_RESPONSES_WS_UPSTREAM_READ_LIMIT_BYTES", 16<<20)
+	if err != nil {
+		return Config{}, err
+	}
 	return Config{
-		HTTPAddr:                  envOr("SHARESUB_HTTP_ADDR", "127.0.0.1:8080"),
-		DatabaseURL:               databaseURL,
-		PublicURL:                 envOr("SHARESUB_PUBLIC_URL", "http://127.0.0.1:5173"),
-		OAuthRedirect:             envOr("SHARESUB_OAUTH_REDIRECT_URI", "http://localhost:1455/auth/callback"),
-		OutboundProxy:             os.Getenv("SHARESUB_OUTBOUND_PROXY"),
-		SessionTTL:                ttl,
-		TokenPepper:               pepper,
-		CredentialKey:             credentialKey,
-		CleanupInterval:           cleanupInterval,
-		GatewayMetricRetention:    gatewayMetricRetention,
-		AuditEventRetention:       auditEventRetention,
-		ReadNotificationRetention: readNotificationRetention,
-		TerminalRecordRetention:   terminalRecordRetention,
-		TokenRefreshEnabled:       tokenRefreshEnabled,
-		TokenRefreshInterval:      tokenRefreshInterval,
-		TokenRefreshBeforeExpiry:  tokenRefreshBeforeExpiry,
-		TokenRefreshBatchSize:     tokenRefreshBatchSize,
-		TokenRefreshConcurrency:   tokenRefreshConcurrency,
-		TokenRefreshMaxRetries:    tokenRefreshMaxRetries,
+		HTTPAddr:                           envOr("SHARESUB_HTTP_ADDR", "127.0.0.1:8080"),
+		DatabaseURL:                        databaseURL,
+		PublicURL:                          envOr("SHARESUB_PUBLIC_URL", "http://127.0.0.1:5173"),
+		OAuthRedirect:                      envOr("SHARESUB_OAUTH_REDIRECT_URI", "http://localhost:1455/auth/callback"),
+		OutboundProxy:                      os.Getenv("SHARESUB_OUTBOUND_PROXY"),
+		SessionTTL:                         ttl,
+		TokenPepper:                        pepper,
+		CredentialKey:                      credentialKey,
+		CleanupInterval:                    cleanupInterval,
+		GatewayMetricRetention:             gatewayMetricRetention,
+		AuditEventRetention:                auditEventRetention,
+		ReadNotificationRetention:          readNotificationRetention,
+		TerminalRecordRetention:            terminalRecordRetention,
+		TokenRefreshEnabled:                tokenRefreshEnabled,
+		TokenRefreshInterval:               tokenRefreshInterval,
+		TokenRefreshBeforeExpiry:           tokenRefreshBeforeExpiry,
+		TokenRefreshBatchSize:              tokenRefreshBatchSize,
+		TokenRefreshConcurrency:            tokenRefreshConcurrency,
+		TokenRefreshMaxRetries:             tokenRefreshMaxRetries,
+		ResponsesWSFirstMessageTimeout:     responsesWSFirstMessageTimeout,
+		ResponsesWSInterTurnIdleTimeout:    responsesWSInterTurnIdleTimeout,
+		ResponsesWSMaxSessionDuration:      responsesWSMaxSessionDuration,
+		ResponsesWSMaxConnectionsPerAPIKey: responsesWSMaxConnectionsPerAPIKey,
+		ResponsesWSDialTimeout:             responsesWSDialTimeout,
+		ResponsesWSReadTimeout:             responsesWSReadTimeout,
+		ResponsesWSWriteTimeout:            responsesWSWriteTimeout,
+		ResponsesWSUpstreamDrainTimeout:    responsesWSUpstreamDrainTimeout,
+		ResponsesWSClientReadLimitBytes:    responsesWSClientReadLimitBytes,
+		ResponsesWSUpstreamReadLimitBytes:  responsesWSUpstreamReadLimitBytes,
 	}, nil
 }
 
@@ -142,6 +202,18 @@ func positiveIntEnv(name string, fallback int) (int, error) {
 		return fallback, nil
 	}
 	value, err := strconv.Atoi(raw)
+	if err != nil || value <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer", name)
+	}
+	return value, nil
+}
+
+func positiveInt64Env(name string, fallback int64) (int64, error) {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return fallback, nil
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || value <= 0 {
 		return 0, fmt.Errorf("%s must be a positive integer", name)
 	}

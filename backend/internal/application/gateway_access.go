@@ -121,6 +121,19 @@ func (s *Service) AuthenticateGatewayKey(ctx context.Context, apiKey string) err
 	return nil
 }
 
+// ResolveGatewayAPIKeyID returns the stable identifier used for per-key
+// process-local resource limits without retaining the bearer secret in memory.
+func (s *Service) ResolveGatewayAPIKeyID(ctx context.Context, apiKey string) (string, error) {
+	if !strings.HasPrefix(apiKey, "sk-sharesub-") {
+		return "", domain.ErrUnauthorized
+	}
+	routes, err := s.store.ResolveGatewayRoutes(ctx, s.security.HashToken(apiKey), s.now())
+	if err != nil || routes.APIKey.ID == "" {
+		return "", domain.ErrUnauthorized
+	}
+	return routes.APIKey.ID, nil
+}
+
 func (s *Service) ResolveGatewayAccess(ctx context.Context, apiKey string, excludedAccountIDs ...string) (GatewayAccess, error) {
 	if !strings.HasPrefix(apiKey, "sk-sharesub-") {
 		return GatewayAccess{}, domain.ErrUnauthorized
@@ -140,25 +153,7 @@ func (s *Service) ResolveGatewayAccess(ctx context.Context, apiKey string, exclu
 			continue
 		}
 		eligibleCount++
-		exhausted, err := s.store.AccountQuotaExhausted(ctx, credential.Account.ID, s.now())
-		if err != nil {
-			return GatewayAccess{}, err
-		}
-		if !exhausted && credential.Plan.AllocationMode != domain.AllocationShared {
-			if credential.Member.ShareBasisPoints == 0 {
-				exhausted = true
-			} else {
-				exhausted, err = s.store.MemberQuotaExhausted(
-					ctx,
-					credential.Member.ID,
-					credential.Plan.ID,
-					credential.Account.ID,
-					credential.AccountBindingGeneration,
-					credential.Member.ShareBasisPoints,
-					s.now(),
-				)
-			}
-		}
+		exhausted, err := s.gatewayCredentialQuotaExhausted(ctx, credential)
 		if err != nil {
 			return GatewayAccess{}, err
 		}
@@ -189,9 +184,10 @@ func (s *Service) ResolveGatewayAccess(ctx context.Context, apiKey string, exclu
 	}
 	var accountErr, limitErr error
 	for _, credential := range available {
+		var commit func()
 		var release func()
 		if s.traffic != nil {
-			release, err = s.traffic.acquire(credential.Account.ID, credential.Account.MaxConcurrency, credential.Account.RPMLimit, s.now())
+			commit, release, err = s.traffic.prepare(credential.Account.ID, credential.Account.MaxConcurrency, credential.Account.RPMLimit, s.now())
 			if err != nil {
 				limitErr = err
 				continue
@@ -205,6 +201,9 @@ func (s *Service) ResolveGatewayAccess(ctx context.Context, apiKey string, exclu
 			accountErr = err
 			continue
 		}
+		if commit != nil {
+			commit()
+		}
 		access.Release = release
 		return access, nil
 	}
@@ -215,6 +214,90 @@ func (s *Service) ResolveGatewayAccess(ctx context.Context, apiKey string, exclu
 		return GatewayAccess{}, domain.ErrAccountUnavailable
 	}
 	return GatewayAccess{}, domain.ErrNoRouteAvailable
+}
+
+// ReacquireGatewayAccess validates and reacquires the account-bound access for
+// a subsequent turn of a persistent gateway session. Unlike
+// ResolveGatewayAccess, it never selects another route: a Responses WebSocket
+// continuation must remain on the API key, Plan, member, account, and account
+// binding generation selected for its first turn.
+func (s *Service) ReacquireGatewayAccess(ctx context.Context, apiKey string, pinned GatewayAccess) (GatewayAccess, error) {
+	if !strings.HasPrefix(apiKey, "sk-sharesub-") {
+		return GatewayAccess{}, domain.ErrUnauthorized
+	}
+	routes, err := s.store.ResolveGatewayRoutes(ctx, s.security.HashToken(apiKey), s.now())
+	if err != nil || routes.APIKey.ID != pinned.Credential.APIKeyID {
+		return GatewayAccess{}, domain.ErrUnauthorized
+	}
+
+	var credential domain.GatewayCredential
+	found := false
+	for _, candidate := range routes.Candidates {
+		if sameGatewayAccessBinding(candidate, pinned.Credential) {
+			credential = candidate
+			found = true
+			break
+		}
+	}
+	if !found {
+		return GatewayAccess{}, domain.ErrAccountUnavailable
+	}
+
+	exhausted, err := s.gatewayCredentialQuotaExhausted(ctx, credential)
+	if err != nil {
+		return GatewayAccess{}, err
+	}
+	if exhausted {
+		return GatewayAccess{}, domain.ErrQuotaExhausted
+	}
+
+	var commit func()
+	var release func()
+	if s.traffic != nil {
+		commit, release, err = s.traffic.prepare(credential.Account.ID, credential.Account.MaxConcurrency, credential.Account.RPMLimit, s.now())
+		if err != nil {
+			return GatewayAccess{}, err
+		}
+	}
+	access, err := s.resolveCredential(ctx, credential)
+	if err != nil {
+		if release != nil {
+			release()
+		}
+		return GatewayAccess{}, domain.ErrAccountUnavailable
+	}
+	if commit != nil {
+		commit()
+	}
+	access.Release = release
+	return access, nil
+}
+
+func sameGatewayAccessBinding(candidate, pinned domain.GatewayCredential) bool {
+	return candidate.APIKeyID == pinned.APIKeyID &&
+		candidate.Plan.ID == pinned.Plan.ID &&
+		candidate.Member.ID == pinned.Member.ID &&
+		candidate.Account.ID == pinned.Account.ID &&
+		candidate.AccountBindingGeneration == pinned.AccountBindingGeneration
+}
+
+func (s *Service) gatewayCredentialQuotaExhausted(ctx context.Context, credential domain.GatewayCredential) (bool, error) {
+	exhausted, err := s.store.AccountQuotaExhausted(ctx, credential.Account.ID, s.now())
+	if err != nil || exhausted || credential.Plan.AllocationMode == domain.AllocationShared {
+		return exhausted, err
+	}
+	if credential.Member.ShareBasisPoints == 0 {
+		return true, nil
+	}
+	return s.store.MemberQuotaExhausted(
+		ctx,
+		credential.Member.ID,
+		credential.Plan.ID,
+		credential.Account.ID,
+		credential.AccountBindingGeneration,
+		credential.Member.ShareBasisPoints,
+		s.now(),
+	)
 }
 
 func (s *Service) resolveCredential(ctx context.Context, credential domain.GatewayCredential) (GatewayAccess, error) {

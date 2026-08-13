@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -1078,6 +1079,20 @@ func TestResolveGatewayAccessBalancesByShareUsage(t *testing.T) {
 	}
 }
 
+func TestResolveGatewayAPIKeyID(t *testing.T) {
+	now := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
+	manager := testSecurityManager(t)
+	store := &gatewayStore{routes: domain.GatewayRouteSet{APIKey: domain.APIKey{ID: "key-id"}}}
+	service := &Service{store: store, security: manager, now: func() time.Time { return now }}
+	keyID, err := service.ResolveGatewayAPIKeyID(context.Background(), "sk-sharesub-test")
+	if err != nil || keyID != "key-id" {
+		t.Fatalf("ResolveGatewayAPIKeyID() = %q, %v", keyID, err)
+	}
+	if _, err := service.ResolveGatewayAPIKeyID(context.Background(), "invalid"); err != domain.ErrUnauthorized {
+		t.Fatalf("invalid key error = %v", err)
+	}
+}
+
 func TestGatewayQuotaSignalsKeepResolvedBindingTuple(t *testing.T) {
 	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
 	credential := domain.GatewayCredential{
@@ -1328,6 +1343,196 @@ func TestResolveGatewayAccessBalancesSharedPlansByAccountUsage(t *testing.T) {
 	}
 	if access.Credential.Plan.ID != "plan-b" {
 		t.Fatalf("selected plan = %q, want plan-b", access.Credential.Plan.ID)
+	}
+}
+
+func TestReacquireGatewayAccessKeepsPinnedBindingAndRefreshesAccess(t *testing.T) {
+	now := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
+	manager := testSecurityManager(t)
+	credential := testCredential(t, manager, "key", "member", "plan", 1, 5_000, 0, now)
+	credential.Account.MaxConcurrency = 1
+	store := &gatewayStore{
+		routes: domain.GatewayRouteSet{
+			APIKey:     domain.APIKey{ID: "key", Strategy: domain.RoutePriority},
+			Candidates: []domain.GatewayCredential{credential},
+		},
+		exhausted: map[string]bool{},
+	}
+	service := &Service{store: store, security: manager, now: func() time.Time { return now }, traffic: newAccountTrafficController()}
+
+	first, err := service.ResolveGatewayAccess(context.Background(), "sk-sharesub-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Release == nil {
+		t.Fatal("first turn did not acquire the account slot")
+	}
+	first.Release()
+	first.Release = nil
+
+	scope := credential.Account.OwnerUserID + ":" + credential.Account.ChatGPTAccountID
+	updatedCiphertext, err := manager.Encrypt("updated-access", []byte(scope+":access"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.routes.Candidates[0].AccessTokenCiphertext = updatedCiphertext
+
+	next, err := service.ReacquireGatewayAccess(context.Background(), "sk-sharesub-test", first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer next.Release()
+	if next.AccessToken != "updated-access" {
+		t.Fatalf("reacquired access token = %q, want updated token", next.AccessToken)
+	}
+	if !sameGatewayAccessBinding(next.Credential, first.Credential) {
+		t.Fatalf("reacquired binding = %+v, want pinned binding %+v", next.Credential, first.Credential)
+	}
+	if len(store.touched) != 2 || store.touched[0] != "key" || store.touched[1] != "key" {
+		t.Fatalf("touched API keys = %v, want one touch per turn", store.touched)
+	}
+}
+
+func TestReacquireGatewayAccessRejectsChangedBindingTuple(t *testing.T) {
+	now := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
+	manager := testSecurityManager(t)
+	pinnedCredential := testCredential(t, manager, "key", "member", "plan", 1, 5_000, 0, now)
+	pinnedCredential.AccountBindingGeneration = 7
+	fallback := testCredential(t, manager, "key", "fallback-member", "fallback-plan", 2, 5_000, 0, now)
+
+	tests := []struct {
+		name   string
+		mutate func(*domain.GatewayCredential)
+	}{
+		{name: "api_key", mutate: func(value *domain.GatewayCredential) { value.APIKeyID = "other-key" }},
+		{name: "plan", mutate: func(value *domain.GatewayCredential) { value.Plan.ID = "other-plan" }},
+		{name: "member", mutate: func(value *domain.GatewayCredential) { value.Member.ID = "other-member" }},
+		{name: "account", mutate: func(value *domain.GatewayCredential) { value.Account.ID = "other-account" }},
+		{name: "binding_generation", mutate: func(value *domain.GatewayCredential) { value.AccountBindingGeneration++ }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			changed := pinnedCredential
+			test.mutate(&changed)
+			store := &gatewayStore{
+				routes: domain.GatewayRouteSet{
+					APIKey:     domain.APIKey{ID: "key", Strategy: domain.RoutePriority},
+					Candidates: []domain.GatewayCredential{changed, fallback},
+				},
+				exhausted: map[string]bool{},
+			}
+			service := &Service{store: store, security: manager, now: func() time.Time { return now }, traffic: newAccountTrafficController()}
+			_, err := service.ReacquireGatewayAccess(context.Background(), "sk-sharesub-test", GatewayAccess{Credential: pinnedCredential})
+			if !errors.Is(err, domain.ErrAccountUnavailable) {
+				t.Fatalf("ReacquireGatewayAccess() error = %v, want account unavailable", err)
+			}
+			if len(store.touched) != 0 {
+				t.Fatalf("changed binding touched credential: %v", store.touched)
+			}
+		})
+	}
+}
+
+func TestReacquireGatewayAccessRevalidatesAPIKeyID(t *testing.T) {
+	now := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
+	manager := testSecurityManager(t)
+	credential := testCredential(t, manager, "key", "member", "plan", 1, 5_000, 0, now)
+	store := &gatewayStore{
+		routes: domain.GatewayRouteSet{
+			APIKey:     domain.APIKey{ID: "replacement-key", Strategy: domain.RoutePriority},
+			Candidates: []domain.GatewayCredential{credential},
+		},
+		exhausted: map[string]bool{},
+	}
+	service := &Service{store: store, security: manager, now: func() time.Time { return now }, traffic: newAccountTrafficController()}
+
+	_, err := service.ReacquireGatewayAccess(context.Background(), "sk-sharesub-test", GatewayAccess{Credential: credential})
+	if !errors.Is(err, domain.ErrUnauthorized) {
+		t.Fatalf("ReacquireGatewayAccess() error = %v, want unauthorized", err)
+	}
+}
+
+func TestReacquireGatewayAccessChecksQuotaBeforeConsumingTraffic(t *testing.T) {
+	now := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
+	manager := testSecurityManager(t)
+	credential := testCredential(t, manager, "key", "member", "plan", 1, 5_000, 0, now)
+	credential.Account.MaxConcurrency = 1
+	credential.Account.RPMLimit = 1
+	store := &gatewayStore{
+		routes: domain.GatewayRouteSet{
+			APIKey:     domain.APIKey{ID: "key", Strategy: domain.RoutePriority},
+			Candidates: []domain.GatewayCredential{credential},
+		},
+		exhausted:        map[string]bool{},
+		accountExhausted: map[string]bool{credential.Account.ID: true},
+	}
+	service := &Service{store: store, security: manager, now: func() time.Time { return now }, traffic: newAccountTrafficController()}
+	pinned := GatewayAccess{Credential: credential}
+
+	if _, err := service.ReacquireGatewayAccess(context.Background(), "sk-sharesub-test", pinned); !errors.Is(err, domain.ErrQuotaExhausted) {
+		t.Fatalf("exhausted ReacquireGatewayAccess() error = %v, want quota exhausted", err)
+	}
+	store.accountExhausted[credential.Account.ID] = false
+	access, err := service.ReacquireGatewayAccess(context.Background(), "sk-sharesub-test", pinned)
+	if err != nil {
+		t.Fatalf("traffic was consumed before quota validation: %v", err)
+	}
+	access.Release()
+}
+
+func TestReacquireGatewayAccessReleasesSlotWhenCredentialResolutionFails(t *testing.T) {
+	now := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
+	manager := testSecurityManager(t)
+	credential := testCredential(t, manager, "key", "member", "plan", 1, 5_000, 0, now)
+	credential.Account.MaxConcurrency = 1
+	credential.Account.RPMLimit = 1
+	store := &gatewayStore{
+		routes: domain.GatewayRouteSet{
+			APIKey:     domain.APIKey{ID: "key", Strategy: domain.RoutePriority},
+			Candidates: []domain.GatewayCredential{credential},
+		},
+		exhausted: map[string]bool{},
+	}
+	service := &Service{store: store, security: manager, now: func() time.Time { return now }, traffic: newAccountTrafficController()}
+	pinned := GatewayAccess{Credential: credential}
+	store.routes.Candidates[0].AccessTokenCiphertext = []byte("invalid")
+
+	if _, err := service.ReacquireGatewayAccess(context.Background(), "sk-sharesub-test", pinned); !errors.Is(err, domain.ErrAccountUnavailable) {
+		t.Fatalf("invalid credential error = %v, want account unavailable", err)
+	}
+	store.routes.Candidates[0] = credential
+	access, err := service.ReacquireGatewayAccess(context.Background(), "sk-sharesub-test", pinned)
+	if err != nil {
+		t.Fatalf("concurrency or RPM leaked after credential failure: %v", err)
+	}
+	access.Release()
+	if _, err := service.ReacquireGatewayAccess(context.Background(), "sk-sharesub-test", pinned); !errors.Is(err, domain.ErrAccountRateLimited) {
+		t.Fatalf("successful retry did not consume exactly one RPM: %v", err)
+	}
+}
+
+func TestReacquireGatewayAccessCountsRPMPerTurn(t *testing.T) {
+	now := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
+	manager := testSecurityManager(t)
+	credential := testCredential(t, manager, "key", "member", "plan", 1, 5_000, 0, now)
+	credential.Account.RPMLimit = 1
+	store := &gatewayStore{
+		routes: domain.GatewayRouteSet{
+			APIKey:     domain.APIKey{ID: "key", Strategy: domain.RoutePriority},
+			Candidates: []domain.GatewayCredential{credential},
+		},
+		exhausted: map[string]bool{},
+	}
+	service := &Service{store: store, security: manager, now: func() time.Time { return now }, traffic: newAccountTrafficController()}
+	pinned := GatewayAccess{Credential: credential}
+
+	first, err := service.ReacquireGatewayAccess(context.Background(), "sk-sharesub-test", pinned)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.Release()
+	if _, err := service.ReacquireGatewayAccess(context.Background(), "sk-sharesub-test", pinned); !errors.Is(err, domain.ErrAccountRateLimited) {
+		t.Fatalf("second turn error = %v, want account rate limited", err)
 	}
 }
 

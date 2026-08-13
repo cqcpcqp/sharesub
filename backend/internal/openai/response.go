@@ -528,6 +528,7 @@ type responseError struct {
 }
 
 type terminalResponse struct {
+	ID     string               `json:"id"`
 	Model  string               `json:"model"`
 	Usage  responseUsage        `json:"usage"`
 	Output []responseOutputItem `json:"output"`

@@ -75,14 +75,7 @@ func (g *Gateway) ForwardAlphaSearch(ctx context.Context, inbound *http.Request,
 	if metadata := strings.TrimSpace(inbound.Header.Get("X-Codex-Turn-Metadata")); metadata != "" {
 		req.Header.Set("X-Codex-Turn-Metadata", metadata)
 	}
-	version := strings.TrimSpace(inbound.Header.Get("Version"))
-	if !supportedCodexVersion(version) {
-		version = codexProbeVersion
-	}
-	req.Header.Set("Version", version)
-	originator, userAgent := alphaSearchIdentity(inbound.Header.Get("User-Agent"))
-	req.Header.Set("Originator", originator)
-	req.Header.Set("User-Agent", userAgent)
+	applyCodexOAuthIdentity(req.Header, "")
 
 	client, err := g.clientForProxy(proxyURL)
 	if err != nil {
@@ -93,34 +86,6 @@ func (g *Gateway) ForwardAlphaSearch(ctx context.Context, inbound *http.Request,
 		return nil, fmt.Errorf("forward Codex alpha search request: %w", err)
 	}
 	return resp, nil
-}
-
-func supportedCodexVersion(version string) bool {
-	var major, minor, patch int
-	if _, err := fmt.Sscanf(strings.TrimSpace(version), "%d.%d.%d", &major, &minor, &patch); err != nil {
-		return false
-	}
-	return major > 0 || minor > 144 || minor == 144 && patch >= 0
-}
-
-func alphaSearchIdentity(rawUserAgent string) (string, string) {
-	userAgent := strings.TrimSpace(rawUserAgent)
-	slash := strings.IndexByte(userAgent, '/')
-	if slash <= 0 {
-		return "codex_cli_rs", codexProbeUserAgent
-	}
-	originator := strings.TrimSpace(userAgent[:slash])
-	switch strings.ToLower(originator) {
-	case "codex_cli_rs", "codex_vscode", "codex_vscode_copilot", "codex_app", "codex_chatgpt_desktop", "codex_atlas", "codex_exec", "codex_sdk_ts":
-		originator = strings.ToLower(originator)
-	case "codex-tui":
-		return "codex_cli_rs", "codex_cli_rs" + userAgent[slash:]
-	default:
-		if !strings.HasPrefix(originator, "Codex ") {
-			return "codex_cli_rs", codexProbeUserAgent
-		}
-	}
-	return originator, originator + userAgent[slash:]
 }
 
 // CopyAlphaSearchResponse forwards the fixed JSON response and accounts one

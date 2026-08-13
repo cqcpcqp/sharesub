@@ -78,7 +78,20 @@ func main() {
 	if bootstrapAdmin != nil {
 		logger.Warn("bootstrap admin created; change this temporary password after login", "email", bootstrapAdmin.Email, "temporary_password", bootstrapAdmin.TemporaryPassword)
 	}
-	api := httpapi.New(app, gateway, logger)
+	api := httpapi.New(app, gateway, logger, httpapi.ResponsesWebSocketConfig{
+		FirstMessageTimeout:     cfg.ResponsesWSFirstMessageTimeout,
+		InterTurnIdleTimeout:    cfg.ResponsesWSInterTurnIdleTimeout,
+		MaxSessionDuration:      cfg.ResponsesWSMaxSessionDuration,
+		MaxConnectionsPerAPIKey: cfg.ResponsesWSMaxConnectionsPerAPIKey,
+		OutboundProxyURL:        cfg.OutboundProxy,
+		DialTimeout:             cfg.ResponsesWSDialTimeout,
+		ReadTimeout:             cfg.ResponsesWSReadTimeout,
+		WriteTimeout:            cfg.ResponsesWSWriteTimeout,
+		UpstreamDrainTimeout:    cfg.ResponsesWSUpstreamDrainTimeout,
+		ClientReadLimitBytes:    cfg.ResponsesWSClientReadLimitBytes,
+		UpstreamReadLimitBytes:  cfg.ResponsesWSUpstreamReadLimitBytes,
+	})
+	defer api.Close()
 	server := &http.Server{
 		Addr: cfg.HTTPAddr, Handler: api.Handler(),
 		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 2 * time.Minute,
@@ -104,6 +117,9 @@ func main() {
 	<-ctx.Done()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
+	if err := api.Shutdown(shutdownCtx); err != nil {
+		logger.Error("shutdown Responses WebSocket sessions", "error", err)
+	}
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		logger.Error("shutdown API", "error", err)
 	}

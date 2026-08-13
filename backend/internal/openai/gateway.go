@@ -29,11 +29,7 @@ const (
 	proxyClientTTL           = 30 * time.Minute
 )
 
-const (
-	codexProbeTimeout   = 20 * time.Second
-	codexProbeVersion   = "0.144.1"
-	codexProbeUserAgent = "codex_cli_rs/0.144.1 (Ubuntu 22.4.0; x86_64) xterm-256color"
-)
+const codexProbeTimeout = 20 * time.Second
 
 var requestHeaderAllowlist = map[string]struct{}{
 	"accept": {}, "accept-language": {}, "content-type": {}, "conversation_id": {},
@@ -359,28 +355,17 @@ func (g *Gateway) Forward(ctx context.Context, inbound *http.Request, body []byt
 	// ChatGPT Codex OAuth HTTP endpoints. Preserve independent beta tokens sent
 	// by the client while removing only that legacy token.
 	stripLegacyResponsesBeta(req.Header)
-	if req.Header.Get("Originator") == "" {
-		req.Header.Set("Originator", "codex_cli_rs")
-	}
 	// Every supported gateway request is normalized to a JSON body before it
 	// reaches Forward, including multipart Images edits.
 	req.Header.Set("Content-Type", "application/json")
 	if compact {
 		req.Header.Set("Accept", "application/json")
-		if req.Header.Get("Version") == "" {
-			req.Header.Set("Version", codexProbeVersion)
-		}
 	} else if images {
 		req.Header.Set("Accept", "text/event-stream")
-		if req.Header.Get("Version") == "" {
-			req.Header.Set("Version", codexProbeVersion)
-		}
 	} else if req.Header.Get("Accept") == "" {
 		req.Header.Set("Accept", "text/event-stream")
 	}
-	if userAgent := strings.TrimSpace(req.Header.Get("User-Agent")); userAgent == "" || isBrowserUserAgent(userAgent) {
-		req.Header.Set("User-Agent", codexProbeUserAgent)
-	}
+	applyCodexOAuthIdentity(req.Header, "")
 
 	clientSessionID := strings.TrimSpace(req.Header.Get("Session_Id"))
 	clientConversationID := strings.TrimSpace(req.Header.Get("Conversation_Id"))
@@ -457,9 +442,7 @@ func (g *Gateway) FetchModels(ctx context.Context, inbound *http.Request, access
 		req.Header.Set("Chatgpt-Account-Id", accountID)
 	}
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Originator", "codex_cli_rs")
-	req.Header.Set("Version", clientVersion)
-	req.Header.Set("User-Agent", codexProbeUserAgent)
+	applyCodexOAuthIdentity(req.Header, clientVersion)
 	if etag := strings.TrimSpace(inbound.Header.Get("If-None-Match")); etag != "" {
 		req.Header.Set("If-None-Match", etag)
 	}
@@ -478,10 +461,6 @@ func (g *Gateway) FetchModels(ctx context.Context, inbound *http.Request, access
 func isCompactRequestPath(path string) bool {
 	path = strings.TrimRight(strings.TrimSpace(path), "/")
 	return strings.HasSuffix(path, "/responses/compact")
-}
-
-func isBrowserUserAgent(value string) bool {
-	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(value)), "mozilla/")
 }
 
 func randomSessionSeed() (string, error) {

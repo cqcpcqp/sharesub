@@ -30,13 +30,74 @@ func TestLoadResourceDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadResponsesWSDefaults(t *testing.T) {
+	setRequiredEnvironment(t)
+	config, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.ResponsesWSFirstMessageTimeout != 30*time.Second ||
+		config.ResponsesWSInterTurnIdleTimeout != 5*time.Minute ||
+		config.ResponsesWSMaxSessionDuration != time.Hour ||
+		config.ResponsesWSMaxConnectionsPerAPIKey != 64 ||
+		config.ResponsesWSDialTimeout != 10*time.Second ||
+		config.ResponsesWSReadTimeout != 15*time.Minute ||
+		config.ResponsesWSWriteTimeout != 2*time.Minute ||
+		config.ResponsesWSUpstreamDrainTimeout != 1200*time.Millisecond ||
+		config.ResponsesWSClientReadLimitBytes != 64<<20 ||
+		config.ResponsesWSUpstreamReadLimitBytes != 16<<20 {
+		t.Fatalf("Responses WebSocket defaults = %+v", config)
+	}
+}
+
+func TestLoadResponsesWSOverrides(t *testing.T) {
+	setRequiredEnvironment(t)
+	t.Setenv("SHARESUB_RESPONSES_WS_FIRST_MESSAGE_TIMEOUT", "12s")
+	t.Setenv("SHARESUB_RESPONSES_WS_INTER_TURN_IDLE_TIMEOUT", "2m")
+	t.Setenv("SHARESUB_RESPONSES_WS_MAX_SESSION_DURATION", "45m")
+	t.Setenv("SHARESUB_RESPONSES_WS_MAX_CONNECTIONS_PER_API_KEY", "17")
+	t.Setenv("SHARESUB_RESPONSES_WS_DIAL_TIMEOUT", "8s")
+	t.Setenv("SHARESUB_RESPONSES_WS_READ_TIMEOUT", "4m")
+	t.Setenv("SHARESUB_RESPONSES_WS_WRITE_TIMEOUT", "45s")
+	t.Setenv("SHARESUB_RESPONSES_WS_UPSTREAM_DRAIN_TIMEOUT", "900ms")
+	t.Setenv("SHARESUB_RESPONSES_WS_CLIENT_READ_LIMIT_BYTES", "33554432")
+	t.Setenv("SHARESUB_RESPONSES_WS_UPSTREAM_READ_LIMIT_BYTES", "8388608")
+
+	config, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.ResponsesWSFirstMessageTimeout != 12*time.Second ||
+		config.ResponsesWSInterTurnIdleTimeout != 2*time.Minute ||
+		config.ResponsesWSMaxSessionDuration != 45*time.Minute ||
+		config.ResponsesWSMaxConnectionsPerAPIKey != 17 ||
+		config.ResponsesWSDialTimeout != 8*time.Second ||
+		config.ResponsesWSReadTimeout != 4*time.Minute ||
+		config.ResponsesWSWriteTimeout != 45*time.Second ||
+		config.ResponsesWSUpstreamDrainTimeout != 900*time.Millisecond ||
+		config.ResponsesWSClientReadLimitBytes != 32<<20 ||
+		config.ResponsesWSUpstreamReadLimitBytes != 8<<20 {
+		t.Fatalf("Responses WebSocket overrides = %+v", config)
+	}
+}
+
 func TestLoadRejectsInvalidResourceLimits(t *testing.T) {
 	for name, value := range map[string]string{
-		"SHARESUB_CLEANUP_INTERVAL":          "never",
-		"SHARESUB_GATEWAY_METRIC_RETENTION":  "167h59m59s",
-		"SHARESUB_TOKEN_REFRESH_INTERVAL":    "never",
-		"SHARESUB_TOKEN_REFRESH_CONCURRENCY": "0",
-		"SHARESUB_TOKEN_REFRESH_ENABLED":     "sometimes",
+		"SHARESUB_CLEANUP_INTERVAL":                         "never",
+		"SHARESUB_GATEWAY_METRIC_RETENTION":                 "167h59m59s",
+		"SHARESUB_TOKEN_REFRESH_INTERVAL":                   "never",
+		"SHARESUB_TOKEN_REFRESH_CONCURRENCY":                "0",
+		"SHARESUB_TOKEN_REFRESH_ENABLED":                    "sometimes",
+		"SHARESUB_RESPONSES_WS_FIRST_MESSAGE_TIMEOUT":       "never",
+		"SHARESUB_RESPONSES_WS_INTER_TURN_IDLE_TIMEOUT":     "0s",
+		"SHARESUB_RESPONSES_WS_MAX_SESSION_DURATION":        "-1m",
+		"SHARESUB_RESPONSES_WS_MAX_CONNECTIONS_PER_API_KEY": "0",
+		"SHARESUB_RESPONSES_WS_DIAL_TIMEOUT":                "0s",
+		"SHARESUB_RESPONSES_WS_READ_TIMEOUT":                "never",
+		"SHARESUB_RESPONSES_WS_WRITE_TIMEOUT":               "-1s",
+		"SHARESUB_RESPONSES_WS_UPSTREAM_DRAIN_TIMEOUT":      "0s",
+		"SHARESUB_RESPONSES_WS_CLIENT_READ_LIMIT_BYTES":     "0",
+		"SHARESUB_RESPONSES_WS_UPSTREAM_READ_LIMIT_BYTES":   "9223372036854775808",
 	} {
 		t.Run(name, func(t *testing.T) {
 			setRequiredEnvironment(t)

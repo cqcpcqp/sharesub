@@ -111,6 +111,9 @@ func TestGatewayCompatibilityRoutesAreRegistered(t *testing.T) {
 		{http.MethodPost, "/responses/compact"},
 		{http.MethodPost, "/backend-api/codex/responses"},
 		{http.MethodPost, "/backend-api/codex/responses/compact"},
+		{http.MethodGet, "/v1/responses"},
+		{http.MethodGet, "/responses"},
+		{http.MethodGet, "/backend-api/codex/responses"},
 		{http.MethodPost, "/v1/alpha/search"},
 		{http.MethodPost, "/alpha/search"},
 		{http.MethodPost, "/backend-api/codex/alpha/search"},
@@ -122,6 +125,10 @@ func TestGatewayCompatibilityRoutesAreRegistered(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.method+" "+test.path, func(t *testing.T) {
 			request := httptest.NewRequest(test.method, test.path, strings.NewReader(`{"model":"gpt-5.4"}`))
+			if test.method == http.MethodGet && strings.Contains(test.path, "responses") {
+				request.Header.Set("Connection", "Upgrade")
+				request.Header.Set("Upgrade", "websocket")
+			}
 			recorder := httptest.NewRecorder()
 			server.Handler().ServeHTTP(recorder, request)
 			if recorder.Code != http.StatusUnauthorized {
