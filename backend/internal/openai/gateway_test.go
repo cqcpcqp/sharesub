@@ -18,25 +18,17 @@ import (
 	"github.com/sharesub/sharesub/backend/internal/domain"
 )
 
-func TestProbeQuotaParsesSignalsBefore429Status(t *testing.T) {
+func TestProbeQuotaQueriesUsageEndpoint(t *testing.T) {
 	var captured *http.Request
 	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		captured = req
-		headers := make(http.Header)
-		headers.Set("x-codex-primary-used-percent", "18.25")
-		headers.Set("x-codex-primary-reset-after-seconds", "600")
-		headers.Set("x-codex-primary-window-minutes", "10080")
-		headers.Set("x-codex-secondary-used-percent", "2.5")
-		headers.Set("x-codex-secondary-reset-after-seconds", "120")
-		headers.Set("x-codex-secondary-window-minutes", "300")
 		return &http.Response{
-			StatusCode: http.StatusTooManyRequests,
-			Header:     headers,
-			Body:       io.NopCloser(strings.NewReader("rate limited")),
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"rate_limit":{"primary_window":{"used_percent":18.25,"limit_window_seconds":604800,"reset_after_seconds":600,"reset_at":1786581415},"secondary_window":{"used_percent":2.5,"limit_window_seconds":18000,"reset_after_seconds":120,"reset_at":1786580935}}}`)),
 			Request:    req,
 		}, nil
 	})}
-	startedAt := time.Now()
 
 	signals, err := NewGateway(client).ProbeQuota(context.Background(), "access-token", "account-id", "")
 	if err != nil {
@@ -54,14 +46,14 @@ func TestProbeQuotaParsesSignalsBefore429Status(t *testing.T) {
 	if got := signals[0].ResetAt.Sub(signals[0].WindowStart); got != 7*24*time.Hour {
 		t.Fatalf("7d window duration = %v", got)
 	}
-	if signals[0].ResetAt.Before(startedAt.Add(599*time.Second)) || signals[0].ResetAt.After(time.Now().Add(601*time.Second)) {
-		t.Fatalf("7d reset_at = %v", signals[0].ResetAt)
+	if got := signals[0].ResetAt; !got.Equal(time.Unix(1786581415, 0)) {
+		t.Fatalf("7d reset_at = %v", got)
 	}
 	assertProbeRequest(t, captured)
 }
 
-func TestProbeQuotaReturnsStatusErrorWithoutSignals(t *testing.T) {
-	for _, status := range []int{http.StatusOK, http.StatusTooManyRequests} {
+func TestProbeQuotaReturnsStatusError(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusTooManyRequests} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 				return &http.Response{
@@ -83,22 +75,18 @@ func TestProbeQuotaReturnsStatusErrorWithoutSignals(t *testing.T) {
 	}
 }
 
-func TestProbeQuotaRejectsIncompleteSignals(t *testing.T) {
+func TestProbeQuotaRejectsIncompleteUsageWindows(t *testing.T) {
 	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		headers := make(http.Header)
-		headers.Set("x-codex-primary-used-percent", "2.5")
-		headers.Set("x-codex-primary-reset-after-seconds", "120")
-		headers.Set("x-codex-primary-window-minutes", "300")
 		return &http.Response{
 			StatusCode: http.StatusOK,
-			Header:     headers,
-			Body:       io.NopCloser(strings.NewReader("incomplete quota headers")),
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"rate_limit":{"primary_window":{"used_percent":2.5,"limit_window_seconds":18000,"reset_after_seconds":120,"reset_at":1786580935}}}`)),
 			Request:    req,
 		}, nil
 	})}
 
 	signals, err := NewGateway(client).ProbeQuota(context.Background(), "access-token", "account-id", "")
-	if err == nil || !strings.Contains(err.Error(), "without complete quota signals") {
+	if err == nil || !strings.Contains(err.Error(), "incomplete quota windows") {
 		t.Fatalf("error = %v, want incomplete quota signals", err)
 	}
 	if signals != nil {
@@ -111,18 +99,20 @@ func assertProbeRequest(t *testing.T, req *http.Request) {
 	if req == nil {
 		t.Fatal("probe request was not captured")
 	}
-	if req.Method != http.MethodPost || req.URL.String() != codexResponsesURL || req.Host != "chatgpt.com" {
+	if req.Method != http.MethodGet || req.URL.String() != chatGPTUsageURL || req.Host != "chatgpt.com" {
 		t.Fatalf("request target = %s %s (Host %q)", req.Method, req.URL, req.Host)
 	}
 	wantHeaders := map[string]string{
 		"Authorization":      "Bearer access-token",
 		"Chatgpt-Account-Id": "account-id",
-		"Content-Type":       "application/json",
-		"Accept":             "text/event-stream",
-		"OpenAI-Beta":        "responses=experimental",
-		"Originator":         "codex_cli_rs",
-		"Version":            codexProbeVersion,
-		"User-Agent":         codexProbeUserAgent,
+		"Accept":             "application/json",
+		"OpenAI-Beta":        "codex-1",
+		"OAI-Language":       "zh-CN",
+		"Originator":         "Codex Desktop",
+		"Priority":           "u=4, i",
+		"Sec-Fetch-Dest":     "empty",
+		"Sec-Fetch-Mode":     "no-cors",
+		"Sec-Fetch-Site":     "none",
 	}
 	for key, want := range wantHeaders {
 		if got := req.Header.Get(key); got != want {
@@ -134,29 +124,11 @@ func assertProbeRequest(t *testing.T, req *http.Request) {
 		t.Fatal("probe request context has no deadline")
 	}
 	remaining := time.Until(deadline)
-	if remaining <= 14*time.Second || remaining > codexProbeTimeout {
+	if remaining <= 19*time.Second || remaining > codexProbeTimeout {
 		t.Errorf("probe deadline remaining = %v", remaining)
 	}
-
-	var payload struct {
-		Model string `json:"model"`
-		Input []struct {
-			Role    string `json:"role"`
-			Content []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			} `json:"content"`
-		} `json:"input"`
-		Stream bool `json:"stream"`
-		Store  bool `json:"store"`
-	}
-	if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
-		t.Fatal(err)
-	}
-	if payload.Model != codexProbeModel || !payload.Stream || payload.Store || len(payload.Input) != 1 ||
-		payload.Input[0].Role != "user" || len(payload.Input[0].Content) != 1 ||
-		payload.Input[0].Content[0].Type != "input_text" || payload.Input[0].Content[0].Text != "hi" {
-		t.Fatalf("probe payload = %#v", payload)
+	if req.Body != nil {
+		t.Fatal("usage query must not send a request body")
 	}
 }
 
