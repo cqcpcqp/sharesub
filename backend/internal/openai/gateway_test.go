@@ -75,22 +75,53 @@ func TestProbeQuotaReturnsStatusError(t *testing.T) {
 	}
 }
 
-func TestProbeQuotaRejectsIncompleteUsageWindows(t *testing.T) {
+func TestProbeQuotaAcceptsSingleUsageWindow(t *testing.T) {
 	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(`{"rate_limit":{"primary_window":{"used_percent":2.5,"limit_window_seconds":18000,"reset_after_seconds":120,"reset_at":1786580935}}}`)),
+			Body:       io.NopCloser(strings.NewReader(`{"rate_limit":{"primary_window":{"used_percent":19,"limit_window_seconds":604800,"reset_after_seconds":120,"reset_at":1786580935},"secondary_window":null}}`)),
 			Request:    req,
 		}, nil
 	})}
 
 	signals, err := NewGateway(client).ProbeQuota(context.Background(), "access-token", "account-id", "")
-	if err == nil || !strings.Contains(err.Error(), "incomplete quota windows") {
-		t.Fatalf("error = %v, want incomplete quota signals", err)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if signals != nil {
-		t.Fatalf("signals = %#v, want nil", signals)
+	if len(signals) != 1 || signals[0].WindowType != domain.Window7D || signals[0].AccountUsedMicros != 19_000_000 {
+		t.Fatalf("signals = %#v, want one 7d signal", signals)
+	}
+}
+
+func TestProbeQuotaRejectsMissingAndUnknownUsageWindows(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "both null", body: `{"rate_limit":{"primary_window":null,"secondary_window":null}}`, want: "no quota windows"},
+		{name: "unknown duration", body: `{"rate_limit":{"primary_window":{"used_percent":2.5,"limit_window_seconds":3600,"reset_after_seconds":120,"reset_at":1786580935}}}`, want: "unknown quota window"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader(test.body)),
+					Request:    req,
+				}, nil
+			})}
+
+			signals, err := NewGateway(client).ProbeQuota(context.Background(), "access-token", "account-id", "")
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+			if signals != nil {
+				t.Fatalf("signals = %#v, want nil", signals)
+			}
+		})
 	}
 }
 

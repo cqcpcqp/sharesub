@@ -80,8 +80,8 @@ type codexQuotaUsage struct {
 }
 
 type codexQuotaRateLimit struct {
-	PrimaryWindow   codexQuotaWindow `json:"primary_window"`
-	SecondaryWindow codexQuotaWindow `json:"secondary_window"`
+	PrimaryWindow   *codexQuotaWindow `json:"primary_window"`
+	SecondaryWindow *codexQuotaWindow `json:"secondary_window"`
 }
 
 type codexQuotaWindow struct {
@@ -293,12 +293,25 @@ func (g *Gateway) ProbeQuota(ctx context.Context, accessToken, chatgptAccountID,
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&usage); err != nil {
 		return nil, fmt.Errorf("decode Codex quota response: %w", err)
 	}
-	signals := []domain.QuotaSignal{
-		quotaSignalFromUsageWindow(usage.RateLimit.PrimaryWindow),
-		quotaSignalFromUsageWindow(usage.RateLimit.SecondaryWindow),
+	signals := make([]domain.QuotaSignal, 0, 2)
+	for _, window := range []*codexQuotaWindow{
+		usage.RateLimit.PrimaryWindow,
+		usage.RateLimit.SecondaryWindow,
+	} {
+		if window == nil {
+			continue
+		}
+		signal := quotaSignalFromUsageWindow(*window)
+		if signal.WindowType == "" {
+			return nil, errors.New("probe Codex quota returned unknown quota window")
+		}
+		signals = append(signals, signal)
 	}
-	if !hasCompleteQuotaWindows(signals) {
-		return nil, errors.New("probe Codex quota returned incomplete quota windows")
+	if len(signals) == 0 {
+		return nil, errors.New("probe Codex quota returned no quota windows")
+	}
+	if len(signals) == 2 && signals[0].WindowType == signals[1].WindowType {
+		return nil, errors.New("probe Codex quota returned duplicate quota windows")
 	}
 	return signals, nil
 }
@@ -318,15 +331,6 @@ func quotaSignalFromUsageWindow(window codexQuotaWindow) domain.QuotaSignal {
 		ResetAt:           resetAt,
 		AccountUsedMicros: int64(window.UsedPercent * domain.PercentMicros),
 	}
-}
-
-func hasCompleteQuotaWindows(signals []domain.QuotaSignal) bool {
-	if len(signals) != 2 {
-		return false
-	}
-	first, second := signals[0].WindowType, signals[1].WindowType
-	return (first == domain.Window5H && second == domain.Window7D) ||
-		(first == domain.Window7D && second == domain.Window5H)
 }
 
 func (g *Gateway) Forward(ctx context.Context, inbound *http.Request, body []byte, metadata RequestBilling, accessToken, accountID, apiKeyID, proxyURL string) (*http.Response, error) {
