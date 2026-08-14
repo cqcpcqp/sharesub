@@ -1,0 +1,4 @@
+interface:
+  display_name: "Production Deploy Final Check"
+  short_description: "Audit release risk before production workflow deployment"
+  default_prompt: "Use $check-production-deploy to perform the final production deployment safety check and tell me whether to allow database migrations."
