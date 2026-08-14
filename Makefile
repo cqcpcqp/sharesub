@@ -1,12 +1,16 @@
 DEV_SCRIPT := ./scripts/dev.sh
 
-.PHONY: help init check dev status logs stop down restart quality quality-structure test
+.PHONY: help init install-hooks check dev status logs stop down restart quality quality-structure test
 
 help:
 	@$(DEV_SCRIPT) help
 
 init:
 	@$(DEV_SCRIPT) init
+
+install-hooks:
+	@git config core.hooksPath .githooks
+	@echo "Git hooks enabled from .githooks"
 
 check:
 	@$(DEV_SCRIPT) check

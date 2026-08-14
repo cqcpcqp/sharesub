@@ -95,6 +95,7 @@ make logs     # 持续查看后端和前端日志
 make stop     # 停止后端和前端，保留 PostgreSQL
 make down     # 停止全部服务，保留数据库数据卷
 make restart  # 重启全部本地开发服务
+make install-hooks  # 为当前 clone 启用提交前结构检查
 make quality  # 执行规模、格式、静态分析、测试、类型和构建门禁
 make test     # 执行后端测试、静态检查和前端构建检查
 ```

@@ -1,8 +1,8 @@
 import { computed, watch } from 'vue'
 import { api } from '../api'
-import { adminAPI } from '../api/admin'
 import { allocationShareBasisPoints, formatShareBasisPoints, maxPlanShareBasisPoints, planApprovedPublicMemberCount, planAvailablePublicSlotCount, planPublicationShareBasisPoints, planReservedShareBasisPoints } from '../planAllocation'
 import type { Account, Member, PerformancePeriod, Plan, PlanAllocationMode, PlanDetail, User } from '../types'
+import { createPlanManagementAPI } from './planManagementAPI'
 import { formatPlanAuditDate, formatPlanAuditMetadata, planAuditActionLabels, planAuditMetadataLabels, planRequestErrorMessage } from './planViewPresentation'
 import { createPlanViewState } from './planViewState'
 
@@ -35,7 +35,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
   const accountOptions = computed(() => availableAccounts.value.map(account => ({ label: `${account.email} · ${account.plan_type}`, value: account.id })))
   const planOptions = computed(() => props.plans.map(plan => ({ label: `${plan.name}${plan.status === 'archived' ? ' · 已归档' : ''}`, value: plan.id })))
   const isActualOwner = computed(() => detail.value?.plan.owner_user_id === props.user.id)
-  const canManage = computed(() => isActualOwner.value || props.adminMode)
+  const canManage = computed(() => Boolean(isActualOwner.value || props.adminMode))
   const isShared = computed(() => detail.value?.plan.allocation_mode === 'shared')
   const isArchived = computed(() => detail.value?.plan.status === 'archived')
   const isAccountBound = computed(() => detail.value?.account !== null)
@@ -95,45 +95,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
 
   const actionLabels = planAuditActionLabels
   const metadataLabels = planAuditMetadataLabels
-  const managementAPI = props.adminMode ? {
-    plan: adminAPI.adminPlan,
-    planPerformance: adminAPI.adminPlanPerformance,
-    planAuditEvents: adminAPI.adminPlanAuditEvents,
-    refreshPlanQuota: (id: string, _automatic = false) => adminAPI.adminRefreshPlanQuota(id),
-    planQuotaResetCredits: adminAPI.adminPlanQuotaResetCredits,
-    resetPlanQuota: adminAPI.adminResetPlanQuota,
-    invite: adminAPI.adminInvite,
-    revokeInvite: adminAPI.adminRevokeInvite,
-    updatePublication: (id: string, payload: { visibility: string; public_slots: number; public_share_basis_points: number }) => adminAPI.adminUpdatePlanPublication(id, payload.visibility as 'private' | 'public', payload.public_slots, payload.public_share_basis_points),
-    updateMember: adminAPI.adminUpdateMember,
-    removeMember: adminAPI.adminRemoveMember,
-    reviewApplication: adminAPI.adminReviewApplication,
-    renamePlan: (id: string, name: string) => adminAPI.adminUpdatePlan(id, { name }),
-    updatePlanDescription: (id: string, description: string) => adminAPI.adminUpdatePlan(id, { description }),
-    updatePlanStatus: adminAPI.adminUpdatePlanStatus,
-    transferPlanOwnership: adminAPI.adminTransferPlanOwnership,
-    rebindPlanAccount: adminAPI.adminRebindPlanAccount,
-    deletePlan: adminAPI.adminDeletePlan,
-  } : {
-    plan: api.plan,
-    planPerformance: api.planPerformance,
-    planAuditEvents: api.planAuditEvents,
-    refreshPlanQuota: api.refreshPlanQuota,
-    planQuotaResetCredits: api.planQuotaResetCredits,
-    resetPlanQuota: api.resetPlanQuota,
-    invite: api.invite,
-    revokeInvite: api.revokeInvite,
-    updatePublication: api.updatePublication,
-    updateMember: api.updateMember,
-    removeMember: api.removeMember,
-    reviewApplication: (_planID: string, id: string, decision: 'approve' | 'reject') => api.reviewApplication(id, decision),
-    renamePlan: api.renamePlan,
-    updatePlanDescription: api.updatePlanDescription,
-    updatePlanStatus: api.updatePlanStatus,
-    transferPlanOwnership: api.transferPlanOwnership,
-    rebindPlanAccount: api.rebindPlanAccount,
-    deletePlan: api.deletePlan,
-  }
+  const managementAPI = createPlanManagementAPI(props.adminMode)
 
   let planRequestSequence = 0
   let performanceRequestSequence = 0
@@ -294,15 +256,6 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
   function updateCreateAllocationMode(value: PlanAllocationMode) { createForm.allocationMode = value }
   function updateCreateShare(value: number) { createForm.share = value }
   function updateInviteShare(value: number) { inviteForm.share = value }
-  function isSettingMemberToViewOnly(member: Member) {
-    return !isShared.value && member.share_basis_points > 0 && shareDrafts[member.id] === 0
-  }
-  function isPublicRecruitMember(memberID: string) {
-    return Boolean(detail.value?.applications.some(application =>
-      application.status === 'approved' && application.member_id === memberID,
-    ))
-  }
-
   function handleTabChange(name: string | number) {
     if (name === 'activity' && detail.value) void loadAudit(detail.value.plan.id)
   }
@@ -734,9 +687,9 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
     canConfirmDelete, transferMemberOptions, rebindAccountOptions, actionLabels, metadataLabels,
     setPublicationVisibility, updateRenameDraft, updateDescriptionDraft, updateDeleteNameDraft, updatePublicationSlots,
     updatePublicationShare, updateRebindAccount, updateTransferMember, updateCreateName,
-    updateCreateAccount, updateCreateAllocationMode, updateCreateShare, updateInviteShare, isSettingMemberToViewOnly, isPublicRecruitMember,
+    updateCreateAccount, updateCreateAllocationMode, updateCreateShare, updateInviteShare,
     handleTabChange, openCreate, createPlan, refreshQuota, queryQuotaResetCredits, resetQuota, sendInvite, revokeInvite, savePublication,
-    saveShare, removeMember, leavePlan, review, applicationReviewBusy, renamePlan, updatePlanDescription, updatePlanStatus,
+    saveShare, removeMember, leavePlan, review, renamePlan, updatePlanDescription, updatePlanStatus,
     transferOwnership, rebindAccount, handleConnectedAccount, continueDelete, closeDeleteDialogs, deletePlan, copyInvite,
     formatDate, formatMetadata,
   }

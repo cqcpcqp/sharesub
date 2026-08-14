@@ -90,62 +90,15 @@
   font-weight: 600;
 }
 
-.members-tab,
 .activity-tab,
 .owner-controls {
   min-width: 0;
 }
 
-.member-actions,
 .lifecycle-actions {
   display: flex;
   align-items: center;
   gap: 7px;
-}
-
-.member-role-tags {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.invite-list {
-  margin-top: 12px;
-  border-top: 1px solid var(--line);
-}
-
-.invite-row {
-  min-height: 62px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 105px 84px 38px;
-  align-items: center;
-  gap: 12px;
-  border-bottom: 1px solid var(--line-muted);
-  color: var(--ink);
-  font-size: 11px;
-}
-
-.invite-recipient {
-  min-width: 0;
-  display: grid;
-  gap: 4px;
-}
-
-.invite-recipient strong,
-.invite-recipient small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.invite-recipient strong {
-  color: var(--ink-strong);
-}
-
-.invite-recipient small {
-  color: var(--muted);
-  font-size: 11px;
 }
 
 .plan-settings {
@@ -551,25 +504,6 @@
 
   .account-setup-overview > .n-button {
     width: 100%;
-  }
-
-  .members-section .section-heading {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .members-section .section-heading > .n-button,
-  .members-section .section-heading > .n-popconfirm {
-    align-self: flex-end;
-  }
-
-  .invite-row {
-    grid-template-columns: minmax(0, 1fr) auto 38px;
-    gap: 8px;
-  }
-
-  .invite-row > span:nth-child(2) {
-    display: none;
   }
 
   .lifecycle-actions {

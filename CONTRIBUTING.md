@@ -64,6 +64,14 @@
 
 ## 本地验证
 
+首次克隆仓库后运行：
+
+```bash
+make install-hooks
+```
+
+该命令为当前 clone 启用仓库内的 `.githooks`。`pre-commit` 会执行快速的仓库结构检查，在提交前拦截超出源码规模限制、重复 migration 序号和缺失治理文档。Git 不会自动信任 clone 中的 hook，因此每个新 clone 都需要显式执行一次安装命令；紧急情况下可用 Git 自带的 `--no-verify` 跳过，但必须在推送前补跑检查。
+
 提交前至少运行：
 
 ```bash
