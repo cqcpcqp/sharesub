@@ -103,7 +103,7 @@ import AppInput from '../components/AppInput.vue'
 import ModalShell from '../components/ModalShell.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 
-const props = defineProps<{ currentUser: User }>()
+defineProps<{ currentUser: User }>()
 const emit = defineEmits<{ message: [type: 'success' | 'error', text: string] }>()
 const overview = ref<AdminOverview | null>(null)
 const users = ref<AdminUser[]>([])

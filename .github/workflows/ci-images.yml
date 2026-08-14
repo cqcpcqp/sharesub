@@ -48,6 +48,12 @@ jobs:
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
+      - name: Check repository structure
+        working-directory: ${{ github.workspace }}
+        run: ./scripts/check-quality-structure.sh
+      - name: Check Go formatting
+        run: test -z "$(gofmt -l ./cmd ./internal ./migrations)"
+      - run: go vet ./...
       - run: go test ./...
 
   frontend:
@@ -70,9 +76,11 @@ jobs:
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
       - run: pnpm test:run
       - run: pnpm typecheck
       - run: pnpm build
+      - run: pnpm bundle:check
 
   images:
     name: Publish ${{ matrix.name }} image

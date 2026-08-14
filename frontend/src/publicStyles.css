@@ -95,7 +95,7 @@
 .legal-layout { width: min(1080px, calc(100% - 48px)); display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 85px; margin: 0 auto; padding: 72px 0 110px; }
 .legal-layout > aside { position: sticky; top: 40px; height: fit-content; }
 .legal-layout > aside > span, .legal-layout > article > header span { color: var(--primary); font-size: 11px; font-weight: 850; letter-spacing: .08em; }
-.legal-layout > aside h1 { margin: 8px 0 0; color: var(--ink-strong); font-size: 22px; }
+.legal-layout > aside h2 { margin: 8px 0 0; color: var(--ink-strong); font-size: 22px; }
 .legal-layout > aside p { margin: 7px 0 28px; color: var(--muted); font-size: 10px; }
 .legal-layout > aside nav { display: grid; border-top: 1px solid var(--line); }
 .legal-layout > aside nav a { padding: 13px 10px; border-bottom: 1px solid var(--line-soft); color: var(--muted); font-size: 12px; font-weight: 650; text-decoration: none; }

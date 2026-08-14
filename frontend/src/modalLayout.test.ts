@@ -9,6 +9,6 @@ describe('modal layout', () => {
     expect(modalRule).toBeDefined()
     expect(modalRule).not.toContain('max-height')
     expect(modalRule).not.toContain('overflow')
-    expect(styles).not.toMatch(/\.n-modal-container \.modal[^\{]*\{[^}]*max-height/)
+    expect(styles).not.toMatch(/\.n-modal-container \.modal[^{]*\{[^}]*max-height/)
   })
 })

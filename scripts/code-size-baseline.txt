@@ -1,0 +1,2 @@
+# path|max-lines
+# Legacy exceptions are ceilings, not targets. Reduce or remove entries after refactoring.

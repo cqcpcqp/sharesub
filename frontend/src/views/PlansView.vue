@@ -659,8 +659,6 @@ import {
   X,
 } from 'lucide-vue-next'
 import { allocationModeLabel, formatShareBasisPoints } from '../planAllocation'
-import type { Account, Plan, User } from '../types'
-import type { ResolvedTheme } from '../themePreference'
 import AccountConfigSummary from '../components/AccountConfigSummary.vue'
 import EmptyState from '../components/EmptyState.vue'
 import ModalShell from '../components/ModalShell.vue'
@@ -670,33 +668,22 @@ import SharePicker from '../components/SharePicker.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 import UserAvatar from '../components/UserAvatar.vue'
 import { usePlansView } from './usePlansView'
+import type { PlansViewComponentEmits, PlansViewComponentProps } from './plansViewContract'
 
-const props = withDefaults(defineProps<{
-  accounts: Account[]
-  plans: Plan[]
-  user: User
-  theme: ResolvedTheme
-  initialPlanId?: string
-  invitePlanId?: string
-}>(), {
+const props = withDefaults(defineProps<PlansViewComponentProps>(), {
   initialPlanId: '',
   invitePlanId: '',
 })
-
-const emit = defineEmits<{
-  changed: []
-  inviteOpened: []
-  message: [type: 'success' | 'error', text: string]
-}>()
+const emit = defineEmits<PlansViewComponentEmits>()
 
 const {
   detail, planLoading, quotaRefreshing, quotaResetCredits, quotaResetCreditsLoading, quotaResetting,
   performanceLoading, performancePeriod, actionLoading, activeTab, auditEvents, auditLoading,
-  availableAccounts, loadPlan, loadAudit, loadPerformance,
+  loadPlan, loadAudit, loadPerformance,
   showCreate, showConnectAccount, showInviteComposer, inviteSecret, showDeleteConfirmOne, showDeleteConfirmTwo,
   deleteNameDraft, renameDraft, descriptionDraft, transferMemberID, rebindAccountID, createForm, inviteForm,
   publication, shareDrafts, accountOptions, planOptions, isOwner, isShared, isArchived, isAccountBound, owner,
-  currentMember, allocatedShare, reservedShares, remainingInviteSharePercent, canCreateInvite, approvedPublicMembers, availablePublicSlots, publicationAvailablePublicSlots,
+  allocatedShare, reservedShares, remainingInviteSharePercent, canCreateInvite, approvedPublicMembers, availablePublicSlots, publicationAvailablePublicSlots,
   publicationReservedShares, maxPublicSeatSharePercent, publicationCapacityExceeded,
   canRename, canUpdateDescription, canSavePublication,
   canConfirmDelete, transferMemberOptions, rebindAccountOptions, actionLabels, metadataLabels,

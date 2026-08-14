@@ -1,7 +1,9 @@
-import { computed, reactive, ref, watch } from 'vue'
-import { APIRequestError, api } from '../api'
+import { computed, watch } from 'vue'
+import { api } from '../api'
 import { allocationShareBasisPoints, formatShareBasisPoints, maxPlanShareBasisPoints, planApprovedPublicMemberCount, planAvailablePublicSlotCount, planPublicationShareBasisPoints, planReservedShareBasisPoints } from '../planAllocation'
-import type { Account, AuditEvent, Member, PerformancePeriod, Plan, PlanAllocationMode, PlanDetail, QuotaResetCredits, User } from '../types'
+import type { Account, Member, PerformancePeriod, Plan, PlanAllocationMode, PlanDetail, User } from '../types'
+import { formatPlanAuditDate, formatPlanAuditMetadata, planAuditActionLabels, planAuditMetadataLabels, planRequestErrorMessage } from './planViewPresentation'
+import { createPlanViewState } from './planViewState'
 
 const automaticQuotaRefreshes = new Map<string, number>()
 const automaticQuotaRefreshTTL = 5 * 60 * 1000
@@ -14,39 +16,13 @@ export interface PlansViewEmit {
 }
 
 export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
-  const detail = ref<PlanDetail | null>(null)
-  const planLoading = ref(false)
-  const quotaRefreshing = ref(false)
-  const quotaResetCredits = ref<QuotaResetCredits | null>(null)
-  const quotaResetCreditsLoading = ref(false)
-  const quotaResetting = ref(false)
-  const performanceLoading = ref(false)
-  const performancePeriod = ref<PerformancePeriod>('24h')
-  const actionLoading = ref('')
-  const activeTab = ref('overview')
-  const auditEvents = ref<AuditEvent[]>([])
-  const auditLoading = ref(false)
-  const showCreate = ref(false)
-  const showConnectAccount = ref(false)
-  const showInviteComposer = ref(false)
-  const inviteSecret = ref('')
-  const showDeleteConfirmOne = ref(false)
-  const showDeleteConfirmTwo = ref(false)
-  const deleteNameDraft = ref('')
-  const renameDraft = ref('')
-  const descriptionDraft = ref('')
-  const transferMemberID = ref<string | null>(null)
-  const rebindAccountID = ref<string | null>(null)
-
-  const createForm = reactive<{ name: string; accountID: string; allocationMode: PlanAllocationMode; share: number }>({
-    name: '',
-    accountID: '',
-    allocationMode: 'fixed',
-    share: 20,
-  })
-  const inviteForm = reactive({ share: 10 })
-  const publication = reactive<{ visibility: 'private' | 'public'; slots: number | null; share: number }>({ visibility: 'private', slots: 1, share: 10 })
-  const shareDrafts = reactive<Record<string, number>>({})
+  const {
+    detail, planLoading, quotaRefreshing, quotaResetCredits, quotaResetCreditsLoading, quotaResetting,
+    performanceLoading, performancePeriod, actionLoading, activeTab, auditEvents, auditLoading,
+    showCreate, showConnectAccount, showInviteComposer, inviteSecret, showDeleteConfirmOne, showDeleteConfirmTwo,
+    deleteNameDraft, renameDraft, descriptionDraft, transferMemberID, rebindAccountID,
+    createForm, inviteForm, publication, shareDrafts,
+  } = createPlanViewState()
 
   const availableAccounts = computed(() => props.accounts.filter(account =>
     account.owner_user_id === props.user.id
@@ -113,49 +89,8 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
       && !props.plans.some(plan => plan.id !== detail.value!.plan.id && plan.account_id === account.id))
     .map(account => ({ label: `${account.email} · ${account.plan_type}`, value: account.id })))
 
-  const actionLabels: Record<string, string> = {
-    'plan.created': '创建了 Plan',
-    'plan.renamed': '更新了 Plan 名称',
-    'plan.description_updated': '更新了 Plan 描述',
-    'plan.publication_updated': '更新了大厅发布设置',
-    'plan.archived': '归档了 Plan',
-    'plan.restored': '恢复了 Plan',
-    'plan.deleted': '删除了 Plan',
-    'plan.owner_transferred': '转让了所有权',
-    'plan.account_rebound': '更换了 OpenAI 账号',
-    'plan.account_bound': '绑定了 OpenAI 账号',
-    'application.created': '提交了加入申请',
-    'application.approved': '批准了加入申请',
-    'application.rejected': '拒绝了加入申请',
-    'invite.created': '创建了邀请链接',
-    'invite.accepted': '接受邀请并加入',
-    'invite.revoked': '撤销了邀请链接',
-    'member.share_updated': '更新了成员份额',
-    'member.removed': '移除了成员',
-    'member.left': '退出了 Plan',
-  }
-
-  const metadataLabels: Record<string, string> = {
-    name: '名称',
-    account_id: '账号 ID',
-    application_id: '申请 ID',
-    invite_id: '邀请 ID',
-    member_id: '成员 ID',
-    email: '邮箱',
-    visibility: '可见性',
-    public_slots: '公开招募名额',
-    public_share_basis_points: '每人份额',
-    share_basis_points: '成员份额',
-  }
-
-  const dateFormatter = new Intl.DateTimeFormat('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  })
+  const actionLabels = planAuditActionLabels
+  const metadataLabels = planAuditMetadataLabels
 
   let planRequestSequence = 0
   let performanceRequestSequence = 0
@@ -722,13 +657,11 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
   }
 
   function formatDate(value: string) {
-    return dateFormatter.format(new Date(value))
+    return formatPlanAuditDate(value)
   }
 
   function formatMetadata(key: string | number, value: string | number) {
-    if (key === 'share_basis_points' || key === 'public_share_basis_points') return formatShareBasisPoints(Number(value))
-    if (key === 'visibility') return value === 'public' ? '公开' : '私密'
-    return String(value)
+    return formatPlanAuditMetadata(key, value)
   }
 
   function notifySuccess(message: string) {
@@ -736,14 +669,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
   }
 
   function notifyError(value: unknown) {
-    const message = value instanceof APIRequestError
-      ? value.code === 'account_already_bound'
-        ? '这个 OpenAI 账号已绑定其他 Plan，请先删除或更换其中一个 Plan'
-        : value.code === 'share_exceeded'
-          ? '分配份额已超过 100%，请刷新 Plan 后减少成员、邀请或公开招募预留额度'
-          : value.message
-      : value instanceof Error ? value.message : String(value)
-    emit('message', 'error', message)
+    emit('message', 'error', planRequestErrorMessage(value))
   }
 
   function notifyErrorWithContext(context: string, value: unknown) {

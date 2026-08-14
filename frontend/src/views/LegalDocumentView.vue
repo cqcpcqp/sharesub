@@ -5,7 +5,7 @@
       <div class="public-nav-actions"><NButton quaternary @click="emit('navigate', 'home')">返回首页</NButton><NButton type="primary" @click="emit('login')">登录</NButton></div>
     </header>
     <main class="legal-layout">
-      <aside><span>LEGAL</span><h1>{{ document.title }}</h1><p>版本：{{ document.version }}</p><nav><a v-for="item in documents" :key="item.page" :class="{ active: item.page === page }" :href="item.path" @click.prevent="emit('navigate', item.page)">{{ item.title }}</a></nav></aside>
+      <aside><span>LEGAL</span><h2>{{ document.title }}</h2><p>版本：{{ document.version }}</p><nav><a v-for="item in documents" :key="item.page" :class="{ active: item.page === page }" :href="item.path" @click.prevent="emit('navigate', item.page)">{{ item.title }}</a></nav></aside>
       <article>
         <header><span>{{ document.englishTitle }}</span><h1>{{ document.title }}</h1><p>生效日期：2026 年 8 月 5 日</p></header>
         <p class="legal-intro">{{ document.intro }}</p>

@@ -1,0 +1,50 @@
+import type {
+  AuditEvent,
+  CreatedInvite,
+  InvitePreview,
+  JoinApplication,
+  Member,
+  PerformancePeriod,
+  Plan,
+  PlanAllocationMode,
+  PlanDetail,
+  PlanPerformance,
+  PlanQuotaResetResult,
+  PlanRequestErrorList,
+  PublicPlan,
+  QuotaRefreshResult,
+  QuotaResetCredits,
+} from '../types'
+import { request } from './client'
+
+function browserTimezone() {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone
+}
+
+export const planAPI = {
+  plans: () => request<Plan[]>('/api/plans'),
+  createPlan: (payload: { account_id: string; name: string; allocation_mode: PlanAllocationMode; owner_share_basis_points: number }) => request<PlanDetail>('/api/plans', { method: 'POST', body: JSON.stringify(payload) }),
+  plan: (id: string) => request<PlanDetail>(`/api/plans/${id}?timezone=${encodeURIComponent(browserTimezone())}`),
+  planPerformance: (id: string, period: PerformancePeriod) => request<PlanPerformance>(`/api/plans/${id}/performance?period=${period}&timezone=${encodeURIComponent(browserTimezone())}`),
+  planRequestErrors: (id: string, period: PerformancePeriod, page: number, pageSize: number, signal?: AbortSignal) => request<PlanRequestErrorList>(`/api/plans/${id}/errors?period=${period}&timezone=${encodeURIComponent(browserTimezone())}&page=${page}&page_size=${pageSize}`, { signal }),
+  renamePlan: (id: string, name: string) => request<Plan>(`/api/plans/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) }),
+  updatePlanDescription: (id: string, description: string) => request<Plan>(`/api/plans/${id}`, { method: 'PATCH', body: JSON.stringify({ description }) }),
+  updatePlanStatus: (id: string, status: 'active' | 'archived') => request<Plan>(`/api/plans/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+  deletePlan: (id: string) => request<{ deleted: boolean }>(`/api/plans/${id}`, { method: 'DELETE' }),
+  transferPlanOwnership: (id: string, memberID: string) => request<Plan>(`/api/plans/${id}/owner`, { method: 'PATCH', body: JSON.stringify({ member_id: memberID }) }),
+  rebindPlanAccount: (id: string, accountID: string) => request<Plan>(`/api/plans/${id}/account`, { method: 'PATCH', body: JSON.stringify({ account_id: accountID }) }),
+  planAuditEvents: (id: string) => request<AuditEvent[]>(`/api/plans/${id}/audit-events`),
+  refreshPlanQuota: (id: string, automatic = false) => request<QuotaRefreshResult>(`/api/plans/${id}/quota/refresh${automatic ? '?automatic=true' : ''}`, { method: 'POST' }),
+  planQuotaResetCredits: (id: string) => request<QuotaResetCredits>(`/api/plans/${id}/quota/reset-credits`),
+  resetPlanQuota: (id: string) => request<PlanQuotaResetResult>(`/api/plans/${id}/quota/reset`, { method: 'POST' }),
+  publicPlans: () => request<PublicPlan[]>('/api/public-plans'),
+  updatePublication: (id: string, payload: { visibility: string; public_slots: number; public_share_basis_points: number }) => request<Plan>(`/api/plans/${id}/publication`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  applyToPlan: (id: string, message: string) => request<JoinApplication>(`/api/public-plans/${id}/applications`, { method: 'POST', body: JSON.stringify({ message }) }),
+  reviewApplication: (id: string, decision: 'approve' | 'reject') => request<JoinApplication>(`/api/join-applications/${id}`, { method: 'PATCH', body: JSON.stringify({ decision }) }),
+  invite: (id: string, share_basis_points: number) => request<CreatedInvite>(`/api/plans/${id}/invites`, { method: 'POST', body: JSON.stringify({ share_basis_points }) }),
+  invitePreview: (token: string) => request<InvitePreview>('/api/invites/preview', { method: 'POST', body: JSON.stringify({ token }) }),
+  acceptInvite: (token: string) => request<Member>('/api/invites/accept', { method: 'POST', body: JSON.stringify({ token }) }),
+  revokeInvite: (planID: string, inviteID: string) => request<CreatedInvite['invite']>(`/api/plans/${planID}/invites/${inviteID}`, { method: 'DELETE' }),
+  updateMember: (planID: string, memberID: string, share_basis_points: number) => request<Member>(`/api/plans/${planID}/members/${memberID}`, { method: 'PATCH', body: JSON.stringify({ share_basis_points }) }),
+  removeMember: (planID: string, memberID: string) => request<{ removed: boolean }>(`/api/plans/${planID}/members/${memberID}`, { method: 'DELETE' }),
+}

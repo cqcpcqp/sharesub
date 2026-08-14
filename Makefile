@@ -1,6 +1,6 @@
 DEV_SCRIPT := ./scripts/dev.sh
 
-.PHONY: help init check dev status logs stop down restart test
+.PHONY: help init check dev status logs stop down restart quality quality-structure test
 
 help:
 	@$(DEV_SCRIPT) help
@@ -28,6 +28,12 @@ down:
 
 restart:
 	@$(DEV_SCRIPT) restart
+
+quality-structure:
+	@./scripts/check-quality-structure.sh
+
+quality: quality-structure
+	@./scripts/quality.sh
 
 test:
 	@./scripts/verify-version.sh >/dev/null

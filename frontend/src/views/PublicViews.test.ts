@@ -25,5 +25,7 @@ describe('public pages', () => {
     const wrapper = mount(LegalDocumentView, { props: { page } })
     expect(wrapper.text()).toContain(title)
     expect(wrapper.text()).toContain('2026-08-05')
+    expect(wrapper.findAll('h1')).toHaveLength(1)
+    expect(wrapper.find('aside h2').text()).toBe(title)
   })
 })

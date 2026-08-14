@@ -95,8 +95,11 @@ make logs     # 持续查看后端和前端日志
 make stop     # 停止后端和前端，保留 PostgreSQL
 make down     # 停止全部服务，保留数据库数据卷
 make restart  # 重启全部本地开发服务
+make quality  # 执行规模、格式、静态分析、测试、类型和构建门禁
 make test     # 执行后端测试、静态检查和前端构建检查
 ```
+
+代码规模、模块边界、数据治理和重构要求见 [`CONTRIBUTING.md`](CONTRIBUTING.md) 与 [`docs/data-governance.md`](docs/data-governance.md)。
 
 ### 前置要求
 
@@ -438,6 +441,12 @@ docker compose --env-file .env -f deploy/docker-compose.yml start api
 
 ## 验证
 
+完整本地门禁：
+
+```bash
+make quality
+```
+
 后端：
 
 ```bash
@@ -451,8 +460,11 @@ go vet ./...
 ```bash
 cd frontend
 pnpm install --frozen-lockfile
+pnpm lint
+pnpm test:run
 pnpm typecheck
 pnpm build
+pnpm bundle:check
 ```
 
 Docker 配置：
