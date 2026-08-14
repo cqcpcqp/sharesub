@@ -414,7 +414,7 @@ func (s *ResponsesWebSocketSession) relayTurn(
 				if result.RequestID == "" && responseID != "" {
 					result.RequestID = responseID
 				}
-				if firstTokenAt.IsZero() && isResponsesWebSocketTokenEvent(eventType) {
+				if firstTokenAt.IsZero() && isResponsesWebSocketTokenEvent(read.frame, eventType) {
 					firstTokenAt = time.Now()
 				}
 				if parsedTerminal != nil {

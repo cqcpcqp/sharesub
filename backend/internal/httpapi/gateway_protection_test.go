@@ -44,6 +44,18 @@ func TestGatewayProtectionModelCooldown(t *testing.T) {
 	}
 }
 
+func TestShouldBlockPlanGatedModelRespectsImagesEndpoint(t *testing.T) {
+	if shouldBlockPlanGatedModel(false, "gpt-image-2") {
+		t.Fatal("Responses endpoint mismatch cooled down an image model")
+	}
+	if !shouldBlockPlanGatedModel(true, "gpt-image-2") {
+		t.Fatal("Images endpoint capability rejection did not cool down the model")
+	}
+	if !shouldBlockPlanGatedModel(false, "gpt-5.6-sol") {
+		t.Fatal("text model capability rejection did not cool down the model")
+	}
+}
+
 func TestGatewayTokenRefreshContextUsesDedicatedTimeout(t *testing.T) {
 	ctx, cancel := gatewayTokenRefreshContext(context.Background())
 	defer cancel()

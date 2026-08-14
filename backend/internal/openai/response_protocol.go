@@ -312,6 +312,85 @@ func isClientOutputEvent(line []byte) bool {
 	}
 }
 
+func isClientVisibleOutputEvent(line []byte) bool {
+	payload, ok := ssePayload(line)
+	if !ok {
+		return false
+	}
+	eventType, ok := responseEventType(line)
+	return ok && responseEventStartsVisibleOutput(payload, eventType)
+}
+
+// responseEventStartsVisibleOutput distinguishes protocol progress from content
+// that a client can actually consume. Structural events may safely commit an
+// attempt, but must not start TTFT until they carry text, tool arguments, audio,
+// or image data.
+func responseEventStartsVisibleOutput(payload []byte, eventType string) bool {
+	var event map[string]any
+	if len(payload) == 0 || json.Unmarshal(payload, &event) != nil {
+		return false
+	}
+	stringField := func(object map[string]any, key string) bool {
+		value, ok := object[key].(string)
+		return ok && value != ""
+	}
+	visiblePart := func(value any) bool {
+		part, ok := value.(map[string]any)
+		return ok && (stringField(part, "text") || stringField(part, "transcript") || stringField(part, "refusal"))
+	}
+	var visibleItem func(any) bool
+	visibleItem = func(value any) bool {
+		item, ok := value.(map[string]any)
+		if !ok {
+			return false
+		}
+		if stringField(item, "arguments") || stringField(item, "input") || stringField(item, "result") {
+			return true
+		}
+		for _, key := range []string{"content", "summary"} {
+			parts, _ := item[key].([]any)
+			for _, part := range parts {
+				if visiblePart(part) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+
+	eventType = strings.TrimSpace(eventType)
+	if strings.HasSuffix(eventType, ".delta") {
+		return stringField(event, "delta")
+	}
+	switch eventType {
+	case "response.output_text.done", "response.reasoning_summary_text.done", "response.reasoning_text.done":
+		return stringField(event, "text")
+	case "response.audio_transcript.done":
+		return stringField(event, "transcript")
+	case "response.refusal.done":
+		return stringField(event, "refusal")
+	case "response.function_call_arguments.done":
+		return stringField(event, "arguments")
+	case "response.custom_tool_call_input.done":
+		return stringField(event, "input")
+	case "response.image_generation_call.partial_image":
+		return stringField(event, "partial_image_b64")
+	case "response.content_part.added", "response.content_part.done", "response.reasoning_summary_part.added", "response.reasoning_summary_part.done":
+		return visiblePart(event["part"])
+	case "response.output_item.added", "response.output_item.done":
+		return visibleItem(event["item"])
+	case "response.completed", "response.done":
+		response, _ := event["response"].(map[string]any)
+		items, _ := response["output"].([]any)
+		for _, item := range items {
+			if visibleItem(item) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func responseEventType(line []byte) (string, bool) {
 	payload, ok := ssePayload(line)
 	if !ok {

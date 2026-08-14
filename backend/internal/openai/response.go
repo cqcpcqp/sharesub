@@ -99,7 +99,7 @@ func DrainResponse(src *http.Response, startedAt time.Time) (ProxyMetrics, []byt
 				if firstByteAt.IsZero() {
 					firstByteAt = now
 				}
-				if firstTokenAt.IsZero() && isClientOutputEvent(line) {
+				if firstTokenAt.IsZero() && isClientVisibleOutputEvent(line) {
 					firstTokenAt = now
 				}
 				if parsed, ok := parseResponseUsage(line); ok {
@@ -202,7 +202,7 @@ func copySSEWithPendingLimitAndTimeout(dst http.ResponseWriter, src *http.Respon
 				firstByteAt = now
 			}
 			startsOutput := isClientOutputEvent(line)
-			if firstTokenAt.IsZero() && startsOutput {
+			if firstTokenAt.IsZero() && isClientVisibleOutputEvent(line) {
 				firstTokenAt = now
 			}
 			if parsed, ok := parseResponseUsage(line); ok {
@@ -319,8 +319,10 @@ func copySSEAsJSON(dst http.ResponseWriter, src *http.Response, startedAt time.T
 			if firstByteAt.IsZero() {
 				firstByteAt = now
 			}
-			if firstTokenAt.IsZero() && isClientOutputEvent(line) {
+			if firstTokenAt.IsZero() && isClientVisibleOutputEvent(line) {
 				firstTokenAt = now
+			}
+			if isClientOutputEvent(line) {
 				outputSeen = true
 			}
 			payload, ok := ssePayload(line)

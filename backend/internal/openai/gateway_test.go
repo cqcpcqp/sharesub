@@ -315,6 +315,44 @@ func TestPrepareRequestPreservesNativeResponsesToolsAndContinuation(t *testing.T
 	}
 }
 
+func TestPrepareRequestNormalizesNullToolParameterTypes(t *testing.T) {
+	body, _, err := PrepareRequest([]byte(`{
+		"model":"gpt-5.4",
+		"tools":[
+			{"type":"function","name":"native","parameters":{"type":null,"properties":{}}},
+			{"type":"function","function":{"name":"legacy","parameters":{"type":null}}},
+			{"type":"function","name":"missing","parameters":{"properties":{}}}
+		],
+		"input":[{"type":"additional_tools","tools":[{"type":"namespace","tools":[
+			{"type":"function","name":"nested","parameters":{"type":null}}
+		]}]}]
+	}`), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	tools := payload["tools"].([]any)
+	if tools[0].(map[string]any)["parameters"].(map[string]any)["type"] != "object" {
+		t.Fatalf("native parameters = %#v", tools[0])
+	}
+	legacy := tools[1].(map[string]any)["function"].(map[string]any)["parameters"].(map[string]any)
+	if legacy["type"] != "object" {
+		t.Fatalf("legacy parameters = %#v", legacy)
+	}
+	missing := tools[2].(map[string]any)["parameters"].(map[string]any)
+	if _, exists := missing["type"]; exists {
+		t.Fatalf("missing schema type was invented: %#v", missing)
+	}
+	input := payload["input"].([]any)
+	namespaceTools := input[0].(map[string]any)["tools"].([]any)[0].(map[string]any)["tools"].([]any)
+	if namespaceTools[0].(map[string]any)["parameters"].(map[string]any)["type"] != "object" {
+		t.Fatalf("nested parameters = %#v", namespaceTools[0])
+	}
+}
+
 func TestPrepareRequestValidatesExplicitCodexInstructions(t *testing.T) {
 	for _, body := range []string{
 		`{"model":"gpt-5.4-codex","instructions":"  ","input":[]}`,
@@ -717,6 +755,35 @@ func TestIsClientOutputEventUsesSemanticOutputBoundary(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			if got := isClientOutputEvent([]byte(test.line)); got != test.want {
 				t.Fatalf("isClientOutputEvent() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestIsClientVisibleOutputEventRequiresContent(t *testing.T) {
+	tests := []struct {
+		name string
+		line string
+		want bool
+	}{
+		{name: "text delta", line: `data: {"type":"response.output_text.delta","delta":"hi"}`, want: true},
+		{name: "empty delta", line: `data: {"type":"response.output_text.delta","delta":""}`},
+		{name: "structural item", line: `data: {"type":"response.output_item.added","item":{"type":"message"}}`},
+		{name: "item content", line: `data: {"type":"response.output_item.done","item":{"content":[{"text":"hi"}]}}`, want: true},
+		{name: "text done", line: `data: {"type":"response.output_text.done","text":"hi"}`, want: true},
+		{name: "audio transcript done", line: `data: {"type":"response.audio_transcript.done","transcript":"hello"}`, want: true},
+		{name: "refusal done", line: `data: {"type":"response.refusal.done","refusal":"blocked"}`, want: true},
+		{name: "refusal content part", line: `data: {"type":"response.content_part.done","part":{"type":"refusal","refusal":"blocked"}}`, want: true},
+		{name: "function done", line: `data: {"type":"response.function_call_arguments.done","arguments":"{}"}`, want: true},
+		{name: "completed without output", line: `data: {"type":"response.completed","response":{"output":[]}}`},
+		{name: "completed with output", line: `data: {"type":"response.completed","response":{"output":[{"arguments":"{}"}]}}`, want: true},
+		{name: "completed with refusal", line: `data: {"type":"response.completed","response":{"output":[{"type":"message","content":[{"type":"refusal","refusal":"blocked"}]}]}}`, want: true},
+		{name: "policy error", line: `data: {"type":"error","error":{"message":"blocked"}}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := isClientVisibleOutputEvent([]byte(test.line)); got != test.want {
+				t.Fatalf("isClientVisibleOutputEvent() = %v, want %v", got, test.want)
 			}
 		})
 	}
@@ -1144,7 +1211,7 @@ func TestCopyResponseParsesImageAndWebSearchUsage(t *testing.T) {
 }
 
 func TestCopyResponsePreservesSSEBodyAndContentType(t *testing.T) {
-	body := "data: {\"type\":\"response.output_text.delta\"}\n\n" +
+	body := "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n" +
 		"data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":3,\"output_tokens\":5,\"input_tokens_details\":{\"cached_tokens\":1,\"cache_write_tokens\":2}}}}\n\n"
 	source := &http.Response{
 		StatusCode: http.StatusOK,

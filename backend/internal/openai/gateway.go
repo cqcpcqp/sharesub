@@ -167,6 +167,7 @@ func prepareRequest(body []byte, compact, normalize bool) ([]byte, RequestBillin
 		delete(payload, field)
 	}
 	normalizeCodexInput(payload)
+	normalizeCodexToolParameterTypes(payload)
 	if compact {
 		compactPayload := make(map[string]any, len(compactRequestFields))
 		for _, field := range compactRequestFields {
@@ -206,6 +207,53 @@ func normalizeCodexInput(payload map[string]any) {
 	case map[string]any:
 		payload["input"] = []any{value}
 	}
+}
+
+const maxCodexNestedToolDepth = 4
+
+// normalizeCodexToolParameterTypes repairs the explicit null schema emitted by
+// affected Codex clients. A missing type remains untouched because it is valid
+// JSON Schema and adding one would narrow the caller's contract.
+func normalizeCodexToolParameterTypes(payload map[string]any) {
+	var normalizeTools func(any, int)
+	normalizeTools = func(value any, depth int) {
+		if depth > maxCodexNestedToolDepth {
+			return
+		}
+		tools, ok := value.([]any)
+		if !ok {
+			return
+		}
+		for _, value := range tools {
+			tool, ok := value.(map[string]any)
+			if !ok {
+				continue
+			}
+			for _, container := range []map[string]any{tool, objectField(tool, "function")} {
+				parameters := objectField(container, "parameters")
+				if parameterType, exists := parameters["type"]; exists && parameterType == nil {
+					parameters["type"] = "object"
+				}
+			}
+			normalizeTools(tool["tools"], depth+1)
+		}
+	}
+	normalizeTools(payload["tools"], 0)
+	if input, ok := payload["input"].([]any); ok {
+		for _, value := range input {
+			if item, ok := value.(map[string]any); ok {
+				normalizeTools(item["tools"], 0)
+			}
+		}
+	}
+}
+
+func objectField(object map[string]any, key string) map[string]any {
+	if object == nil {
+		return nil
+	}
+	value, _ := object[key].(map[string]any)
+	return value
 }
 
 func ensureCodexReasoningInclude(payload map[string]any) {

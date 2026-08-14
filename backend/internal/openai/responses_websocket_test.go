@@ -934,6 +934,32 @@ func TestResponsesWebSocketTerminalWithoutOutputDoesNotSetTTFT(t *testing.T) {
 	}
 }
 
+func TestResponsesWebSocketVisibleOutputEvents(t *testing.T) {
+	tests := []struct {
+		frame string
+		want  bool
+	}{
+		{frame: `{"type":"response.output_item.added","item":{"type":"message"}}`},
+		{frame: `{"type":"response.output_text.delta","delta":"hello"}`, want: true},
+		{frame: `{"type":"response.output_text.done","text":"hello"}`, want: true},
+		{frame: `{"type":"response.audio_transcript.done","transcript":"hello"}`, want: true},
+		{frame: `{"type":"response.refusal.done","refusal":"blocked"}`, want: true},
+		{frame: `{"type":"response.function_call_arguments.done","arguments":"{}"}`, want: true},
+		{frame: `{"type":"response.completed","response":{"output":[]}}`},
+	}
+	for _, test := range tests {
+		var event struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal([]byte(test.frame), &event); err != nil {
+			t.Fatal(err)
+		}
+		if got := isResponsesWebSocketTokenEvent([]byte(test.frame), event.Type); got != test.want {
+			t.Fatalf("frame %s visible=%v, want %v", test.frame, got, test.want)
+		}
+	}
+}
+
 func TestResponsesWebSocketSessionRejectsOverlappingResponseCreate(t *testing.T) {
 	upstream := newResponsesWebSocketTestConn()
 	client := newResponsesWebSocketTestConn()

@@ -259,19 +259,8 @@ func normalizeResponsesWebSocketTerminalEvent(eventType string) string {
 	return eventType
 }
 
-func isResponsesWebSocketTokenEvent(eventType string) bool {
-	eventType = strings.TrimSpace(eventType)
-	if eventType == "" || isTerminalResponseEvent(eventType) {
-		return false
-	}
-	switch eventType {
-	case "response.created", "response.in_progress", "response.output_item.added", "response.output_item.done":
-		return false
-	}
-	if strings.Contains(eventType, ".delta") {
-		return true
-	}
-	return strings.HasPrefix(eventType, "response.output") && !strings.HasSuffix(eventType, ".done")
+func isResponsesWebSocketTokenEvent(frame []byte, eventType string) bool {
+	return responseEventStartsVisibleOutput(frame, eventType)
 }
 
 func PrepareResponsesWebSocketFingerprint(config *ResponsesWebSocketDialConfig, frame []byte, promptCacheKey string) ([]byte, error) {

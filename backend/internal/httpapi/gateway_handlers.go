@@ -192,7 +192,7 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 				s.logger.Warn("drain rejected upstream response", "request_id", requestID, "error", drainErr)
 			}
 			planGated := openai.IsCodexPlanGatedModelError(upstream.StatusCode, rejectedBody)
-			if planGated {
+			if planGated && shouldBlockPlanGatedModel(false, policyMetadata.Model) {
 				s.protections.blockModel(access.Credential.Account.ID, policyMetadata.Model)
 			}
 			if upstream.StatusCode == http.StatusBadRequest && !planGated {
@@ -368,7 +368,7 @@ func (s *Server) images(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			planGated := openai.IsCodexPlanGatedModelError(upstream.StatusCode, rejectedBody)
-			if planGated {
+			if planGated && shouldBlockPlanGatedModel(true, imageRequest.Model) {
 				s.protections.blockModel(access.Credential.Account.ID, imageRequest.Model)
 			}
 			if upstream.StatusCode == http.StatusBadRequest && !planGated {
@@ -440,6 +440,13 @@ func (s *Server) images(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+}
+
+func shouldBlockPlanGatedModel(imagesEndpoint bool, model string) bool {
+	if imagesEndpoint {
+		return true
+	}
+	return !strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "gpt-image-")
 }
 
 func shouldSwitchUpstreamAccount(status int) bool {
