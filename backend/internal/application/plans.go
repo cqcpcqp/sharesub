@@ -84,7 +84,7 @@ func (s *Service) PlanDetail(ctx context.Context, userID, planID, timezone strin
 	return detail, nil
 }
 
-func (s *Service) planPerformanceWindow(period, timezone string) (time.Time, time.Time, time.Duration, error) {
+func (s *Service) planPerformanceWindow(period, timezone string) (time.Time, time.Time, time.Duration, time.Time, error) {
 	type periodConfig struct {
 		duration   time.Duration
 		bucketSize time.Duration
@@ -95,17 +95,18 @@ func (s *Service) planPerformanceWindow(period, timezone string) (time.Time, tim
 		"12h": {duration: 12 * time.Hour, bucketSize: 30 * time.Minute},
 		"24h": {duration: 24 * time.Hour, bucketSize: time.Hour},
 	}
+	if timezone == "" {
+		timezone = "UTC"
+	}
+	location, err := time.LoadLocation(timezone)
+	if err != nil {
+		return time.Time{}, time.Time{}, 0, time.Time{}, domain.ErrInvalidInput
+	}
 	now := s.now()
+	localNow := now.In(location)
+	bucketOrigin := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, location)
 	if period == "today" {
-		if timezone == "" {
-			timezone = "UTC"
-		}
-		location, err := time.LoadLocation(timezone)
-		if err != nil {
-			return time.Time{}, time.Time{}, 0, domain.ErrInvalidInput
-		}
-		localNow := now.In(location)
-		windowStart := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, location)
+		windowStart := bucketOrigin
 		duration := now.Sub(windowStart)
 		bucketSize := time.Hour
 		switch {
@@ -116,21 +117,21 @@ func (s *Service) planPerformanceWindow(period, timezone string) (time.Time, tim
 		case duration <= 12*time.Hour:
 			bucketSize = 30 * time.Minute
 		}
-		return windowStart, now, bucketSize, nil
+		return windowStart, now, bucketSize, bucketOrigin, nil
 	}
 	config, ok := periods[period]
 	if !ok {
-		return time.Time{}, time.Time{}, 0, domain.ErrInvalidInput
+		return time.Time{}, time.Time{}, 0, time.Time{}, domain.ErrInvalidInput
 	}
-	return now.Add(-config.duration), now, config.bucketSize, nil
+	return now.Add(-config.duration), now, config.bucketSize, bucketOrigin, nil
 }
 
 func (s *Service) PlanPerformance(ctx context.Context, userID, planID, period, timezone string) (domain.PlanPerformance, error) {
-	windowStart, windowEnd, bucketSize, err := s.planPerformanceWindow(period, timezone)
+	windowStart, windowEnd, bucketSize, bucketOrigin, err := s.planPerformanceWindow(period, timezone)
 	if err != nil {
 		return domain.PlanPerformance{}, err
 	}
-	return s.store.PlanPerformance(ctx, planID, userID, windowStart, windowEnd, bucketSize)
+	return s.store.PlanPerformance(ctx, planID, userID, windowStart, windowEnd, bucketSize, bucketOrigin)
 }
 
 func (s *Service) PlanRequestErrors(ctx context.Context, userID, planID, period, timezone string, page, pageSize int) (domain.PlanRequestErrorList, error) {
@@ -141,7 +142,7 @@ func (s *Service) PlanRequestErrors(ctx context.Context, userID, planID, period,
 	if page-1 > maxInt/pageSize {
 		return domain.PlanRequestErrorList{}, domain.ErrInvalidInput
 	}
-	windowStart, windowEnd, _, err := s.planPerformanceWindow(period, timezone)
+	windowStart, windowEnd, _, _, err := s.planPerformanceWindow(period, timezone)
 	if err != nil {
 		return domain.PlanRequestErrorList{}, err
 	}

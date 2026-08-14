@@ -309,7 +309,7 @@ func (s *Store) planInsights(ctx context.Context, planID, userID, accountID stri
 		}
 	}
 
-	performance, err := s.PlanPerformance(ctx, planID, userID, now.Add(-24*time.Hour), now, time.Hour)
+	performance, err := s.PlanPerformance(ctx, planID, userID, now.Add(-24*time.Hour), now, time.Hour, todayStart)
 	if err != nil {
 		return out, err
 	}
@@ -346,12 +346,16 @@ func (s *Store) planModelUsage(ctx context.Context, planID string, windowStart, 
 	return out, rows.Err()
 }
 
-func (s *Store) planTokenTrend(ctx context.Context, planID string, trendStart, now time.Time, bucketSize time.Duration) ([]domain.DashboardTrendPoint, error) {
+func (s *Store) planTokenTrend(ctx context.Context, planID string, trendStart, now time.Time, bucketSize time.Duration, bucketOrigin time.Time) ([]domain.DashboardTrendPoint, error) {
 	rows, err := s.pool.Query(ctx, `
 		WITH buckets AS (
-			SELECT generate_series($2::timestamptz,$3::timestamptz - INTERVAL '1 microsecond',$4::interval) AS bucket_start
+			SELECT generate_series(
+				date_bin($4::interval,$2::timestamptz,$5::timestamptz),
+				date_bin($4::interval,$3::timestamptz - INTERVAL '1 microsecond',$5::timestamptz),
+				$4::interval
+			) AS bucket_start
 		), usage AS (
-			SELECT date_bin($4::interval,created_at,$2::timestamptz) AS bucket_start,
+			SELECT date_bin($4::interval,created_at,$5::timestamptz) AS bucket_start,
 				sum(input_tokens) AS input_tokens,sum(output_tokens) AS output_tokens,sum(cached_tokens) AS cached_tokens,
 				sum(cache_creation_tokens) AS cache_creation_tokens,sum(image_input_tokens) AS image_input_tokens,
 				sum(image_output_tokens) AS image_output_tokens,sum(image_count) AS image_count,sum(web_search_calls) AS web_search_calls
@@ -363,7 +367,7 @@ func (s *Store) planTokenTrend(ctx context.Context, planID string, trendStart, n
 			COALESCE(u.cache_creation_tokens,0),COALESCE(u.image_input_tokens,0),COALESCE(u.image_output_tokens,0),
 			COALESCE(u.image_count,0),COALESCE(u.web_search_calls,0)
 		FROM buckets b LEFT JOIN usage u ON u.bucket_start=b.bucket_start
-		ORDER BY b.bucket_start`, planID, trendStart, now, bucketSize.String())
+		ORDER BY b.bucket_start`, planID, trendStart, now, bucketSize.String(), bucketOrigin)
 	if err != nil {
 		return nil, err
 	}
@@ -380,7 +384,7 @@ func (s *Store) planTokenTrend(ctx context.Context, planID string, trendStart, n
 	return out, rows.Err()
 }
 
-func (s *Store) planRecentUsage(ctx context.Context, planID string, trendStart, now time.Time, bucketSize time.Duration) ([]domain.MemberUsageTrend, error) {
+func (s *Store) planRecentUsage(ctx context.Context, planID string, trendStart, now time.Time, bucketSize time.Duration, bucketOrigin time.Time) ([]domain.MemberUsageTrend, error) {
 	rows, err := s.pool.Query(ctx, `
 		WITH top_members AS (
 			SELECT g.member_id,u.username,sum(g.input_tokens+g.output_tokens) AS total_tokens
@@ -392,9 +396,13 @@ func (s *Store) planRecentUsage(ctx context.Context, planID string, trendStart, 
 			ORDER BY total_tokens DESC,g.member_id
 			LIMIT 12
 		), buckets AS (
-			SELECT generate_series($2::timestamptz,$3::timestamptz - INTERVAL '1 microsecond',$4::interval) AS bucket_start
+			SELECT generate_series(
+				date_bin($4::interval,$2::timestamptz,$5::timestamptz),
+				date_bin($4::interval,$3::timestamptz - INTERVAL '1 microsecond',$5::timestamptz),
+				$4::interval
+			) AS bucket_start
 		), usage AS (
-			SELECT g.member_id,date_bin($4::interval,g.created_at,$2::timestamptz) AS bucket_start,
+			SELECT g.member_id,date_bin($4::interval,g.created_at,$5::timestamptz) AS bucket_start,
 				sum(g.input_tokens) AS input_tokens,sum(g.output_tokens) AS output_tokens,sum(g.cached_tokens) AS cached_tokens,
 				sum(g.cache_creation_tokens) AS cache_creation_tokens,sum(g.image_input_tokens) AS image_input_tokens,
 				sum(g.image_output_tokens) AS image_output_tokens,sum(g.image_count) AS image_count,sum(g.web_search_calls) AS web_search_calls
@@ -408,7 +416,7 @@ func (s *Store) planRecentUsage(ctx context.Context, planID string, trendStart, 
 			COALESCE(u.image_count,0),COALESCE(u.web_search_calls,0)
 		FROM top_members top CROSS JOIN buckets b
 		LEFT JOIN usage u ON u.member_id=top.member_id AND u.bucket_start=b.bucket_start
-		ORDER BY top.total_tokens DESC,top.member_id,b.bucket_start`, planID, trendStart, now, bucketSize.String())
+		ORDER BY top.total_tokens DESC,top.member_id,b.bucket_start`, planID, trendStart, now, bucketSize.String(), bucketOrigin)
 	if err != nil {
 		return nil, err
 	}
@@ -433,7 +441,7 @@ func (s *Store) planRecentUsage(ctx context.Context, planID string, trendStart, 
 	return out, rows.Err()
 }
 
-func (s *Store) PlanPerformance(ctx context.Context, planID, userID string, windowStart, windowEnd time.Time, bucketSize time.Duration) (domain.PlanPerformance, error) {
+func (s *Store) PlanPerformance(ctx context.Context, planID, userID string, windowStart, windowEnd time.Time, bucketSize time.Duration, bucketOrigin time.Time) (domain.PlanPerformance, error) {
 	out := domain.PlanPerformance{
 		ModelUsage:  make([]domain.ModelUsage, 0),
 		TokenTrend:  make([]domain.DashboardTrendPoint, 0),
@@ -462,11 +470,11 @@ func (s *Store) PlanPerformance(ctx context.Context, planID, userID string, wind
 	if err != nil {
 		return domain.PlanPerformance{}, err
 	}
-	out.TokenTrend, err = s.planTokenTrend(ctx, planID, windowStart, windowEnd, bucketSize)
+	out.TokenTrend, err = s.planTokenTrend(ctx, planID, windowStart, windowEnd, bucketSize, bucketOrigin)
 	if err != nil {
 		return domain.PlanPerformance{}, err
 	}
-	out.RecentUsage, err = s.planRecentUsage(ctx, planID, windowStart, windowEnd, bucketSize)
+	out.RecentUsage, err = s.planRecentUsage(ctx, planID, windowStart, windowEnd, bucketSize, bucketOrigin)
 	if err != nil {
 		return domain.PlanPerformance{}, err
 	}

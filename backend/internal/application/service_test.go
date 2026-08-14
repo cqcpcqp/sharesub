@@ -80,6 +80,7 @@ type planAccountStore struct {
 	performanceStartedAt time.Time
 	performanceEndedAt   time.Time
 	performanceBucket    time.Duration
+	performanceOrigin    time.Time
 	requestErrors        domain.PlanRequestErrorList
 	errorPlanID          string
 	errorUserID          string
@@ -101,12 +102,13 @@ func (s *planMetadataStore) UpdatePlanDescription(_ context.Context, _, _ string
 	return domain.Plan{ID: "plan-id", Description: description}, nil
 }
 
-func (s *planAccountStore) PlanPerformance(_ context.Context, planID, userID string, startedAt, endedAt time.Time, bucketSize time.Duration) (domain.PlanPerformance, error) {
+func (s *planAccountStore) PlanPerformance(_ context.Context, planID, userID string, startedAt, endedAt time.Time, bucketSize time.Duration, bucketOrigin time.Time) (domain.PlanPerformance, error) {
 	s.performancePlanID = planID
 	s.performanceUserID = userID
 	s.performanceStartedAt = startedAt
 	s.performanceEndedAt = endedAt
 	s.performanceBucket = bucketSize
+	s.performanceOrigin = bucketOrigin
 	return s.performance, nil
 }
 
@@ -407,7 +409,8 @@ func TestPlanPerformanceUsesRequestedFixedPeriod(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if performance.RequestCount != 12 || len(performance.ModelUsage) != 1 || store.performancePlanID != "plan" || store.performanceUserID != "member" || !store.performanceStartedAt.Equal(now.Add(-config.duration)) || !store.performanceEndedAt.Equal(now) || store.performanceBucket != config.bucket {
+			wantOrigin := time.Date(2026, 8, 4, 0, 0, 0, 0, time.FixedZone("CST", 8*60*60))
+			if performance.RequestCount != 12 || len(performance.ModelUsage) != 1 || store.performancePlanID != "plan" || store.performanceUserID != "member" || !store.performanceStartedAt.Equal(now.Add(-config.duration)) || !store.performanceEndedAt.Equal(now) || store.performanceBucket != config.bucket || !store.performanceOrigin.Equal(wantOrigin) {
 				t.Fatalf("performance = %+v, plan = %q, user = %q, start = %s", performance, store.performancePlanID, store.performanceUserID, store.performanceStartedAt)
 			}
 		})

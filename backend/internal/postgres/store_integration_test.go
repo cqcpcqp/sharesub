@@ -762,10 +762,15 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if len(usageDetail.Insights.ModelUsage) != 2 || usageDetail.Insights.ModelUsage[0].Model != "gpt-5.6-terra" || usageDetail.Insights.ModelUsage[1].EstimatedCostMicros != 125 {
 		t.Fatalf("plan model usage = %+v", usageDetail.Insights.ModelUsage)
 	}
-	if len(usageDetail.Insights.TokenTrend) != 24 || usageDetail.Insights.TokenTrend[23].InputTokens != 10200 || usageDetail.Insights.TokenTrend[23].OutputTokens != 1300 {
+	if len(usageDetail.Insights.TokenTrend) != 25 || usageDetail.Insights.TokenTrend[24].InputTokens != 10200 || usageDetail.Insights.TokenTrend[24].OutputTokens != 1300 {
 		t.Fatalf("plan token trend = %+v", usageDetail.Insights.TokenTrend)
 	}
-	if len(usageDetail.Insights.RecentUsage) != 2 || usageDetail.Insights.RecentUsage[0].MemberID != "owner-member" || len(usageDetail.Insights.RecentUsage[0].Trend) != 24 {
+	for _, point := range usageDetail.Insights.TokenTrend {
+		if point.BucketStart.Minute() != 0 || point.BucketStart.Second() != 0 || point.BucketStart.Nanosecond() != 0 {
+			t.Fatalf("plan token trend bucket is not aligned to the hour: %s", point.BucketStart)
+		}
+	}
+	if len(usageDetail.Insights.RecentUsage) != 2 || usageDetail.Insights.RecentUsage[0].MemberID != "owner-member" || len(usageDetail.Insights.RecentUsage[0].Trend) != 25 {
 		t.Fatalf("plan recent usage = %+v", usageDetail.Insights.RecentUsage)
 	}
 	adminOverview, err := store.AdminOverview(ctx, now.Add(-24*time.Hour))

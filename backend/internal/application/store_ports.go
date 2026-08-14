@@ -57,7 +57,7 @@ type PlanQueryStore interface {
 	ListPlans(context.Context, string) ([]domain.Plan, error)
 	PlanBinding(context.Context, string, string) (domain.Plan, error)
 	PlanDetail(context.Context, string, string, time.Time, time.Time) (domain.PlanDetail, error)
-	PlanPerformance(context.Context, string, string, time.Time, time.Time, time.Duration) (domain.PlanPerformance, error)
+	PlanPerformance(context.Context, string, string, time.Time, time.Time, time.Duration, time.Time) (domain.PlanPerformance, error)
 	PlanRequestErrors(context.Context, string, string, time.Time, time.Time, int, int) (domain.PlanRequestErrorList, error)
 	ListPublicPlans(context.Context, string) ([]domain.PublicPlan, error)
 	ListPlanAuditEvents(context.Context, string, string) ([]domain.AuditEvent, error)
