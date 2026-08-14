@@ -195,7 +195,7 @@ func (s *Service) ReviewJoinApplication(ctx context.Context, ownerID, applicatio
 	if err != nil {
 		return domain.JoinApplication{}, err
 	}
-	return s.store.ReviewJoinApplication(ctx, ownerID, applicationID, approve, memberID, s.now(), event)
+	return s.store.ReviewJoinApplication(ctx, ownerID, "", applicationID, approve, memberID, s.now(), event)
 }
 
 func (s *Service) Invite(ctx context.Context, ownerID, planID string, shareBPS int) (CreatedInvite, error) {

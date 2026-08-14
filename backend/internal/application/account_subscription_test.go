@@ -16,6 +16,8 @@ type accountSubscriptionStore struct {
 	stored                     domain.Account
 	storedSubscriptionObserved bool
 	createOrRotateResult       domain.Account
+	updatedOwnerID             string
+	updatedEvent               domain.AuditEvent
 }
 
 func (s *accountSubscriptionStore) ConsumeOAuthFlow(context.Context, []byte, time.Time) (OAuthFlow, error) {
@@ -35,8 +37,10 @@ func (s *accountSubscriptionStore) AccountByID(context.Context, string) (domain.
 	return s.account, nil
 }
 
-func (s *accountSubscriptionStore) UpdateAccountAuthorization(_ context.Context, _ string, account domain.Account, _ domain.AuditEvent) (domain.Account, error) {
+func (s *accountSubscriptionStore) UpdateAccountAuthorization(_ context.Context, ownerID string, account domain.Account, event domain.AuditEvent) (domain.Account, error) {
 	s.stored = account
+	s.updatedOwnerID = ownerID
+	s.updatedEvent = event
 	return account, nil
 }
 
@@ -127,6 +131,32 @@ func TestCompleteOpenAIReauthorizeUpdatesSubscriptionExpiry(t *testing.T) {
 	}
 	if oauth.proxyURL != "https://proxy.example" {
 		t.Fatalf("subscription query proxy = %q", oauth.proxyURL)
+	}
+}
+
+func TestAdminReauthorizeUsesOwnerEncryptionScopeAndAdminAuditActor(t *testing.T) {
+	now := time.Date(2026, 8, 6, 10, 0, 0, 0, time.UTC)
+	manager := testSecurityManager(t)
+	store := &accountSubscriptionStore{
+		flow:    OAuthFlow{UserID: "admin", Purpose: "reauthorize", TargetAccountID: "account"},
+		account: domain.Account{ID: "account", OwnerUserID: "owner", Name: "团队账号", ChatGPTAccountID: "chatgpt-account"},
+	}
+	oauth := &accountSubscriptionOAuth{token: OAuthToken{
+		AccessToken: "admin-refreshed-access", RefreshToken: "admin-refreshed-refresh", Email: "owner@example.com",
+		ChatGPTAccountID: "chatgpt-account", PlanType: "pro", ExpiresAt: now.Add(time.Hour),
+	}, subscriptionExpiresAt: now.Add(30 * 24 * time.Hour)}
+	service := &Service{store: store, security: manager, oauth: oauth, now: func() time.Time { return now }}
+	admin := domain.User{ID: "admin", IsAdmin: true, Role: domain.RoleAdmin}
+
+	if _, err := service.AdminCompleteOpenAIReauthorize(context.Background(), admin, "account", "state", "code"); err != nil {
+		t.Fatal(err)
+	}
+	access, err := manager.Decrypt(store.stored.AccessTokenCiphertext, []byte("owner:chatgpt-account:access"))
+	if err != nil || access != "admin-refreshed-access" {
+		t.Fatalf("owner-scoped access = %q, error = %v", access, err)
+	}
+	if store.updatedOwnerID != "owner" || store.updatedEvent.ActorUserID != "admin" {
+		t.Fatalf("update owner = %q, event = %+v", store.updatedOwnerID, store.updatedEvent)
 	}
 }
 

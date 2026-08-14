@@ -8,10 +8,12 @@ export interface PlansViewComponentProps {
   theme: ResolvedTheme
   initialPlanId?: string
   invitePlanId?: string
+  adminMode?: boolean
 }
 
 export interface PlansViewComponentEmits {
   changed: []
   inviteOpened: []
+  deleted: []
   message: [type: 'success' | 'error', text: string]
 }

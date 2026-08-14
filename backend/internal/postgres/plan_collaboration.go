@@ -134,7 +134,7 @@ func (s *Store) CreateJoinApplication(ctx context.Context, application domain.Jo
 	return application, tx.Commit(ctx)
 }
 
-func (s *Store) ReviewJoinApplication(ctx context.Context, ownerID, applicationID string, approve bool, memberID string, now time.Time, event domain.AuditEvent) (domain.JoinApplication, error) {
+func (s *Store) ReviewJoinApplication(ctx context.Context, ownerID, expectedPlanID, applicationID string, approve bool, memberID string, now time.Time, event domain.AuditEvent) (domain.JoinApplication, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
 	if err != nil {
 		return domain.JoinApplication{}, err
@@ -144,7 +144,7 @@ func (s *Store) ReviewJoinApplication(ctx context.Context, ownerID, applicationI
 	var actualOwner, accountID, visibility, allocationMode string
 	var slots, share int
 	var avatarUpdatedAt *time.Time
-	err = tx.QueryRow(ctx, `SELECT j.id,j.plan_id,j.user_id,u.username,u.email,u.avatar_updated_at,j.message,j.status,j.member_id,j.reviewed_at,j.created_at,p.owner_user_id,COALESCE(p.account_id,''),p.visibility,p.public_slots,p.public_share_basis_points,p.allocation_mode FROM plan_join_applications j JOIN users u ON u.id=j.user_id JOIN shared_plans p ON p.id=j.plan_id WHERE j.id=$1 FOR UPDATE OF j,p`, applicationID).Scan(&application.ID, &application.PlanID, &application.UserID, &application.Username, &application.Email, &avatarUpdatedAt, &application.Message, &application.Status, &application.MemberID, &application.ReviewedAt, &application.CreatedAt, &actualOwner, &accountID, &visibility, &slots, &share, &allocationMode)
+	err = tx.QueryRow(ctx, `SELECT j.id,j.plan_id,j.user_id,u.username,u.email,u.avatar_updated_at,j.message,j.status,j.member_id,j.reviewed_at,j.created_at,p.owner_user_id,COALESCE(p.account_id,''),p.visibility,p.public_slots,p.public_share_basis_points,p.allocation_mode FROM plan_join_applications j JOIN users u ON u.id=j.user_id JOIN shared_plans p ON p.id=j.plan_id WHERE j.id=$1 AND ($2='' OR j.plan_id=$2) FOR UPDATE OF j,p`, applicationID, expectedPlanID).Scan(&application.ID, &application.PlanID, &application.UserID, &application.Username, &application.Email, &avatarUpdatedAt, &application.Message, &application.Status, &application.MemberID, &application.ReviewedAt, &application.CreatedAt, &actualOwner, &accountID, &visibility, &slots, &share, &allocationMode)
 	if err != nil {
 		return domain.JoinApplication{}, mapError(err)
 	}

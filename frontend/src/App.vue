@@ -147,7 +147,19 @@
           <PlansView v-else-if="activeView === 'plans'" :accounts="accounts" :plans="plans" :user="user" :theme="resolvedTheme" :initial-plan-id="selectedPlanID" :invite-plan-id="invitePlanID" @invite-opened="invitePlanID = ''" @changed="refreshAll" @message="showMessage" />
           <AccountsView v-else-if="activeView === 'accounts'" :accounts="accounts" :plans="plans" @changed="refreshAll" @message="showMessage" />
           <KeysView v-else-if="activeView === 'keys'" :keys="keys" :plans="plans" @changed="refreshAll" @message="showMessage" />
-          <AdminView v-else-if="activeView === 'admin' && user.is_admin" :current-user="user" @message="showMessage" />
+          <AdminPlanDetailView v-else-if="activeView === 'admin' && user.is_admin && adminResource?.type === 'plan'" :plan-id="adminResource.id" :current-user="user" :theme="resolvedTheme" @back="navigateToView('admin')" @changed="refreshAll" @message="showMessage" />
+          <AdminView
+            v-else-if="activeView === 'admin' && user.is_admin"
+            v-model:active-tab="adminListTab"
+            v-model:query="adminListQuery"
+            v-model:scroll-top="adminListScrollTop"
+            :current-user="user"
+            :initial-account-id="adminResource?.type === 'account' ? adminResource.id : ''"
+            @open-plan="openAdminPlan"
+            @open-account="openAdminAccount"
+            @close-account="closeAdminAccount"
+            @message="showMessage"
+          />
           <ProfileView v-else v-model:theme-mode="themeMode" :user="user" @updated="onUserUpdated" @message="showMessage" />
         </div>
       </main>
@@ -208,6 +220,7 @@ function defineAsyncView(loader: () => Promise<{ default: Component }>) {
 }
 
 const AccountsView = defineAsyncView(() => import('./views/AccountsView.vue'))
+const AdminPlanDetailView = defineAsyncView(() => import('./views/AdminPlanDetailView.vue'))
 const AdminView = defineAsyncView(() => import('./views/AdminView.vue'))
 const DashboardView = defineAsyncView(() => import('./views/DashboardView.vue'))
 const KeysView = defineAsyncView(() => import('./views/KeysView.vue'))
@@ -232,7 +245,15 @@ const publicPlans = ref<PublicPlan[]>([])
 const dashboard = ref<Dashboard | null>(null)
 const dashboardRefreshing = ref(false)
 const initialRoute = parseAppRoute(window.location.pathname)
-const activeView = ref<ViewID>(initialRoute?.kind === 'view' ? initialRoute.view : 'dashboard')
+const activeView = ref<ViewID>(initialRoute?.kind === 'view' ? initialRoute.view : initialRoute?.kind === 'admin-plan' || initialRoute?.kind === 'admin-account' ? 'admin' : 'dashboard')
+const adminResource = ref<{ type: 'plan' | 'account'; id: string } | null>(
+  initialRoute?.kind === 'admin-plan' ? { type: 'plan', id: initialRoute.id }
+    : initialRoute?.kind === 'admin-account' ? { type: 'account', id: initialRoute.id }
+      : null,
+)
+const adminListTab = ref<'users' | 'accounts' | 'plans' | 'keys'>('users')
+const adminListQuery = ref('')
+const adminListScrollTop = ref(0)
 const publicPage = ref<PublicPageID | null>(initialRoute?.kind === 'public' ? initialRoute.page : null)
 const legalPage = computed(() => publicPage.value && publicPage.value !== 'home' ? publicPage.value : null)
 const authInitialMode = ref<'login' | 'register'>(new URLSearchParams(window.location.search).get('mode') === 'register' ? 'register' : 'login')
@@ -324,8 +345,27 @@ function updateRoute(route: AppRoute, replace = false) {
 
 function navigateToView(view: ViewID, replace = false) {
   if (view === 'admin' && !user.value?.is_admin) return
+  adminResource.value = null
   activeView.value = view
   updateRoute({ kind: 'view', view }, replace)
+}
+
+function openAdminPlan(id: string) {
+  if (!user.value?.is_admin) return
+  activeView.value = 'admin'
+  adminResource.value = { type: 'plan', id }
+  updateRoute({ kind: 'admin-plan', id })
+}
+
+function openAdminAccount(id: string) {
+  if (!user.value?.is_admin) return
+  activeView.value = 'admin'
+  adminResource.value = { type: 'account', id }
+  updateRoute({ kind: 'admin-account', id })
+}
+
+function closeAdminAccount() {
+  if (adminResource.value?.type === 'account') navigateToView('admin')
 }
 
 function navigateToPublic(page: PublicPageID) { updateRoute({ kind: 'public', page }) }
@@ -355,7 +395,16 @@ function syncPathRoute() {
   publicPage.value = route?.kind === 'public' ? route.page : null
   if (route?.kind === 'public' && !inviteIntent.value) return
   if (user.value) {
-    if (route?.kind === 'view' && (route.view !== 'admin' || user.value.is_admin)) activeView.value = route.view
+    if (route?.kind === 'admin-plan' && user.value.is_admin) {
+      activeView.value = 'admin'
+      adminResource.value = { type: 'plan', id: route.id }
+    } else if (route?.kind === 'admin-account' && user.value.is_admin) {
+      activeView.value = 'admin'
+      adminResource.value = { type: 'account', id: route.id }
+    } else if (route?.kind === 'view' && (route.view !== 'admin' || user.value.is_admin)) {
+      activeView.value = route.view
+      adminResource.value = null
+    }
     else navigateToView('dashboard', true)
   } else if (route?.kind !== 'login') navigateToLogin(true)
 }

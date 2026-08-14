@@ -22,6 +22,13 @@ describe('app routes', () => {
     expect(parseAppRoute('/plans/')).toEqual({ kind: 'view', view: 'plans' })
   })
 
+  it('maps administrator resource details to deep links', () => {
+    expect(appRoutePath({ kind: 'admin-plan', id: 'plan / 一' })).toBe('/admin/plans/plan%20%2F%20%E4%B8%80')
+    expect(parseAppRoute('/admin/plans/plan%20%2F%20%E4%B8%80')).toEqual({ kind: 'admin-plan', id: 'plan / 一' })
+    expect(appRoutePath({ kind: 'admin-account', id: 'account-1' })).toBe('/admin/accounts/account-1')
+    expect(parseAppRoute('/admin/accounts/account-1/')).toEqual({ kind: 'admin-account', id: 'account-1' })
+  })
+
   it('maps public pages without requiring an authenticated view', () => {
     expect(publicPagePaths).toEqual({
       home: '/',
@@ -36,5 +43,10 @@ describe('app routes', () => {
 
   it('does not invent a route for unknown paths', () => {
     expect(parseAppRoute('/unknown')).toBeNull()
+  })
+
+  it('rejects malformed administrator resource encodings', () => {
+    expect(parseAppRoute('/admin/plans/%')).toBeNull()
+    expect(parseAppRoute('/admin/accounts/%E4%B8')).toBeNull()
   })
 })

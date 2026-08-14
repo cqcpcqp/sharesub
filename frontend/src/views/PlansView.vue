@@ -1,18 +1,18 @@
 <template>
-  <section class="view-content plans-layout">
+  <section class="view-content plans-layout" :class="{ 'admin-plans-layout': adminMode }">
     <main class="plan-detail-pane">
       <div v-if="!detail && planLoading" class="plan-detail-loading" aria-label="正在加载 Plan">
         <NSpin size="small" />
       </div>
 
       <div v-else-if="!detail" class="plan-empty-state">
-        <div class="plan-empty-actions">
+        <div v-if="!adminMode" class="plan-empty-actions">
           <NButton type="primary" @click="openCreate">
             <template #icon><Plus :size="17" /></template>
             创建 Plan
           </NButton>
         </div>
-        <EmptyState title="还没有 Plan" description="先创建共享空间并探索协作设置，OpenAI 账号可以稍后在 Plan 内绑定。" :icon="Layers3" />
+        <EmptyState :title="adminMode ? '无法加载 Plan' : '还没有 Plan'" :description="adminMode ? '这个 Plan 已不存在，或当前无法读取其详情。' : '先创建共享空间并探索协作设置，OpenAI 账号可以稍后在 Plan 内绑定。'" :icon="Layers3" />
       </div>
 
       <template v-else>
@@ -31,13 +31,13 @@
               <p class="plan-heading-meta">
                 <template v-if="detail.account">{{ detail.account.name }} · {{ detail.account.email }}</template>
                 <template v-else>尚未绑定 OpenAI 账号</template>
-                <template v-if="!isOwner"> · 由 {{ owner!.username }} 提供</template>
+                <template v-if="!isActualOwner"> · 由 {{ owner!.username }} 提供</template>
               </p>
             </div>
           </div>
           <div class="plan-heading-side">
             <NSelect
-              v-if="plans.length > 1"
+              v-if="plans.length > 1 && !adminMode"
               class="plan-switcher"
               size="small"
               filterable
@@ -51,6 +51,7 @@
             <span><UsersRound :size="16" />{{ detail.members.length }} 位成员</span>
             <div class="plan-heading-actions">
               <NButton
+                v-if="!adminMode"
                 secondary
                 class="icon-button"
                 title="创建 Plan"
@@ -80,8 +81,8 @@
         <NAlert v-else-if="!isAccountBound" class="account-required-alert" type="warning" :show-icon="true">
           <template #header>Plan 已创建，绑定账号后即可开始使用</template>
           <div class="account-required-content">
-            <span>{{ isOwner ? '你可以先继续查看成员和设置；准备好后，在账号配置中绑定已有账号或接入新账号。' : '房主尚未绑定 OpenAI 账号，当前 Plan 暂时不能用于请求路由。' }}</span>
-            <NButton v-if="isOwner" size="small" secondary @click="activeTab = 'account'">去绑定账号</NButton>
+            <span>{{ canManage ? (adminMode ? '你可以以管理员身份继续配置成员、设置和已有账号绑定。' : '你可以先继续查看成员和设置；准备好后，在账号配置中绑定已有账号或接入新账号。') : '房主尚未绑定 OpenAI 账号，当前 Plan 暂时不能用于请求路由。' }}</span>
+            <NButton v-if="canManage" size="small" secondary @click="activeTab = 'account'">去绑定账号</NButton>
           </div>
         </NAlert>
 
@@ -96,16 +97,17 @@
                 :insights="detail.insights"
                 :members="detail.members"
                 :allocation-mode="detail.plan.allocation_mode"
-                :can-refresh="isOwner && !isArchived"
+                :can-refresh="canManage && !isArchived"
                 :refreshing="quotaRefreshing"
                 :can-query-quota-reset="!isArchived"
-                :can-reset-quota="isOwner && !isArchived"
+                :can-reset-quota="canManage && !isArchived"
                 :quota-reset-credits="quotaResetCredits"
                 :quota-reset-credits-loading="quotaResetCreditsLoading"
                 :quota-resetting="quotaResetting"
                 :performance-period="performancePeriod"
                 :performance-loading="performanceLoading"
                 :theme="theme"
+                :admin-mode="adminMode"
                 @refresh="refreshQuota"
                 @query-quota-reset-credits="queryQuotaResetCredits"
                 @reset-quota="resetQuota"
@@ -114,7 +116,7 @@
               <section v-else class="account-setup account-setup-overview">
                 <span class="account-setup-icon"><Bot :size="24" /></span>
                 <div><h3>先把共享空间准备好</h3><p>成员、份额和 Plan 设置已经可以探索；绑定 OpenAI 账号后才会启用额度数据和请求路由。</p></div>
-                <NButton v-if="isOwner" type="primary" @click="activeTab = 'account'">绑定 OpenAI 账号</NButton>
+                <NButton v-if="canManage" type="primary" @click="activeTab = 'account'">绑定 OpenAI 账号</NButton>
               </section>
             </div>
           </NTabPane>
@@ -126,10 +128,10 @@
               <section v-else class="account-setup">
                 <span class="account-setup-icon"><Bot :size="24" /></span>
                 <div class="account-setup-copy">
-                  <h3>{{ isOwner ? '绑定 OpenAI 账号' : '等待房主绑定账号' }}</h3>
-                  <p>{{ isOwner ? '选择一个尚未用于其他 Plan 的账号，或者在这里接入新账号。绑定完成后，额度与请求路由会自动启用。' : '账号由房主管理。绑定完成后，你会在这里看到账号配置和可用额度。' }}</p>
+                  <h3>{{ canManage ? '绑定 OpenAI 账号' : '等待房主绑定账号' }}</h3>
+                  <p>{{ canManage ? (adminMode ? '选择该房主拥有且尚未用于其他 Plan 的账号。' : '选择一个尚未用于其他 Plan 的账号，或者在这里接入新账号。绑定完成后，额度与请求路由会自动启用。') : '账号由房主管理。绑定完成后，你会在这里看到账号配置和可用额度。' }}</p>
                 </div>
-                <div v-if="isOwner" class="account-setup-actions">
+                <div v-if="canManage" class="account-setup-actions">
                   <div v-if="rebindAccountOptions.length" class="account-bind-existing">
                     <NSelect :value="rebindAccountID" :options="rebindAccountOptions" to="body" placeholder="选择尚未绑定的账号" aria-label="OpenAI 账号" @update:value="updateRebindAccount" />
                     <NButton type="primary" :disabled="!rebindAccountID" :loading="actionLoading === 'rebind'" @click="rebindAccount">
@@ -137,7 +139,7 @@
                       绑定账号
                     </NButton>
                   </div>
-                  <div class="account-connect-new">
+                  <div v-if="!adminMode" class="account-connect-new">
                     <span>{{ rebindAccountOptions.length ? '没有合适的账号？' : '还没有可绑定的账号。' }}</span>
                     <NButton secondary :loading="actionLoading === 'connect-account'" @click="showConnectAccount = true">
                       <template #icon><Plus :size="16" /></template>
@@ -160,12 +162,12 @@
                     <h3>成员</h3>
                     <p>{{ isShared ? `${detail.members.length} 位成员共享账号额度，不设置个人上限` : `${detail.members.length} 位成员，固定份额合计 ${allocatedShare}` }}</p>
                   </div>
-                  <NButton v-if="isOwner && !isArchived" type="primary" @click="showInviteComposer = true">
+                  <NButton v-if="canManage && !isArchived" type="primary" @click="showInviteComposer = true">
                     <template #icon><UserPlus :size="16" /></template>
                     邀请成员
                   </NButton>
                   <NPopconfirm
-                    v-if="!isOwner"
+                    v-if="!canManage && currentMember"
                     positive-text="退出 Plan"
                     negative-text="取消"
                     @positive-click="leavePlan"
@@ -187,7 +189,7 @@
                         <th>成员</th>
                         <th>角色</th>
                         <th>{{ isShared ? '额度方式' : '份额' }}</th>
-                        <th v-if="isOwner">操作</th>
+                        <th v-if="canManage">操作</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -209,14 +211,14 @@
                         </td>
                         <td>
                           <SharePicker
-                            v-if="isOwner && !isShared"
+                            v-if="canManage && !isShared"
                             v-model="shareDrafts[member.id]"
                             compact
                             :aria-label="`${member.username} 的份额`"
                           />
                           <span v-else>{{ isShared ? '共享使用' : formatShareBasisPoints(member.share_basis_points) }}</span>
                         </td>
-                        <td v-if="isOwner">
+                        <td v-if="canManage">
                           <div class="member-actions">
                             <NPopconfirm
                               v-if="isSettingMemberToViewOnly(member)"
@@ -270,7 +272,7 @@
                 </div>
               </section>
 
-              <section v-if="isOwner && detail.applications.length" class="applications-section">
+              <section v-if="canManage && detail.applications.length" class="applications-section">
                 <div class="section-heading">
                   <div><h3>加入申请</h3><p>公开招募名额剩余 {{ availablePublicSlots }} 个</p></div>
                 </div>
@@ -302,7 +304,7 @@
                 </div>
               </section>
 
-              <section v-if="isOwner && detail.invites.length" class="invites-section">
+              <section v-if="canManage && detail.invites.length" class="invites-section">
                 <div class="section-heading">
                   <div><h3>邀请记录</h3><p>待接受的邀请可以随时撤销</p></div>
                 </div>
@@ -360,7 +362,7 @@
             </div>
           </NTabPane>
 
-          <NTabPane v-if="isOwner" name="settings">
+          <NTabPane v-if="canManage" name="settings">
             <template #tab><span class="tab-label"><SlidersHorizontal :size="16" />设置</span></template>
             <div class="tab-panel owner-controls">
               <div class="plan-settings">
@@ -463,7 +465,7 @@
                         </template>
                         {{ isAccountBound ? 'Plan 的请求将立即切换到新账号。' : '绑定后，这个 Plan 将可以用于请求路由。' }}
                       </NPopconfirm>
-                      <NButton v-if="rebindAccountOptions.length === 0" secondary class="setting-connect-account" @click="showConnectAccount = true">接入新账号</NButton>
+                      <NButton v-if="rebindAccountOptions.length === 0 && !adminMode" secondary class="setting-connect-account" @click="showConnectAccount = true">接入新账号</NButton>
                     </div>
                   </div>
 
@@ -481,7 +483,7 @@
                             转让
                           </NButton>
                         </template>
-                        转让后你将成为普通成员，且无法自行撤销；OpenAI 账号所有权不会转移。
+                        {{ adminMode ? '转让会立即改变实际房主，管理员权限不受影响；OpenAI 账号所有权不会转移。' : '转让后你将成为普通成员，且无法自行撤销；OpenAI 账号所有权不会转移。' }}
                       </NPopconfirm>
                     </div>
                   </div>
@@ -527,7 +529,7 @@
     </main>
   </section>
 
-  <ModalShell v-if="showCreate" title="创建共享 Plan" subtitle="账号可稍后绑定；额度方式创建后不可更改" @close="showCreate = false">
+  <ModalShell v-if="showCreate && !adminMode" title="创建共享 Plan" subtitle="账号可稍后绑定；额度方式创建后不可更改" @close="showCreate = false">
     <label>Plan 名称<AppInput :value="createForm.name" clearable :maxlength="100" placeholder="给这个共享空间起个名字" @update:value="updateCreateName" /></label>
     <label>OpenAI 账号 <span class="optional-field">可选</span><NSelect :value="createForm.accountID || null" :options="accountOptions" clearable to="body" placeholder="暂不绑定，创建后再设置" @update:value="updateCreateAccount" /></label>
     <label>额度方式
@@ -551,6 +553,7 @@
   </ModalShell>
 
   <OpenAIAccountConnectDialog
+    v-if="!adminMode"
     v-model:show="showConnectAccount"
     subtitle="授权完成后，新账号会直接绑定到当前 Plan"
     @connected="handleConnectedAccount"
@@ -673,6 +676,7 @@ import type { PlansViewComponentEmits, PlansViewComponentProps } from './plansVi
 const props = withDefaults(defineProps<PlansViewComponentProps>(), {
   initialPlanId: '',
   invitePlanId: '',
+  adminMode: false,
 })
 const emit = defineEmits<PlansViewComponentEmits>()
 
@@ -682,7 +686,7 @@ const {
   loadPlan, loadAudit, loadPerformance,
   showCreate, showConnectAccount, showInviteComposer, inviteSecret, showDeleteConfirmOne, showDeleteConfirmTwo,
   deleteNameDraft, renameDraft, descriptionDraft, transferMemberID, rebindAccountID, createForm, inviteForm,
-  publication, shareDrafts, accountOptions, planOptions, isOwner, isShared, isArchived, isAccountBound, owner,
+  publication, shareDrafts, accountOptions, planOptions, isActualOwner, canManage, isShared, isArchived, isAccountBound, owner, currentMember,
   allocatedShare, reservedShares, remainingInviteSharePercent, canCreateInvite, approvedPublicMembers, availablePublicSlots, publicationAvailablePublicSlots,
   publicationReservedShares, maxPublicSeatSharePercent, publicationCapacityExceeded,
   canRename, canUpdateDescription, canSavePublication,

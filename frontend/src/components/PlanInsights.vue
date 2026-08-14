@@ -245,6 +245,7 @@
       v-if="showErrorDetails"
       :plan-id="planId"
       :period="performancePeriod"
+      :admin-mode="adminMode"
       @close="showErrorDetails = false"
     />
 
@@ -282,6 +283,7 @@ const props = withDefaults(defineProps<{
   performancePeriod?: PerformancePeriod
   performanceLoading?: boolean
   theme: ResolvedTheme
+  adminMode?: boolean
 }>(), {
   canRefresh: false,
   refreshing: false,
@@ -292,6 +294,7 @@ const props = withDefaults(defineProps<{
   quotaResetting: false,
   performancePeriod: '24h',
   performanceLoading: false,
+  adminMode: false,
 })
 
 const emit = defineEmits<{

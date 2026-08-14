@@ -171,6 +171,16 @@ func (s *Service) StartOpenAIReauthorize(ctx context.Context, userID, accountID 
 	return s.startOpenAIOAuth(ctx, userID, "reauthorize", accountID)
 }
 
+func (s *Service) AdminStartOpenAIReauthorize(ctx context.Context, admin domain.User, accountID string) (OAuthStart, error) {
+	if err := requireAdmin(admin); err != nil {
+		return OAuthStart{}, err
+	}
+	if _, err := s.store.AccountByID(ctx, accountID); err != nil {
+		return OAuthStart{}, err
+	}
+	return s.startOpenAIOAuth(ctx, admin.ID, "reauthorize", accountID)
+}
+
 func (s *Service) startOpenAIOAuth(ctx context.Context, userID, purpose, targetAccountID string) (OAuthStart, error) {
 	state, err := security.NewOpaqueToken("")
 	if err != nil {
@@ -261,6 +271,17 @@ func (s *Service) CompleteOpenAIConnect(ctx context.Context, userID, state, code
 }
 
 func (s *Service) CompleteOpenAIReauthorize(ctx context.Context, userID, accountID, state, code string) (domain.Account, error) {
+	return s.completeOpenAIReauthorize(ctx, userID, userID, accountID, state, code)
+}
+
+func (s *Service) AdminCompleteOpenAIReauthorize(ctx context.Context, admin domain.User, accountID, state, code string) (domain.Account, error) {
+	if err := requireAdmin(admin); err != nil {
+		return domain.Account{}, err
+	}
+	return s.completeOpenAIReauthorize(ctx, admin.ID, "", accountID, state, code)
+}
+
+func (s *Service) completeOpenAIReauthorize(ctx context.Context, actorUserID, requiredOwnerUserID, accountID, state, code string) (domain.Account, error) {
 	if strings.TrimSpace(state) == "" || strings.TrimSpace(code) == "" {
 		return domain.Account{}, domain.ErrInvalidInput
 	}
@@ -268,7 +289,7 @@ func (s *Service) CompleteOpenAIReauthorize(ctx context.Context, userID, account
 	if err != nil {
 		return domain.Account{}, err
 	}
-	if flow.UserID != userID {
+	if flow.UserID != actorUserID {
 		return domain.Account{}, domain.ErrForbidden
 	}
 	if flow.Purpose != "reauthorize" || flow.TargetAccountID == "" || flow.TargetAccountID != accountID {
@@ -278,7 +299,7 @@ func (s *Service) CompleteOpenAIReauthorize(ctx context.Context, userID, account
 	if err != nil {
 		return domain.Account{}, err
 	}
-	if account.OwnerUserID != userID {
+	if requiredOwnerUserID != "" && account.OwnerUserID != requiredOwnerUserID {
 		return domain.Account{}, domain.ErrForbidden
 	}
 	token, err := s.oauth.Exchange(ctx, code, flow.CodeVerifier, flow.RedirectURI)
@@ -291,7 +312,7 @@ func (s *Service) CompleteOpenAIReauthorize(ctx context.Context, userID, account
 	if token.ChatGPTAccountID != account.ChatGPTAccountID {
 		return domain.Account{}, domain.ErrConflict
 	}
-	scope := userID + ":" + account.ChatGPTAccountID
+	scope := account.OwnerUserID + ":" + account.ChatGPTAccountID
 	access, err := s.security.Encrypt(token.AccessToken, []byte(scope+":access"))
 	if err != nil {
 		return domain.Account{}, err
@@ -312,11 +333,11 @@ func (s *Service) CompleteOpenAIReauthorize(ctx context.Context, userID, account
 	if subscriptionExpiresAt, queryErr := s.oauth.SubscriptionExpiresAt(ctx, token.AccessToken, token.ChatGPTAccountID, account.ProxyURL); queryErr == nil {
 		account.SubscriptionExpiresAt = subscriptionExpiresAt
 	}
-	event, err := s.newAuditEvent(userID, "account.reauthorized", "account", account.ID, map[string]string{"account_name": account.Name})
+	event, err := s.newAuditEvent(actorUserID, "account.reauthorized", "account", account.ID, map[string]string{"account_name": account.Name})
 	if err != nil {
 		return domain.Account{}, err
 	}
-	stored, err := s.store.UpdateAccountAuthorization(ctx, userID, account, event)
+	stored, err := s.store.UpdateAccountAuthorization(ctx, account.OwnerUserID, account, event)
 	if err != nil {
 		return domain.Account{}, err
 	}
@@ -340,6 +361,10 @@ func (s *Service) ListAccounts(ctx context.Context, userID string) ([]domain.Acc
 }
 
 func (s *Service) UpdateAccountConfig(ctx context.Context, userID, accountID string, config AccountConfigInput) (domain.Account, error) {
+	return s.updateAccountConfig(ctx, userID, userID, accountID, config)
+}
+
+func (s *Service) updateAccountConfig(ctx context.Context, actorUserID, ownerUserID, accountID string, config AccountConfigInput) (domain.Account, error) {
 	config, err := normalizeAccountConfig(config)
 	if err != nil {
 		return domain.Account{}, err
@@ -348,7 +373,7 @@ func (s *Service) UpdateAccountConfig(ctx context.Context, userID, accountID str
 	if err != nil {
 		return domain.Account{}, err
 	}
-	if account.OwnerUserID != userID {
+	if account.OwnerUserID != ownerUserID {
 		return domain.Account{}, domain.ErrForbidden
 	}
 	account.Name = config.Name
@@ -361,7 +386,11 @@ func (s *Service) UpdateAccountConfig(ctx context.Context, userID, accountID str
 	if err := s.setAccountProxy(&account, config.ProxyURL); err != nil {
 		return domain.Account{}, err
 	}
-	stored, err := s.store.UpdateAccountConfig(ctx, userID, account)
+	event, err := s.newAuditEvent(actorUserID, "account.config_updated", "account", accountID, nil)
+	if err != nil {
+		return domain.Account{}, err
+	}
+	stored, err := s.store.UpdateAccountConfig(ctx, ownerUserID, account, event)
 	if err != nil {
 		return domain.Account{}, err
 	}

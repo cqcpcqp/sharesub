@@ -139,13 +139,24 @@ func (s *Store) AdminListAccounts(ctx context.Context) ([]domain.AdminAccount, e
 	return out, rows.Err()
 }
 
-func (s *Store) AdminUpdateAccountStatus(ctx context.Context, accountID, status string) (domain.AdminAccount, error) {
-	result, err := s.pool.Exec(ctx, `UPDATE openai_accounts SET status=$2,last_error=CASE WHEN $2='active' THEN '' ELSE last_error END,updated_at=now() WHERE id=$1`, accountID, status)
+func (s *Store) AdminUpdateAccountStatus(ctx context.Context, accountID, status string, event domain.AuditEvent) (domain.AdminAccount, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return domain.AdminAccount{}, err
+	}
+	defer tx.Rollback(ctx)
+	result, err := tx.Exec(ctx, `UPDATE openai_accounts SET status=$2,last_error=CASE WHEN $2='active' THEN '' ELSE last_error END,updated_at=now() WHERE id=$1`, accountID, status)
 	if err != nil {
 		return domain.AdminAccount{}, err
 	}
 	if result.RowsAffected() != 1 {
 		return domain.AdminAccount{}, domain.ErrNotFound
+	}
+	if err := insertAuditEvent(ctx, tx, event); err != nil {
+		return domain.AdminAccount{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.AdminAccount{}, err
 	}
 	rows, err := s.AdminListAccounts(ctx)
 	if err != nil {
@@ -157,6 +168,18 @@ func (s *Store) AdminUpdateAccountStatus(ctx context.Context, accountID, status 
 		}
 	}
 	return domain.AdminAccount{}, domain.ErrNotFound
+}
+
+func (s *Store) RecordAuditEvent(ctx context.Context, event domain.AuditEvent) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := insertAuditEvent(ctx, tx, event); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Store) AdminListPlans(ctx context.Context, metricsStart time.Time) ([]domain.AdminPlan, error) {
@@ -185,6 +208,17 @@ func (s *Store) AdminListPlans(ctx context.Context, metricsStart time.Time) ([]d
 		out = append(out, item)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) AdminPlanByID(ctx context.Context, planID string) (domain.Plan, error) {
+	plan, err := scanPlan(s.pool.QueryRow(ctx, `
+		SELECT id,owner_user_id,account_id,name,description,status,visibility,public_slots,public_share_basis_points,allocation_mode,created_at,archived_at
+		FROM shared_plans
+		WHERE id=$1`, planID))
+	if err != nil {
+		return domain.Plan{}, mapError(err)
+	}
+	return plan, nil
 }
 
 func (s *Store) AdminListAPIKeys(ctx context.Context) ([]domain.AdminAPIKey, error) {

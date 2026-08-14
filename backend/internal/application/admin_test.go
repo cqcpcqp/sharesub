@@ -16,12 +16,18 @@ type adminStore struct {
 	plans               []domain.AdminPlan
 	account             domain.Account
 	updatedAccount      domain.Account
+	accountEvent        domain.AuditEvent
 	planOwnerID         string
 	planAccountID       string
 	planEvent           domain.AuditEvent
+	planQueryUserID     string
+	planMemberID        string
+	reviewPlanID        string
+	reviewApplicationID string
 	updatedUserID       string
 	updatedStatus       string
 	metricsStarted      time.Time
+	adminPlanLookups    int
 	bootstrapUser       domain.User
 	bootstrapMade       bool
 	passwordUserID      string
@@ -45,8 +51,9 @@ func (s *adminStore) AdminListAccounts(context.Context) ([]domain.AdminAccount, 
 func (s *adminStore) AccountByID(context.Context, string) (domain.Account, error) {
 	return s.account, nil
 }
-func (s *adminStore) UpdateAccountConfig(_ context.Context, _ string, account domain.Account) (domain.Account, error) {
+func (s *adminStore) UpdateAccountConfig(_ context.Context, _ string, account domain.Account, event domain.AuditEvent) (domain.Account, error) {
 	s.updatedAccount = account
+	s.accountEvent = event
 	for index := range s.accounts {
 		if s.accounts[index].ID == account.ID {
 			s.accounts[index].Account = account
@@ -55,8 +62,31 @@ func (s *adminStore) UpdateAccountConfig(_ context.Context, _ string, account do
 	}
 	return account, nil
 }
+func (s *adminStore) AdminUpdateAccountStatus(_ context.Context, accountID, status string, event domain.AuditEvent) (domain.AdminAccount, error) {
+	s.accountEvent = event
+	for index := range s.accounts {
+		if s.accounts[index].ID == accountID {
+			s.accounts[index].Status = status
+			return s.accounts[index], nil
+		}
+	}
+	return domain.AdminAccount{}, domain.ErrNotFound
+}
+func (s *adminStore) RecordAuditEvent(_ context.Context, event domain.AuditEvent) error {
+	s.planEvent = event
+	return nil
+}
 func (s *adminStore) AdminListPlans(context.Context, time.Time) ([]domain.AdminPlan, error) {
 	return s.plans, nil
+}
+func (s *adminStore) AdminPlanByID(_ context.Context, planID string) (domain.Plan, error) {
+	s.adminPlanLookups++
+	for _, plan := range s.plans {
+		if plan.ID == planID {
+			return plan.Plan, nil
+		}
+	}
+	return domain.Plan{}, domain.ErrNotFound
 }
 func (s *adminStore) PlanBinding(_ context.Context, planID, ownerID string) (domain.Plan, error) {
 	for _, plan := range s.plans {
@@ -65,6 +95,22 @@ func (s *adminStore) PlanBinding(_ context.Context, planID, ownerID string) (dom
 		}
 	}
 	return domain.Plan{}, domain.ErrNotFound
+}
+func (s *adminStore) PlanDetail(_ context.Context, planID, userID string, _ time.Time, _ time.Time) (domain.PlanDetail, error) {
+	s.planQueryUserID = userID
+	return domain.PlanDetail{Plan: domain.Plan{ID: planID, OwnerUserID: userID}}, nil
+}
+func (s *adminStore) TransferPlanOwnership(_ context.Context, planID, ownerID, memberID string, event domain.AuditEvent) (domain.Plan, error) {
+	s.planOwnerID, s.planMemberID, s.planEvent = ownerID, memberID, event
+	return domain.Plan{ID: planID, OwnerUserID: "new-owner"}, nil
+}
+func (s *adminStore) UpdateMemberShare(_ context.Context, planID, ownerID, memberID string, share int, event domain.AuditEvent) (domain.Member, error) {
+	s.planOwnerID, s.planMemberID, s.planEvent = ownerID, memberID, event
+	return domain.Member{ID: memberID, PlanID: planID, ShareBasisPoints: share}, nil
+}
+func (s *adminStore) ReviewJoinApplication(_ context.Context, ownerID, expectedPlanID, applicationID string, approve bool, _ string, _ time.Time, event domain.AuditEvent) (domain.JoinApplication, error) {
+	s.planOwnerID, s.reviewPlanID, s.reviewApplicationID, s.planEvent = ownerID, expectedPlanID, applicationID, event
+	return domain.JoinApplication{ID: applicationID, PlanID: expectedPlanID}, nil
 }
 func (s *adminStore) RebindPlanAccount(_ context.Context, planID, ownerID, accountID string, _ []domain.QuotaSignal, _ time.Time, event domain.AuditEvent) (domain.Plan, error) {
 	s.planOwnerID, s.planAccountID, s.planEvent = ownerID, accountID, event
@@ -124,7 +170,7 @@ func TestAdminCanUpdateAnotherUsersAccountConfig(t *testing.T) {
 	service := NewService(store, nil, nil, 0, "", "")
 	admin := service.decorateUser(domain.User{ID: "admin", Role: domain.RoleAdmin})
 	updated, err := service.AdminUpdateAccountConfig(context.Background(), admin, account.ID, AccountConfigInput{Name: "运维名称", Notes: "管理员备注", Status: domain.StatusDisabled})
-	if err != nil || updated.Name != "运维名称" || store.updatedAccount.OwnerUserID != "owner" || store.updatedAccount.Status != domain.StatusDisabled {
+	if err != nil || updated.Name != "运维名称" || store.updatedAccount.OwnerUserID != "owner" || store.updatedAccount.Status != domain.StatusDisabled || store.accountEvent.ActorUserID != admin.ID {
 		t.Fatalf("updated = %+v, stored = %+v, error = %v", updated, store.updatedAccount, err)
 	}
 	member := service.decorateUser(domain.User{ID: "member", Role: domain.RoleUser})
@@ -150,6 +196,28 @@ func TestAdminCanBindPlanOwnersAvailableAccount(t *testing.T) {
 	updated, err := service.AdminRebindPlanAccount(context.Background(), admin, "plan", "account")
 	if err != nil || updated.AccountID != "account" || store.planOwnerID != "owner" || store.planAccountID != "account" || store.planEvent.ActorUserID != admin.ID {
 		t.Fatalf("updated = %+v, owner = %q, account = %q, event = %+v, error = %v", updated, store.planOwnerID, store.planAccountID, store.planEvent, err)
+	}
+}
+
+func TestAdminPlanAccessKeepsOwnerScopeAndAdminAuditActor(t *testing.T) {
+	store := &adminStore{plans: []domain.AdminPlan{{Plan: domain.Plan{ID: "plan", OwnerUserID: "owner"}}}}
+	service := NewService(store, nil, nil, 0, "", "")
+	admin := service.decorateUser(domain.User{ID: "admin", Role: domain.RoleAdmin})
+	detail, err := service.AdminPlanDetail(context.Background(), admin, "plan", "UTC")
+	if err != nil || detail.Plan.ID != "plan" || store.planQueryUserID != "owner" || store.adminPlanLookups != 1 {
+		t.Fatalf("detail = %+v, query user = %q, error = %v", detail, store.planQueryUserID, err)
+	}
+	updated, err := service.AdminTransferPlanOwnership(context.Background(), admin, "plan", "member")
+	if err != nil || updated.OwnerUserID != "new-owner" || store.planOwnerID != "owner" || store.planMemberID != "member" || store.planEvent.ActorUserID != admin.ID {
+		t.Fatalf("updated = %+v, owner = %q, member = %q, event = %+v, error = %v", updated, store.planOwnerID, store.planMemberID, store.planEvent, err)
+	}
+	member, err := service.AdminUpdateMemberShare(context.Background(), admin, "plan", "member", 2500)
+	if err != nil || member.ShareBasisPoints != 2500 || store.planOwnerID != "owner" || store.planEvent.ActorUserID != admin.ID {
+		t.Fatalf("member = %+v, owner = %q, event = %+v, error = %v", member, store.planOwnerID, store.planEvent, err)
+	}
+	application, err := service.AdminReviewJoinApplication(context.Background(), admin, "plan", "application", true)
+	if err != nil || application.PlanID != "plan" || store.reviewPlanID != "plan" || store.reviewApplicationID != "application" || store.planOwnerID != "owner" || store.planEvent.ActorUserID != admin.ID {
+		t.Fatalf("application = %+v, plan = %q, application id = %q, owner = %q, event = %+v, error = %v", application, store.reviewPlanID, store.reviewApplicationID, store.planOwnerID, store.planEvent, err)
 	}
 }
 

@@ -357,7 +357,7 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	configuredAccount, err := store.UpdateAccountConfig(ctx, "owner", domain.Account{
 		ID: "account", Name: "团队主账号", Notes: "仅用于 Codex", ProxyURLCiphertext: []byte("encrypted-proxy"),
 		MaxConcurrency: 6, RPMLimit: 90, CodexFingerprintMode: "session", Status: domain.StatusActive,
-	})
+	}, audit("account-config-updated", "owner", "account"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -507,7 +507,7 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	unboundApproved, err := store.ReviewJoinApplication(ctx, "owner", unboundApplication.ID, true, "unbound-public-member", now, audit("approve-unbound", "owner", unboundPlan.ID))
+	unboundApproved, err := store.ReviewJoinApplication(ctx, "owner", "", unboundApplication.ID, true, "unbound-public-member", now, audit("approve-unbound", "owner", unboundPlan.ID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -583,7 +583,10 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	approved, err := store.ReviewJoinApplication(ctx, "owner", application.ID, true, "applicant-member", now, audit("approve-plan", "owner", "plan"))
+	if _, err := store.ReviewJoinApplication(ctx, "owner", unboundPlan.ID, application.ID, true, "wrong-plan-member", now, audit("approve-wrong-plan", "owner", unboundPlan.ID)); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("cross-plan application review error = %v", err)
+	}
+	approved, err := store.ReviewJoinApplication(ctx, "owner", "", application.ID, true, "applicant-member", now, audit("approve-plan", "owner", "plan"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -638,7 +641,7 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sharedApproved, err := store.ReviewJoinApplication(ctx, "owner", sharedApplication.ID, true, "shared-member", now, audit("approve-shared", "owner", sharedPlan.ID))
+	sharedApproved, err := store.ReviewJoinApplication(ctx, "owner", "", sharedApplication.ID, true, "shared-member", now, audit("approve-shared", "owner", sharedPlan.ID))
 	if err != nil {
 		t.Fatal(err)
 	}

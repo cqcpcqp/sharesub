@@ -2,8 +2,10 @@
 
 import { flushPromises, mount } from '@vue/test-utils'
 import { effectScope, reactive } from 'vue'
+import { NSelect } from 'naive-ui'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { APIRequestError, api } from './api'
+import { adminAPI } from './api/admin'
 import { agreementVersions } from './agreements'
 import type { APIKey, Account, Plan, PlanDetail, PlanPerformance, PublicPlan, User } from './types'
 import APIKeySetupWizard from './components/APIKeySetupWizard.vue'
@@ -37,6 +39,10 @@ const member: User = {
   is_admin: false,
   role: 'user',
   must_change_password: false,
+}
+const administrator: User = {
+  id: 'admin', username: '管理员', email: 'admin@example.com', avatar_url: '', status: 'active',
+  created_at: createdAt, is_admin: true, role: 'admin', must_change_password: false,
 }
 const account: Account = {
   id: 'account',
@@ -240,6 +246,29 @@ describe('form interactions', () => {
     expect(rebind).toHaveBeenCalledWith(unboundPlan.id, account.id)
     expect(view.detail.value?.account).toEqual(account)
     scope.stop()
+  })
+
+  it('uses administrator Plan APIs while preserving the real owner account scope', async () => {
+    const boundPlan = { ...unboundPlan, account_id: account.id }
+    const boundDetail: PlanDetail = { ...unboundDetail, plan: boundPlan, account }
+    vi.spyOn(adminAPI, 'adminPlan').mockResolvedValueOnce(unboundDetail).mockResolvedValue(boundDetail)
+    const rebind = vi.spyOn(adminAPI, 'adminRebindPlanAccount').mockResolvedValue(boundPlan)
+    const wrapper = mount(PlansView, {
+      attachTo: document.body,
+      props: { accounts: [account], plans: [unboundPlan], user: administrator, theme: 'light', adminMode: true },
+      global: { stubs: { teleport: true } },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('由 房主 提供')
+    expect(findButton(wrapper, '创建 Plan')).toBeUndefined()
+    await findButton(wrapper, '去绑定账号')!.trigger('click')
+    const select = wrapper.findAllComponents(NSelect).find(component => component.props('placeholder') === '选择尚未绑定的账号')!
+    select.vm.$emit('update:value', account.id)
+    await flushPromises()
+    await findButton(wrapper, '绑定账号')!.trigger('click')
+    await flushPromises()
+    expect(rebind).toHaveBeenCalledWith(unboundPlan.id, account.id)
   })
 
   it('accepts the archived Plan name and enables permanent deletion', async () => {

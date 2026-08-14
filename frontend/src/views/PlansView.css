@@ -1,3 +1,7 @@
+.admin-plans-layout {
+  padding: 0;
+}
+
 .archived-alert,
 .account-required-alert {
   margin-top: 18px;

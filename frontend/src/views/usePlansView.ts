@@ -1,5 +1,6 @@
 import { computed, watch } from 'vue'
 import { api } from '../api'
+import { adminAPI } from '../api/admin'
 import { allocationShareBasisPoints, formatShareBasisPoints, maxPlanShareBasisPoints, planApprovedPublicMemberCount, planAvailablePublicSlotCount, planPublicationShareBasisPoints, planReservedShareBasisPoints } from '../planAllocation'
 import type { Account, Member, PerformancePeriod, Plan, PlanAllocationMode, PlanDetail, User } from '../types'
 import { formatPlanAuditDate, formatPlanAuditMetadata, planAuditActionLabels, planAuditMetadataLabels, planRequestErrorMessage } from './planViewPresentation'
@@ -8,10 +9,11 @@ import { createPlanViewState } from './planViewState'
 const automaticQuotaRefreshes = new Map<string, number>()
 const automaticQuotaRefreshTTL = 5 * 60 * 1000
 
-export interface PlansViewProps { accounts: Account[]; plans: Plan[]; user: User; initialPlanId: string; invitePlanId: string }
+export interface PlansViewProps { accounts: Account[]; plans: Plan[]; user: User; initialPlanId: string; invitePlanId: string; adminMode?: boolean }
 export interface PlansViewEmit {
   (event: 'changed'): void
   (event: 'inviteOpened'): void
+  (event: 'deleted'): void
   (event: 'message', type: 'success' | 'error', text: string): void
 }
 
@@ -24,14 +26,16 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
     createForm, inviteForm, publication, shareDrafts,
   } = createPlanViewState()
 
+  const resourceOwnerID = computed(() => detail.value?.plan.owner_user_id ?? props.user.id)
   const availableAccounts = computed(() => props.accounts.filter(account =>
-    account.owner_user_id === props.user.id
+    account.owner_user_id === resourceOwnerID.value
     && account.status === 'active'
     && !props.plans.some(plan => plan.account_id === account.id),
   ))
   const accountOptions = computed(() => availableAccounts.value.map(account => ({ label: `${account.email} · ${account.plan_type}`, value: account.id })))
   const planOptions = computed(() => props.plans.map(plan => ({ label: `${plan.name}${plan.status === 'archived' ? ' · 已归档' : ''}`, value: plan.id })))
-  const isOwner = computed(() => detail.value?.plan.owner_user_id === props.user.id)
+  const isActualOwner = computed(() => detail.value?.plan.owner_user_id === props.user.id)
+  const canManage = computed(() => isActualOwner.value || props.adminMode)
   const isShared = computed(() => detail.value?.plan.allocation_mode === 'shared')
   const isArchived = computed(() => detail.value?.plan.status === 'archived')
   const isAccountBound = computed(() => detail.value?.account !== null)
@@ -83,7 +87,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
     .filter(member => member.role === 'member')
     .map(member => ({ label: `${member.username} · ${member.email}`, value: member.id })))
   const rebindAccountOptions = computed(() => props.accounts
-    .filter(account => account.owner_user_id === props.user.id
+    .filter(account => account.owner_user_id === resourceOwnerID.value
       && account.status === 'active'
       && account.id !== detail.value!.account?.id
       && !props.plans.some(plan => plan.id !== detail.value!.plan.id && plan.account_id === account.id))
@@ -91,6 +95,45 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
 
   const actionLabels = planAuditActionLabels
   const metadataLabels = planAuditMetadataLabels
+  const managementAPI = props.adminMode ? {
+    plan: adminAPI.adminPlan,
+    planPerformance: adminAPI.adminPlanPerformance,
+    planAuditEvents: adminAPI.adminPlanAuditEvents,
+    refreshPlanQuota: (id: string, _automatic = false) => adminAPI.adminRefreshPlanQuota(id),
+    planQuotaResetCredits: adminAPI.adminPlanQuotaResetCredits,
+    resetPlanQuota: adminAPI.adminResetPlanQuota,
+    invite: adminAPI.adminInvite,
+    revokeInvite: adminAPI.adminRevokeInvite,
+    updatePublication: (id: string, payload: { visibility: string; public_slots: number; public_share_basis_points: number }) => adminAPI.adminUpdatePlanPublication(id, payload.visibility as 'private' | 'public', payload.public_slots, payload.public_share_basis_points),
+    updateMember: adminAPI.adminUpdateMember,
+    removeMember: adminAPI.adminRemoveMember,
+    reviewApplication: adminAPI.adminReviewApplication,
+    renamePlan: (id: string, name: string) => adminAPI.adminUpdatePlan(id, { name }),
+    updatePlanDescription: (id: string, description: string) => adminAPI.adminUpdatePlan(id, { description }),
+    updatePlanStatus: adminAPI.adminUpdatePlanStatus,
+    transferPlanOwnership: adminAPI.adminTransferPlanOwnership,
+    rebindPlanAccount: adminAPI.adminRebindPlanAccount,
+    deletePlan: adminAPI.adminDeletePlan,
+  } : {
+    plan: api.plan,
+    planPerformance: api.planPerformance,
+    planAuditEvents: api.planAuditEvents,
+    refreshPlanQuota: api.refreshPlanQuota,
+    planQuotaResetCredits: api.planQuotaResetCredits,
+    resetPlanQuota: api.resetPlanQuota,
+    invite: api.invite,
+    revokeInvite: api.revokeInvite,
+    updatePublication: api.updatePublication,
+    updateMember: api.updateMember,
+    removeMember: api.removeMember,
+    reviewApplication: (_planID: string, id: string, decision: 'approve' | 'reject') => api.reviewApplication(id, decision),
+    renamePlan: api.renamePlan,
+    updatePlanDescription: api.updatePlanDescription,
+    updatePlanStatus: api.updatePlanStatus,
+    transferPlanOwnership: api.transferPlanOwnership,
+    rebindPlanAccount: api.rebindPlanAccount,
+    deletePlan: api.deletePlan,
+  }
 
   let planRequestSequence = 0
   let performanceRequestSequence = 0
@@ -139,7 +182,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
       consumedInvitePlanID = invitePlanID
       activeTab.value = 'members'
       if (detail.value?.plan.id !== invitePlanID) await loadPlan(invitePlanID)
-      if (detail.value?.plan.id === invitePlanID && detail.value.plan.owner_user_id === props.user.id && detail.value.plan.status !== 'archived') {
+      if (detail.value?.plan.id === invitePlanID && canManage.value && detail.value.plan.status !== 'archived') {
         showInviteComposer.value = true
       }
       emit('inviteOpened')
@@ -160,7 +203,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
       performanceRequestSequence += 1
     }
     try {
-      const value = await api.plan(id)
+      const value = await managementAPI.plan(id)
       if (requestSequence !== planRequestSequence) return
       if (!changingPlan && previousAccountID !== (value.account?.id ?? '')) clearQuotaResetState()
       detail.value = value
@@ -182,7 +225,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
     const requestSequence = ++performanceRequestSequence
     performanceLoading.value = true
     try {
-      const value = await api.planPerformance(planID, period)
+      const value = await managementAPI.planPerformance(planID, period)
       if (requestSequence !== performanceRequestSequence || detail.value?.plan.id !== planID) return
       detail.value.insights.performance = value
       detail.value.insights.model_usage = value.model_usage
@@ -204,8 +247,8 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
     automaticQuotaRefreshes.set(planID, Date.now())
     quotaRefreshing.value = true
     try {
-      await api.refreshPlanQuota(planID, true)
-      const value = await api.plan(planID)
+      await managementAPI.refreshPlanQuota(planID, true)
+      const value = await managementAPI.plan(planID)
       if (requestSequence !== planRequestSequence) return
       if (performancePeriod.value !== '24h' && detail.value?.plan.id === planID) {
         value.insights.performance = detail.value.insights.performance
@@ -268,7 +311,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
     const requestSequence = ++auditRequestSequence
     auditLoading.value = true
     try {
-      const value = await api.planAuditEvents(planID)
+      const value = await managementAPI.planAuditEvents(planID)
       if (requestSequence === auditRequestSequence) auditEvents.value = value
     } catch (error) {
       if (requestSequence === auditRequestSequence) notifyError(error)
@@ -313,7 +356,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
     const planID = detail.value.plan.id
     quotaRefreshing.value = true
     try {
-      await api.refreshPlanQuota(planID)
+      await managementAPI.refreshPlanQuota(planID)
       await loadPlan(planID)
       notifySuccess('账号额度与重置时间已更新')
     } catch (error) {
@@ -333,7 +376,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
   function canManageQuotaReset() {
     return Boolean(detail.value
       && detail.value.account
-      && detail.value.plan.owner_user_id === props.user.id
+      && canManage.value
       && detail.value.plan.status !== 'archived')
   }
 
@@ -348,7 +391,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
     const requestSequence = ++quotaResetCreditsRequestSequence
     quotaResetCreditsLoading.value = true
     try {
-      const value = await api.planQuotaResetCredits(planID)
+      const value = await managementAPI.planQuotaResetCredits(planID)
       if (requestSequence !== quotaResetCreditsRequestSequence
         || detail.value?.plan.id !== planID
         || detail.value.account?.id !== accountID) return
@@ -373,7 +416,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
     quotaResettingAccountIDs.add(accountID)
     quotaResetting.value = true
     try {
-      const result = await api.resetPlanQuota(planID)
+      const result = await managementAPI.resetPlanQuota(planID)
       notifySuccess(`已使用 1 次重置机会，OpenAI 已重置 ${result.windows_reset} 个额度窗口`)
       if (detail.value?.plan.id !== planID || detail.value.account?.id !== accountID) return
       quotaResetCredits.value = null
@@ -397,7 +440,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
     const planID = detail.value.plan.id
     actionLoading.value = 'create-invite'
     try {
-      const value = await api.invite(planID, allocationShareBasisPoints(detail.value.plan.allocation_mode, inviteForm.share))
+      const value = await managementAPI.invite(planID, allocationShareBasisPoints(detail.value.plan.allocation_mode, inviteForm.share))
       showInviteComposer.value = false
       inviteSecret.value = value.invite_url
       localStorage.setItem(`sharesub.onboarding.invite.${planID}`, 'done')
@@ -415,7 +458,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
     const planID = detail.value.plan.id
     actionLoading.value = `invite-${inviteID}`
     try {
-      await api.revokeInvite(planID, inviteID)
+      await managementAPI.revokeInvite(planID, inviteID)
       await loadPlan(planID)
       notifySuccess('邀请已撤销')
     } catch (error) {
@@ -431,7 +474,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
     const publicSlots = publication.visibility === 'public' ? publication.slots! : 0
     actionLoading.value = 'publication'
     try {
-      await api.updatePublication(planID, {
+      await managementAPI.updatePublication(planID, {
         visibility: publication.visibility,
         public_slots: publicSlots,
         public_share_basis_points: publication.visibility === 'public' ? allocationShareBasisPoints(detail.value.plan.allocation_mode, publication.share) : 0,
@@ -452,7 +495,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
     const original = Math.round(member.share_basis_points / 100)
     actionLoading.value = `share-${member.id}`
     try {
-      await api.updateMember(planID, member.id, Math.round(shareDrafts[member.id] * 100))
+      await managementAPI.updateMember(planID, member.id, Math.round(shareDrafts[member.id] * 100))
       await loadPlan(planID)
       notifySuccess('成员份额已更新')
     } catch (error) {
@@ -468,7 +511,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
     const planID = detail.value.plan.id
     actionLoading.value = `remove-${member.id}`
     try {
-      await api.removeMember(planID, member.id)
+      await managementAPI.removeMember(planID, member.id)
       await loadPlan(planID)
       emit('changed')
       notifySuccess(`${member.username} 已被移出 Plan`)
@@ -484,7 +527,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
     const planID = detail.value.plan.id
     actionLoading.value = 'leave-plan'
     try {
-      await api.removeMember(planID, currentMember.value.id)
+      await managementAPI.removeMember(planID, currentMember.value.id)
       planRequestSequence += 1
       detail.value = null
       clearQuotaResetState()
@@ -502,7 +545,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
     const planID = detail.value.plan.id
     actionLoading.value = `application-${decision}-${id}`
     try {
-      await api.reviewApplication(id, decision)
+      await managementAPI.reviewApplication(planID, id, decision)
       await loadPlan(planID)
       emit('changed')
       notifySuccess(decision === 'approve' ? '申请已批准' : '申请已拒绝')
@@ -522,7 +565,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
     const planID = detail.value.plan.id
     actionLoading.value = 'rename'
     try {
-      await api.renamePlan(planID, renameDraft.value.trim())
+      await managementAPI.renamePlan(planID, renameDraft.value.trim())
       await loadPlan(planID)
       emit('changed')
       notifySuccess('Plan 名称已更新')
@@ -538,7 +581,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
     const planID = detail.value.plan.id
     actionLoading.value = 'description'
     try {
-      await api.updatePlanDescription(planID, descriptionDraft.value.trim())
+      await managementAPI.updatePlanDescription(planID, descriptionDraft.value.trim())
       await loadPlan(planID)
       emit('changed')
       notifySuccess('Plan 描述已更新')
@@ -554,7 +597,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
     const planID = detail.value.plan.id
     actionLoading.value = `status-${status}`
     try {
-      await api.updatePlanStatus(planID, status)
+      await managementAPI.updatePlanStatus(planID, status)
       await loadPlan(planID)
       emit('changed')
       notifySuccess(status === 'archived' ? 'Plan 已归档' : 'Plan 已恢复')
@@ -570,7 +613,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
     const planID = detail.value.plan.id
     actionLoading.value = 'transfer'
     try {
-      await api.transferPlanOwnership(planID, transferMemberID.value)
+      await managementAPI.transferPlanOwnership(planID, transferMemberID.value)
       await loadPlan(planID)
       emit('changed')
       notifySuccess('Plan 所有权已转让')
@@ -587,7 +630,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
     const firstBinding = !detail.value.account
     actionLoading.value = 'rebind'
     try {
-      await api.rebindPlanAccount(planID, rebindAccountID.value)
+      await managementAPI.rebindPlanAccount(planID, rebindAccountID.value)
       await loadPlan(planID)
       emit('changed')
       notifySuccess(firstBinding ? 'OpenAI 账号已绑定到 Plan' : 'Plan 已切换到新的 OpenAI 账号')
@@ -603,7 +646,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
     const planID = detail.value.plan.id
     actionLoading.value = 'connect-account'
     try {
-      await api.rebindPlanAccount(planID, account.id)
+      await managementAPI.rebindPlanAccount(planID, account.id)
       await loadPlan(planID)
       emit('changed')
       notifySuccess('OpenAI 账号已接入并绑定到 Plan')
@@ -632,13 +675,14 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
     const planID = detail.value.plan.id
     actionLoading.value = 'delete'
     try {
-      await api.deletePlan(planID)
+      await managementAPI.deletePlan(planID)
       planRequestSequence += 1
       auditRequestSequence += 1
       detail.value = null
       clearQuotaResetState()
       closeDeleteDialogs()
       emit('changed')
+      emit('deleted')
       notifySuccess('Plan 已永久删除')
     } catch (error) {
       notifyError(error)
@@ -683,7 +727,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
     availableAccounts, loadPlan, loadAudit, loadPerformance,
     showCreate, showConnectAccount, showInviteComposer, inviteSecret, showDeleteConfirmOne, showDeleteConfirmTwo,
     deleteNameDraft, renameDraft, descriptionDraft, transferMemberID, rebindAccountID, createForm, inviteForm,
-    publication, shareDrafts, accountOptions, planOptions, isOwner, isShared, isArchived, isAccountBound, owner,
+    publication, shareDrafts, accountOptions, planOptions, isActualOwner, canManage, isShared, isArchived, isAccountBound, owner,
     currentMember, allocatedShare, reservedShares, remainingInviteSharePercent, canCreateInvite, approvedPublicMembers, availablePublicSlots, publicationAvailablePublicSlots,
     publicationReservedShares, maxPublicSeatSharePercent, publicationCapacityExceeded,
     canRename, canUpdateDescription, canSavePublication,

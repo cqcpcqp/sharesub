@@ -98,11 +98,12 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { NButton, NPagination, NSpin } from 'naive-ui'
 import { CircleCheck, TriangleAlert } from 'lucide-vue-next'
 import { api } from '../api'
+import { adminAPI } from '../api/admin'
 import type { GatewayErrorSource, PerformancePeriod, PlanRequestError } from '../types'
 import { formatMilliseconds } from '../dashboardFormat'
 import ModalShell from './ModalShell.vue'
 
-const props = defineProps<{ planId: string; period: PerformancePeriod }>()
+const props = withDefaults(defineProps<{ planId: string; period: PerformancePeriod; adminMode?: boolean }>(), { adminMode: false })
 const emit = defineEmits<{ close: [] }>()
 
 const pageSize = 20
@@ -146,7 +147,9 @@ async function loadPage(nextPage: number) {
   loading.value = true
   loadError.value = ''
   try {
-    const result = await api.planRequestErrors(props.planId, props.period, nextPage, pageSize, controller.signal)
+    const result = props.adminMode
+      ? await adminAPI.adminPlanRequestErrors(props.planId, props.period, nextPage, pageSize, controller.signal)
+      : await api.planRequestErrors(props.planId, props.period, nextPage, pageSize, controller.signal)
     items.value = result.items
     total.value = result.total
   } catch (error) {

@@ -243,13 +243,24 @@ func (s *Store) AccountByID(ctx context.Context, id string) (domain.Account, err
 	return a, mapError(err)
 }
 
-func (s *Store) UpdateAccountConfig(ctx context.Context, userID string, account domain.Account) (domain.Account, error) {
+func (s *Store) UpdateAccountConfig(ctx context.Context, userID string, account domain.Account, event domain.AuditEvent) (domain.Account, error) {
 	if account.FastPolicy == nil {
 		account.FastPolicy = make([]domain.FastPolicyRule, 0)
 	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return domain.Account{}, err
+	}
+	defer tx.Rollback(ctx)
 	var out domain.Account
-	err := s.pool.QueryRow(ctx, `UPDATE openai_accounts SET name=$3,notes=$4,proxy_url_ciphertext=$5,max_concurrency=$6,rpm_limit=$7,fast_policy=$8,codex_fingerprint_mode=$9,status=$10,last_error=CASE WHEN $10='active' THEN '' ELSE last_error END,updated_at=now() WHERE id=$1 AND owner_user_id=$2 RETURNING id,owner_user_id,name,notes,email,chatgpt_account_id,plan_type,subscription_expires_at,proxy_url_ciphertext,max_concurrency,rpm_limit,fast_policy,codex_fingerprint_mode,token_expires_at,status,last_error,created_at`, account.ID, userID, account.Name, account.Notes, account.ProxyURLCiphertext, account.MaxConcurrency, account.RPMLimit, account.FastPolicy, account.CodexFingerprintMode, account.Status).Scan(&out.ID, &out.OwnerUserID, &out.Name, &out.Notes, &out.Email, &out.ChatGPTAccountID, &out.PlanType, &out.SubscriptionExpiresAt, &out.ProxyURLCiphertext, &out.MaxConcurrency, &out.RPMLimit, &out.FastPolicy, &out.CodexFingerprintMode, &out.TokenExpiresAt, &out.Status, &out.LastError, &out.CreatedAt)
-	return out, mapError(err)
+	err = tx.QueryRow(ctx, `UPDATE openai_accounts SET name=$3,notes=$4,proxy_url_ciphertext=$5,max_concurrency=$6,rpm_limit=$7,fast_policy=$8,codex_fingerprint_mode=$9,status=$10,last_error=CASE WHEN $10='active' THEN '' ELSE last_error END,updated_at=now() WHERE id=$1 AND owner_user_id=$2 RETURNING id,owner_user_id,name,notes,email,chatgpt_account_id,plan_type,subscription_expires_at,proxy_url_ciphertext,max_concurrency,rpm_limit,fast_policy,codex_fingerprint_mode,token_expires_at,status,last_error,created_at`, account.ID, userID, account.Name, account.Notes, account.ProxyURLCiphertext, account.MaxConcurrency, account.RPMLimit, account.FastPolicy, account.CodexFingerprintMode, account.Status).Scan(&out.ID, &out.OwnerUserID, &out.Name, &out.Notes, &out.Email, &out.ChatGPTAccountID, &out.PlanType, &out.SubscriptionExpiresAt, &out.ProxyURLCiphertext, &out.MaxConcurrency, &out.RPMLimit, &out.FastPolicy, &out.CodexFingerprintMode, &out.TokenExpiresAt, &out.Status, &out.LastError, &out.CreatedAt)
+	if err != nil {
+		return domain.Account{}, mapError(err)
+	}
+	if err := insertAuditEvent(ctx, tx, event); err != nil {
+		return domain.Account{}, err
+	}
+	return out, tx.Commit(ctx)
 }
 
 func (s *Store) UpdateAccountTokensIfRefreshTokenUnchanged(ctx context.Context, id string, expectedRefresh, access, refresh []byte, expiresAt time.Time) (bool, error) {

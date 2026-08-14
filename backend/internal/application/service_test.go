@@ -289,7 +289,7 @@ func (s *accountConfigStore) AccountByID(context.Context, string) (domain.Accoun
 	return s.account, nil
 }
 
-func (s *accountConfigStore) UpdateAccountConfig(_ context.Context, _ string, account domain.Account) (domain.Account, error) {
+func (s *accountConfigStore) UpdateAccountConfig(_ context.Context, _ string, account domain.Account, _ domain.AuditEvent) (domain.Account, error) {
 	s.updated = account
 	return account, nil
 }

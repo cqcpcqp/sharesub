@@ -1,18 +1,61 @@
-import type { AccountConfigInput, AdminAPIKey, AdminAccount, AdminOverview, AdminPlan, AdminUser, Plan, User } from '../types'
+import type {
+  AccountConfigInput,
+  Account,
+  AdminAPIKey,
+  AdminAccount,
+  AdminOverview,
+  AdminPlan,
+  AdminUser,
+  AuditEvent,
+  CreatedInvite,
+  JoinApplication,
+  Member,
+  OAuthStart,
+  PerformancePeriod,
+  Plan,
+  PlanDetail,
+  PlanPerformance,
+  PlanQuotaResetResult,
+  PlanRequestErrorList,
+  QuotaRefreshResult,
+  QuotaResetCredits,
+  User,
+} from '../types'
 import { request } from './client'
+
+function browserTimezone() {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone
+}
 
 export const adminAPI = {
   adminOverview: () => request<AdminOverview>('/api/admin/overview'),
   adminUsers: () => request<AdminUser[]>('/api/admin/users'),
   adminUpdateUserStatus: (id: string, status: 'active' | 'disabled') => request<User>(`/api/admin/users/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
   adminAccounts: () => request<AdminAccount[]>('/api/admin/accounts'),
+  adminAccount: (id: string) => request<AdminAccount>(`/api/admin/accounts/${id}`),
   adminUpdateAccount: (id: string, config: AccountConfigInput) => request<AdminAccount>(`/api/admin/accounts/${id}`, { method: 'PATCH', body: JSON.stringify(config) }),
   adminUpdateAccountStatus: (id: string, status: 'active' | 'disabled') => request<AdminAccount>(`/api/admin/accounts/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+  adminOAuthReauthorizeStart: (id: string) => request<OAuthStart>(`/api/admin/accounts/${id}/oauth/start`, { method: 'POST' }),
+  adminOAuthReauthorizeComplete: (id: string, state: string, code: string) => request<Account>(`/api/admin/accounts/${id}/oauth/complete`, { method: 'POST', body: JSON.stringify({ state, code }) }),
   adminPlans: () => request<AdminPlan[]>('/api/admin/plans'),
+  adminPlan: (id: string) => request<PlanDetail>(`/api/admin/plans/${id}?timezone=${encodeURIComponent(browserTimezone())}`),
+  adminPlanPerformance: (id: string, period: PerformancePeriod) => request<PlanPerformance>(`/api/admin/plans/${id}/performance?period=${period}&timezone=${encodeURIComponent(browserTimezone())}`),
+  adminPlanRequestErrors: (id: string, period: PerformancePeriod, page: number, pageSize: number, signal?: AbortSignal) => request<PlanRequestErrorList>(`/api/admin/plans/${id}/errors?period=${period}&timezone=${encodeURIComponent(browserTimezone())}&page=${page}&page_size=${pageSize}`, { signal }),
+  adminPlanAuditEvents: (id: string) => request<AuditEvent[]>(`/api/admin/plans/${id}/audit-events`),
   adminUpdatePlan: (id: string, payload: { name: string } | { description: string }) => request<Plan>(`/api/admin/plans/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
   adminUpdatePlanStatus: (id: string, status: 'active' | 'archived') => request<Plan>(`/api/admin/plans/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+  adminDeletePlan: (id: string) => request<{ deleted: boolean }>(`/api/admin/plans/${id}`, { method: 'DELETE' }),
+  adminTransferPlanOwnership: (id: string, memberID: string) => request<Plan>(`/api/admin/plans/${id}/owner`, { method: 'PATCH', body: JSON.stringify({ member_id: memberID }) }),
   adminRebindPlanAccount: (id: string, accountID: string) => request<Plan>(`/api/admin/plans/${id}/account`, { method: 'PATCH', body: JSON.stringify({ account_id: accountID }) }),
   adminUpdatePlanPublication: (id: string, visibility: 'private' | 'public', publicSlots: number, publicShareBasisPoints: number) => request<Plan>(`/api/admin/plans/${id}/publication`, { method: 'PATCH', body: JSON.stringify({ visibility, public_slots: publicSlots, public_share_basis_points: publicShareBasisPoints }) }),
+  adminInvite: (id: string, shareBasisPoints: number) => request<CreatedInvite>(`/api/admin/plans/${id}/invites`, { method: 'POST', body: JSON.stringify({ share_basis_points: shareBasisPoints }) }),
+  adminRevokeInvite: (planID: string, inviteID: string) => request<CreatedInvite['invite']>(`/api/admin/plans/${planID}/invites/${inviteID}`, { method: 'DELETE' }),
+  adminReviewApplication: (planID: string, id: string, decision: 'approve' | 'reject') => request<JoinApplication>(`/api/admin/plans/${planID}/applications/${id}`, { method: 'PATCH', body: JSON.stringify({ decision }) }),
+  adminUpdateMember: (planID: string, memberID: string, shareBasisPoints: number) => request<Member>(`/api/admin/plans/${planID}/members/${memberID}`, { method: 'PATCH', body: JSON.stringify({ share_basis_points: shareBasisPoints }) }),
+  adminRemoveMember: (planID: string, memberID: string) => request<{ removed: boolean }>(`/api/admin/plans/${planID}/members/${memberID}`, { method: 'DELETE' }),
+  adminRefreshPlanQuota: (id: string) => request<QuotaRefreshResult>(`/api/admin/plans/${id}/quota/refresh`, { method: 'POST' }),
+  adminPlanQuotaResetCredits: (id: string) => request<QuotaResetCredits>(`/api/admin/plans/${id}/quota/reset-credits`),
+  adminResetPlanQuota: (id: string) => request<PlanQuotaResetResult>(`/api/admin/plans/${id}/quota/reset`, { method: 'POST' }),
   adminKeys: () => request<AdminAPIKey[]>('/api/admin/keys'),
   adminRevokeKey: (id: string) => request<{ revoked: boolean }>(`/api/admin/keys/${id}`, { method: 'DELETE' }),
 }

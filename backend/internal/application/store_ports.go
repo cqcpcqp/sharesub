@@ -42,7 +42,7 @@ type AccountStore interface {
 	CreateOrRotateAccountAuthorization(context.Context, domain.Account, bool) (domain.Account, error)
 	ListAccounts(context.Context, string) ([]domain.Account, error)
 	AccountByID(context.Context, string) (domain.Account, error)
-	UpdateAccountConfig(context.Context, string, domain.Account) (domain.Account, error)
+	UpdateAccountConfig(context.Context, string, domain.Account, domain.AuditEvent) (domain.Account, error)
 	UpdateAccountAuthorization(context.Context, string, domain.Account, domain.AuditEvent) (domain.Account, error)
 	UpdateAccountTokensIfRefreshTokenUnchanged(context.Context, string, []byte, []byte, []byte, time.Time) (bool, error)
 	UpdateAccountSubscriptionExpiresAtIfRefreshTokenUnchanged(context.Context, string, []byte, *time.Time) (bool, error)
@@ -79,7 +79,7 @@ type PlanManagementStore interface {
 
 type PlanCollaborationStore interface {
 	CreateJoinApplication(context.Context, domain.JoinApplication, domain.AuditEvent) (domain.JoinApplication, error)
-	ReviewJoinApplication(context.Context, string, string, bool, string, time.Time, domain.AuditEvent) (domain.JoinApplication, error)
+	ReviewJoinApplication(context.Context, string, string, string, bool, string, time.Time, domain.AuditEvent) (domain.JoinApplication, error)
 	CreateInvite(context.Context, string, string, domain.Invite, domain.AuditEvent) error
 	InvitePreview(context.Context, []byte, time.Time) (domain.InvitePreview, error)
 	AcceptInvite(context.Context, []byte, domain.User, string, time.Time, domain.AuditEvent) (domain.Member, error)
@@ -103,8 +103,10 @@ type AdminStore interface {
 	AdminListUsers(context.Context) ([]domain.AdminUser, error)
 	AdminUpdateUserStatus(context.Context, string, string) (domain.User, error)
 	AdminListAccounts(context.Context) ([]domain.AdminAccount, error)
-	AdminUpdateAccountStatus(context.Context, string, string) (domain.AdminAccount, error)
+	AdminUpdateAccountStatus(context.Context, string, string, domain.AuditEvent) (domain.AdminAccount, error)
+	RecordAuditEvent(context.Context, domain.AuditEvent) error
 	AdminListPlans(context.Context, time.Time) ([]domain.AdminPlan, error)
+	AdminPlanByID(context.Context, string) (domain.Plan, error)
 	AdminListAPIKeys(context.Context) ([]domain.AdminAPIKey, error)
 	AdminRevokeAPIKey(context.Context, string) error
 }

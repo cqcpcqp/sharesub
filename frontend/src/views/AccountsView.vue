@@ -105,31 +105,23 @@
     </template>
   </ModalShell>
 
-  <ModalShell
-    v-if="editing"
-    title="编辑 OpenAI 账号"
-    :subtitle="editing.email"
-    :wide="true"
+  <AccountConfigDialog
+    :account="editing"
+    :saving="saving"
+    :policy-user-options="policyUserOptions"
     @close="editing = null"
-  >
-    <AccountConfigFields v-model="editConfig" :show-status="true" :policy-user-options="policyUserOptions" />
-    <template #footer>
-      <NButton @click="editing = null">取消</NButton>
-      <NButton type="primary" :loading="saving" :disabled="!editConfig.name.trim()" @click="saveEdit">
-        <template #icon><Save :size="17" /></template>
-        保存配置
-      </NButton>
-    </template>
-  </ModalShell>
+    @save="saveEdit"
+    @reauthorize="startReauthorizeFromEditor"
+  />
 </template>
 
 <script setup lang="ts">
 import { NAlert, NButton } from 'naive-ui'
 import { computed, ref } from 'vue'
-import { Bot, CalendarRange, ExternalLink, Gauge, Network, Pencil, Plus, RotateCw, Save, TimerReset } from 'lucide-vue-next'
+import { Bot, CalendarRange, ExternalLink, Gauge, Network, Pencil, Plus, RotateCw, TimerReset } from 'lucide-vue-next'
 import { api, parseOAuthCallback } from '../api'
 import type { Account, AccountConfigInput, Member, OAuthStart, Plan } from '../types'
-import AccountConfigFields from '../components/AccountConfigFields.vue'
+import AccountConfigDialog from '../components/AccountConfigDialog.vue'
 import AppInput from '../components/AppInput.vue'
 import EmptyState from '../components/EmptyState.vue'
 import ModalShell from '../components/ModalShell.vue'
@@ -147,11 +139,15 @@ const reauthorizeCallback = ref('')
 const reauthorizeStartingID = ref('')
 const reauthorizeCompleting = ref(false)
 const saving = ref(false)
-const editConfig = ref<AccountConfigInput>(emptyConfig())
 const policyMembers = ref<Member[]>([])
 const policyUserOptions = computed(() => policyMembers.value.map(member => ({ label: member.email ? `${member.username} · ${member.email}` : member.username, value: member.user_id })))
 
 function updateReauthorizeCallback(value: string) { reauthorizeCallback.value = value }
+
+function startReauthorizeFromEditor(account: Account) {
+  editing.value = null
+  void startReauthorize(account)
+}
 
 function handleConnected() {
   emit('message', 'success', 'OpenAI 账号已接入')
@@ -199,16 +195,6 @@ async function completeReauthorize() {
 async function openEdit(account: Account) {
   editing.value = account
   policyMembers.value = []
-  editConfig.value = {
-    name: account.name,
-    notes: account.notes,
-    proxy_url: account.proxy_url,
-    max_concurrency: account.max_concurrency,
-    rpm_limit: account.rpm_limit,
-    fast_policy: account.fast_policy.map(rule => ({ ...rule, user_ids: [...rule.user_ids], model_whitelist: [...rule.model_whitelist] })),
-    codex_fingerprint_mode: account.codex_fingerprint_mode,
-    status: account.status,
-  }
   const plan = props.plans.find(candidate => candidate.account_id === account.id)
   if (plan) {
     try {
@@ -220,11 +206,11 @@ async function openEdit(account: Account) {
   }
 }
 
-async function saveEdit() {
+async function saveEdit(config: AccountConfigInput) {
   if (!editing.value) return
   saving.value = true
   try {
-    await api.updateAccount(editing.value.id, { ...editConfig.value })
+    await api.updateAccount(editing.value.id, config)
     editing.value = null
     emit('message', 'success', '账号配置已更新')
     emit('changed')
@@ -233,10 +219,6 @@ async function saveEdit() {
   } finally {
     saving.value = false
   }
-}
-
-function emptyConfig(): AccountConfigInput {
-  return { name: '', notes: '', proxy_url: '', max_concurrency: 0, rpm_limit: 0, fast_policy: [], codex_fingerprint_mode: 'session', status: 'active' }
 }
 
 function notifyError(value: unknown) {

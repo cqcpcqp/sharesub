@@ -80,7 +80,7 @@ OAuth 开始接口返回 `authorization_url` 和 `flow_id`。完成授权后，�
 
 账号规则的 `filter`、`force_priority` 和 `block` 是最终决定；账号规则为空、未命中或结果为 `pass` 时继续执行当前 API Key 的规则。`force_priority` 即使请求未携带 `service_tier` 也会主动写入 ChatGPT Codex 上游当前接受的兼容值 `priority`；入站 `fast` 与 `priority` 均按 Fast 模式匹配，其他透传请求保留原始值。过滤或强制后的 service tier 同步用于请求成本统计。ShareSub 负责识别、过滤、改写或拦截该字段，实际 Fast/Flex 推理、额度消耗和模型可用性由 OpenAI 上游决定。
 
-账号列表与已绑定 Plan 详情中的 `account` 返回 `id`、`owner_user_id`、上述配置、OpenAI 邮箱、ChatGPT Account ID、套餐类型、付费订阅有效期 `subscription_expires_at`、OAuth Token 到期时间、状态、最近错误和创建时间。`subscription_expires_at` 的固定类型为 RFC 3339 时间字符串或 `null`；当前没有取得订阅有效期时返回 `null`。未绑定账号的 Plan 固定返回 `account: null` 和 `plan.account_id: ""`。OAuth access token、refresh token 以及任何密文字段永远不会进入 JSON 响应。只有账号所有者可以修改配置；Plan 的所有有效成员都能通过 Plan 详情查看该账号的完整配置。
+账号列表与已绑定 Plan 详情中的 `account` 返回 `id`、`owner_user_id`、上述配置、OpenAI 邮箱、ChatGPT Account ID、套餐类型、付费订阅有效期 `subscription_expires_at`、OAuth Token 到期时间、状态、最近错误和创建时间。`subscription_expires_at` 的固定类型为 RFC 3339 时间字符串或 `null`；当前没有取得订阅有效期时返回 `null`。未绑定账号的 Plan 固定返回 `account: null` 和 `plan.account_id: ""`。OAuth access token、refresh token 以及任何密文字段永远不会进入 JSON 响应。账号所有者和平台管理员可以修改配置与重新授权；管理员操作不改变 `owner_user_id`，并以真实管理员身份记录审计事件。Plan 的所有有效成员都能通过 Plan 详情查看该账号的完整配置。
 
 “OAuth Token 到期时间”是当前 OpenAI OAuth access token 的到期时间；`subscription_expires_at` 是 ChatGPT 当前付费订阅的有效截止时间，两者含义不同。API 服务默认每 5 分钟扫描一次，并提前 30 分钟使用 refresh token 自动换取新凭据，同时重新查询订阅有效期；请求与额度探测路径在剩余不足 2 分钟时也会触发同一刷新流程。刷新使用数据库租约锁和凭据条件更新，避免多实例重复刷新或覆盖刚完成的重新授权。连续刷新失败后账号会进入 `refresh_required` 状态。
 
@@ -178,15 +178,34 @@ Plan 详情的 `insights.window_usage` 按当前 OpenAI 账号实际返回的 5h
 | `GET` | `/api/admin/users` | 管理员 Token | 无 | 列出用户及资源数量 |
 | `PATCH` | `/api/admin/users/{userID}/status` | 管理员 Token | `status` | 禁用或恢复用户；管理员不能禁用自己 |
 | `GET` | `/api/admin/accounts` | 管理员 Token | 无 | 列出全部 OpenAI 账号及绑定关系 |
+| `GET` | `/api/admin/accounts/{accountID}` | 管理员 Token | 无 | 获取任意 OpenAI 账号及所有者、绑定 Plan 详情 |
 | `PATCH` | `/api/admin/accounts/{accountID}` | 管理员 Token | 账号配置字段 | 修改任意 OpenAI 账号的名称、备注、代理、调度限制、Fast/Flex 策略和状态 |
 | `PATCH` | `/api/admin/accounts/{accountID}/status` | 管理员 Token | `status` | 启用或禁用 OpenAI 账号 |
+| `POST` | `/api/admin/accounts/{accountID}/oauth/start` | 管理员 Token | 无 | 为任意 OpenAI 账号开始重新授权 |
+| `POST` | `/api/admin/accounts/{accountID}/oauth/complete` | 管理员 Token | `state`, `code` | 完成重新授权；只接受相同 ChatGPT Account ID |
 | `GET` | `/api/admin/plans` | 管理员 Token | 无 | 列出全部 Plan 及最近 24 小时用量 |
+| `GET` | `/api/admin/plans/{planID}` | 管理员 Token | 无 | 以管理员权限获取任意 Plan 的完整详情 |
+| `GET` | `/api/admin/plans/{planID}/performance` | 管理员 Token | `period`, `timezone` | 获取任意 Plan 的性能与用量汇总 |
+| `GET` | `/api/admin/plans/{planID}/errors` | 管理员 Token | `period`, `timezone`, `page`, `page_size` | 获取任意 Plan 的非 2xx 请求明细 |
+| `GET` | `/api/admin/plans/{planID}/audit-events` | 管理员 Token | 无 | 获取任意 Plan 的活动记录 |
 | `PATCH` | `/api/admin/plans/{planID}` | 管理员 Token | `name` 或 `description`（只传一个） | 修改任意 Plan 的名称或描述 |
 | `PATCH` | `/api/admin/plans/{planID}/status` | 管理员 Token | `status` | 归档或恢复任意 Plan |
+| `DELETE` | `/api/admin/plans/{planID}` | 管理员 Token | 无 | 永久删除任意已归档 Plan |
+| `PATCH` | `/api/admin/plans/{planID}/owner` | 管理员 Token | `member_id` | 将任意 Plan 的房主身份转让给有效成员 |
 | `PATCH` | `/api/admin/plans/{planID}/account` | 管理员 Token | `account_id` | 为任意 Plan 绑定或改绑其房主拥有的有效 OpenAI 账号 |
 | `PATCH` | `/api/admin/plans/{planID}/publication` | 管理员 Token | `visibility`, `public_slots`, `public_share_basis_points` | 修改任意有效 Plan 的公开设置 |
+| `POST` | `/api/admin/plans/{planID}/invites` | 管理员 Token | `share_basis_points` | 为任意 Plan 创建一次性邀请链接 |
+| `DELETE` | `/api/admin/plans/{planID}/invites/{inviteID}` | 管理员 Token | 无 | 撤销任意 Plan 的待接受邀请 |
+| `PATCH` | `/api/admin/plans/{planID}/applications/{applicationID}` | 管理员 Token | `decision` | 批准或拒绝任意 Plan 的公开加入申请 |
+| `PATCH` | `/api/admin/plans/{planID}/members/{memberID}` | 管理员 Token | `share_basis_points` | 修改任意 Plan 成员的固定份额 |
+| `DELETE` | `/api/admin/plans/{planID}/members/{memberID}` | 管理员 Token | 无 | 从任意 Plan 移除成员 |
+| `POST` | `/api/admin/plans/{planID}/quota/refresh` | 管理员 Token | 无 | 查询并更新任意 Plan 的账号额度窗口 |
+| `GET` | `/api/admin/plans/{planID}/quota/reset-credits` | 管理员 Token | 无 | 查询任意 Plan 的 Codex 额度重置机会 |
+| `POST` | `/api/admin/plans/{planID}/quota/reset` | 管理员 Token | 无 | 消耗任意 Plan 的一次 Codex 额度重置机会 |
 | `GET` | `/api/admin/keys` | 管理员 Token | 无 | 列出全部 API Key 元数据 |
 | `DELETE` | `/api/admin/keys/{keyID}` | 管理员 Token | 无 | 吊销 API Key |
+
+管理员 Plan 接口复用房主业务约束，但不会把管理员写入 Plan 成员表，也不会让管理员的 API Key 获得该 Plan 的路由资格。涉及 Plan 变更和账号重新授权的审计事件使用真实管理员作为 `actor_user_id`；资源归属校验、账号凭据加密关联数据仍使用实际 `owner_user_id`。
 
 ## 用户 API Key
 
