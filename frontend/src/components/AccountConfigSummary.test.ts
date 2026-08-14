@@ -36,6 +36,9 @@ describe('AccountConfigSummary', () => {
       },
     })
     expect(wrapper.text()).toContain('设备 + 会话（推荐）')
+    expect(wrapper.text()).toContain('按 API Key 与客户端会话隔离对话')
+    expect(wrapper.text()).toContain('查看四种模式区别')
+    expect(wrapper.text()).toContain('不会改变账号、模型或额度')
 
     expect(wrapper.get('[aria-label="查看最大并发说明"]').attributes('type')).toBe('button')
     expect(wrapper.get('[aria-label="查看 RPM 上限说明"]').attributes('type')).toBe('button')

@@ -23,6 +23,10 @@ describe('AccountConfigFields', () => {
     expect(wrapper.text()).toContain('响应更慢且可能暂时无可用资源')
     expect(wrapper.text()).toContain('继续执行成员 Key 的规则')
     expect(wrapper.text()).toContain('设备 + 会话（推荐）')
+    expect(wrapper.text()).toContain('按 API Key 与客户端会话隔离对话')
+    expect(wrapper.text()).toContain('查看四种模式区别')
+    expect(wrapper.text()).toContain('不改写标识')
+    expect(wrapper.text()).toContain('不同客户端会共用对话标识')
   })
 
   it('defaults new account rules to filtering Fast requests', async () => {

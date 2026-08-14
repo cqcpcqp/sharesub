@@ -109,6 +109,24 @@
 .account-form-section > header small { color: var(--muted); font-size: 11px; }
 .account-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .account-form-full { grid-column: 1 / -1; }
+.account-form-field { display: grid; gap: 8px; }
+.codex-fingerprint-guide { display: grid; gap: 7px; color: var(--muted); font-size: 11px; font-weight: 450; line-height: 1.55; }
+.codex-fingerprint-guide > p, .codex-fingerprint-guide-content > p { margin: 0; }
+.codex-fingerprint-guide details { min-width: 0; }
+.codex-fingerprint-guide summary { width: max-content; display: flex; align-items: center; gap: 6px; color: var(--blue); font-weight: 700; cursor: pointer; list-style: none; }
+.codex-fingerprint-guide summary::-webkit-details-marker { display: none; }
+.codex-fingerprint-guide summary:hover { color: var(--ink); }
+.codex-fingerprint-guide summary:focus-visible { border-radius: 4px; outline: 2px solid color-mix(in srgb, var(--primary) 38%, transparent); outline-offset: 3px; }
+.codex-fingerprint-guide-content { display: grid; gap: 11px; margin-top: 10px; padding: 13px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-soft); }
+.codex-fingerprint-guide-content > p { color: var(--muted); }
+.codex-fingerprint-guide dl { display: grid; margin: 0; }
+.codex-fingerprint-guide dl > div { display: grid; gap: 3px; padding: 9px 0; border-top: 1px solid var(--line-soft); }
+.codex-fingerprint-guide dl > div:first-child { padding-top: 0; border-top: 0; }
+.codex-fingerprint-guide dl > div:last-child { padding-bottom: 0; }
+.codex-fingerprint-guide dt { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--ink-strong); font-weight: 740; }
+.codex-fingerprint-guide dt small { flex: 0 0 auto; padding: 2px 7px; border-radius: 999px; background: var(--teal-soft); color: var(--teal); font-size: 10px; font-weight: 760; }
+.codex-fingerprint-guide dd { margin: 0; color: var(--muted); }
+.codex-fingerprint-guide .is-current dd { color: var(--ink); }
 .fast-policy-section > header > span { background: var(--amber-soft); color: var(--amber); }
 .service-tier-guide { display: grid; gap: 12px; padding: 14px; border-radius: 7px; background: var(--surface-soft); }
 .service-tier-guide > p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
@@ -190,6 +208,8 @@
 .account-config-list > div:nth-child(even) { padding-left: 24px; border-left: 1px solid var(--line-soft); }
 .account-config-list dt { display: flex; align-items: center; gap: 7px; color: var(--muted-light); font-size: 11px; font-weight: 760; text-transform: uppercase; }
 .account-config-list dd { min-width: 0; overflow-wrap: anywhere; margin: 0; color: var(--ink); font-size: 11px; line-height: 1.55; }
+.account-config-fingerprint dd { display: grid; gap: 6px; }
+.account-config-fingerprint dd > strong { color: var(--ink); font-size: 11px; }
 .account-config-list code { white-space: normal; }
 .account-limit-help { width: 20px; height: 20px; display: inline-grid; place-items: center; flex: 0 0 auto; margin: -2px 0 -2px -3px; padding: 0; border: 0; border-radius: 999px; background: transparent; color: var(--muted-light); cursor: help; }
 .account-limit-help:hover, .account-limit-help:focus-visible { background: var(--surface-hover); color: var(--ink); outline: none; }
