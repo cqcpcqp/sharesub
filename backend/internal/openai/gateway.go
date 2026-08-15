@@ -34,7 +34,7 @@ const codexProbeTimeout = 20 * time.Second
 var requestHeaderAllowlist = map[string]struct{}{
 	"accept": {}, "accept-language": {}, "content-type": {}, "conversation-id": {}, "conversation_id": {},
 	"openai-beta": {}, "originator": {}, "session-id": {}, "session_id": {}, "thread-id": {}, "user-agent": {}, "version": {},
-	"x-client-request-id": {}, "x-codex-installation-id": {}, "x-codex-turn-state": {}, "x-codex-turn-metadata": {}, "x-codex-window-id": {},
+	"x-client-request-id": {}, "x-codex-beta-features": {}, "x-codex-installation-id": {}, "x-codex-turn-state": {}, "x-codex-turn-metadata": {}, "x-codex-window-id": {},
 }
 
 var responseHeaders = []string{

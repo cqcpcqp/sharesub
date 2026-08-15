@@ -580,6 +580,51 @@ func TestForwardRemovesOnlyLegacyResponsesBeta(t *testing.T) {
 	}
 }
 
+func TestForwardPreservesRemoteCompactionV2ResponsesWire(t *testing.T) {
+	var captured *http.Request
+	var capturedBody []byte
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		captured = req
+		var err error
+		capturedBody, err = io.ReadAll(req.Body)
+		if err != nil {
+			return nil, err
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: http.NoBody, Request: req}, nil
+	})}
+	inbound := httptest.NewRequest(http.MethodPost, "http://gateway.test/v1/responses", nil)
+	inbound.Header.Set("X-Codex-Beta-Features", "responses_websockets_v2, remote_compaction_v2")
+	body := []byte(`{"model":"gpt-5.6-sol","stream":true,"input":[{"type":"message","role":"user","content":"hello"},{"type":"compaction_trigger"}],"reasoning":{"effort":"max","context":"all_turns"}}`)
+	forwardBody, metadata, err := PrepareRequest(body, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := NewGateway(client).Forward(context.Background(), inbound, forwardBody, metadata, "access", "account", "key", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+
+	if captured.URL.String() != codexResponsesURL {
+		t.Fatalf("target = %q, want native Responses endpoint", captured.URL)
+	}
+	if got := captured.Header.Get("X-Codex-Beta-Features"); got != "responses_websockets_v2, remote_compaction_v2" {
+		t.Fatalf("X-Codex-Beta-Features = %q", got)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(capturedBody, &payload); err != nil {
+		t.Fatal(err)
+	}
+	input, ok := payload["input"].([]any)
+	if !ok || len(input) != 2 || input[1].(map[string]any)["type"] != "compaction_trigger" {
+		t.Fatalf("remote compaction input = %#v", payload["input"])
+	}
+	reasoning, ok := payload["reasoning"].(map[string]any)
+	if !ok || reasoning["effort"] != "max" || reasoning["context"] != "all_turns" || payload["stream"] != true {
+		t.Fatalf("remote compaction payload = %#v", payload)
+	}
+}
+
 func TestForwardOverridesMultipartContentTypeAfterBodyNormalization(t *testing.T) {
 	var captured *http.Request
 	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {

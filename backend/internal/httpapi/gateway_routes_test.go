@@ -168,7 +168,7 @@ func TestGatewayContextsHandleClientCancellation(t *testing.T) {
 	parent, cancelParent := context.WithCancel(context.Background())
 	metricCtx, cancelMetric := metricContext(parent)
 	defer cancelMetric()
-	attemptCtx, cancelAttempt := upstreamAttemptContext(parent)
+	attemptCtx, cancelAttempt, acceptUpstream := upstreamAttemptContext(parent)
 	defer cancelAttempt()
 	cancelParent()
 
@@ -180,10 +180,42 @@ func TestGatewayContextsHandleClientCancellation(t *testing.T) {
 	select {
 	case <-attemptCtx.Done():
 		if !errors.Is(attemptCtx.Err(), context.Canceled) {
-			t.Fatalf("upstream context error = %v, want context canceled", attemptCtx.Err())
+			t.Fatalf("upstream context error = %v, want client cancellation", attemptCtx.Err())
 		}
 	case <-time.After(time.Second):
-		t.Fatal("upstream context did not inherit client cancellation")
+		t.Fatal("upstream context did not follow cancellation before response acceptance")
+	}
+	if acceptUpstream() {
+		t.Fatal("accepted upstream after client cancellation")
+	}
+}
+
+func TestGatewayAttemptDetachesClientCancellationAfterResponseAcceptance(t *testing.T) {
+	parent, cancelParent := context.WithCancel(context.Background())
+	attemptCtx, cancelAttempt, acceptUpstream := upstreamAttemptContext(parent)
+	defer cancelAttempt()
+	if !acceptUpstream() {
+		t.Fatal("did not accept upstream before client cancellation")
+	}
+	cancelParent()
+
+	select {
+	case <-attemptCtx.Done():
+		t.Fatalf("accepted upstream context canceled with client: %v", attemptCtx.Err())
+	case <-time.After(10 * time.Millisecond):
+	}
+	deadline, ok := attemptCtx.Deadline()
+	if !ok || time.Until(deadline) <= 0 || time.Until(deadline) > gatewayUpstreamTimeout {
+		t.Fatalf("upstream deadline = %v, ok = %t", deadline, ok)
+	}
+	cancelAttempt()
+	select {
+	case <-attemptCtx.Done():
+		if !errors.Is(attemptCtx.Err(), context.Canceled) {
+			t.Fatalf("upstream context error = %v, want explicit cancellation", attemptCtx.Err())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("upstream context did not honor explicit cancellation")
 	}
 }
 

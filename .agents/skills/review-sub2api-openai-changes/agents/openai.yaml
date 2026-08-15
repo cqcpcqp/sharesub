@@ -1,0 +1,4 @@
+interface:
+  display_name: "对比 sub2api 与 share2api OpenAI"
+  short_description: "对比 OpenAI 转发全链路差异并提出有证据的对齐建议"
+  default_prompt: "使用 $review-sub2api-openai-changes 完整对比 sub2api 与 share2api 的 OpenAI 转发功能和逻辑，并推荐 share2api 值得对齐的部分。"

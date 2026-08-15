@@ -345,6 +345,7 @@ func CopyImagesResponse(dst http.ResponseWriter, src *http.Response, startedAt t
 	firstByteAt := time.Time{}
 	firstTokenAt := time.Time{}
 	streamStarted := false
+	clientDisconnected := false
 	createdAt := int64(0)
 	var refusal strings.Builder
 	flusher, _ := dst.(http.Flusher)
@@ -358,7 +359,7 @@ func CopyImagesResponse(dst http.ResponseWriter, src *http.Response, startedAt t
 			if ok {
 				var event imagesTerminalEvent
 				if json.Unmarshal(payload, &event) != nil {
-					return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), fmt.Errorf("parse images upstream event")
+					return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, clientDisconnected), fmt.Errorf("parse images upstream event")
 				}
 				switch event.Type {
 				case "response.created", "response.in_progress":
@@ -370,19 +371,20 @@ func CopyImagesResponse(dst http.ResponseWriter, src *http.Response, startedAt t
 						if firstTokenAt.IsZero() {
 							firstTokenAt = time.Now()
 						}
-						if !streamStarted {
+						if !streamStarted && !clientDisconnected {
 							copyResponseHeaders(dst.Header(), src.Header)
 							dst.Header().Set("Content-Type", "text/event-stream")
 							dst.WriteHeader(src.StatusCode)
 							streamStarted = true
 						}
-						if err := writeImagesStreamEvent(dst, request, "partial_image", map[string]any{
-							"created_at": createdAt, "partial_image_index": event.PartialImageIndex, "b64_json": event.PartialImageB64,
-						}); err != nil {
-							return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, true), err
-						}
-						if flusher != nil {
-							flusher.Flush()
+						if !clientDisconnected {
+							if err := writeImagesStreamEvent(dst, request, "partial_image", map[string]any{
+								"created_at": createdAt, "partial_image_index": event.PartialImageIndex, "b64_json": event.PartialImageB64,
+							}); err != nil {
+								clientDisconnected = true
+							} else if flusher != nil {
+								flusher.Flush()
+							}
 						}
 					}
 				case "response.output_item.done":
@@ -403,6 +405,9 @@ func CopyImagesResponse(dst http.ResponseWriter, src *http.Response, startedAt t
 				case "error":
 					if event.Error != nil {
 						terminal.Error = event.Error
+						if clientDisconnected {
+							return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, true), nil
+						}
 						return finishImagesFailure(dst, src, request, startedAt, firstByteAt, firstTokenAt, terminal, streamStarted, event.Response)
 					}
 				case "response.failed":
@@ -410,10 +415,16 @@ func CopyImagesResponse(dst http.ResponseWriter, src *http.Response, startedAt t
 					if terminal.Error == nil {
 						terminal.Error = &responseError{Type: "server_error", Code: "response_failed", Message: "Upstream image generation failed"}
 					}
+					if clientDisconnected {
+						return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, true), nil
+					}
 					return finishImagesFailure(dst, src, request, startedAt, firstByteAt, firstTokenAt, terminal, streamStarted, event.Response)
 				case "response.incomplete":
 					terminal = terminalFromImagesEvent(event)
 					terminal.Error = imagesIncompleteError(event.Response.IncompleteDetails.Reason)
+					if clientDisconnected {
+						return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, true), nil
+					}
 					return finishImagesFailure(dst, src, request, startedAt, firstByteAt, firstTokenAt, terminal, streamStarted, event.Response)
 				}
 			}
@@ -424,7 +435,7 @@ func CopyImagesResponse(dst http.ResponseWriter, src *http.Response, startedAt t
 					terminal.Error = &responseError{Type: "server_error", Code: "upstream_stream_read_error", Message: "Upstream image response stream could not be read"}
 					return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), &StreamFailoverError{StatusCode: http.StatusBadGateway}
 				}
-				return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), err
+				return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, clientDisconnected), err
 			}
 			break
 		}
@@ -434,8 +445,10 @@ func CopyImagesResponse(dst http.ResponseWriter, src *http.Response, startedAt t
 			terminal.Error = &responseError{Type: "server_error", Code: "upstream_stream_incomplete", Message: ErrIncompleteStream.Error()}
 			return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), &StreamFailoverError{StatusCode: http.StatusBadGateway}
 		}
-		_ = writeImagesStreamError(dst, &responseError{Code: "upstream_error", Message: ErrIncompleteStream.Error()})
-		return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), ErrIncompleteStream
+		if !clientDisconnected {
+			_ = writeImagesStreamError(dst, &responseError{Code: "upstream_error", Message: ErrIncompleteStream.Error()})
+		}
+		return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, clientDisconnected), ErrIncompleteStream
 	}
 	results := make([]imagesResult, 0, len(completed.Response.Output))
 	for _, output := range completed.Response.Output {
@@ -449,6 +462,9 @@ func CopyImagesResponse(dst http.ResponseWriter, src *http.Response, startedAt t
 	if len(results) == 0 {
 		if message := strings.TrimSpace(refusal.String()); message != "" {
 			terminal.Error = &responseError{Type: "image_generation_user_error", Code: "content_policy_violation", Message: message}
+			if clientDisconnected {
+				return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, true), nil
+			}
 			return finishImagesFailure(dst, src, request, startedAt, firstByteAt, firstTokenAt, terminal, streamStarted, completed.Response)
 		}
 		if !streamStarted {
@@ -456,8 +472,10 @@ func CopyImagesResponse(dst http.ResponseWriter, src *http.Response, startedAt t
 			return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), &StreamFailoverError{StatusCode: http.StatusBadGateway}
 		}
 		resultErr := fmt.Errorf("upstream completed without image output")
-		_ = writeImagesStreamError(dst, &responseError{Code: "upstream_error", Message: resultErr.Error()})
-		return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), resultErr
+		if !clientDisconnected {
+			_ = writeImagesStreamError(dst, &responseError{Code: "upstream_error", Message: resultErr.Error()})
+		}
+		return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, clientDisconnected), resultErr
 	}
 	imageSize := results[0].Size
 	if imageSize == "" {
@@ -467,12 +485,15 @@ func CopyImagesResponse(dst http.ResponseWriter, src *http.Response, startedAt t
 		firstTokenAt = time.Now()
 	}
 	if request.Stream {
-		if !streamStarted {
+		if !streamStarted && !clientDisconnected {
 			copyResponseHeaders(dst.Header(), src.Header)
 			dst.Header().Set("Content-Type", "text/event-stream")
 			dst.WriteHeader(src.StatusCode)
 		}
 		for _, result := range results {
+			if clientDisconnected {
+				break
+			}
 			payload := imageResultPayload(result, request.ResponseFormat)
 			payload["created_at"] = completed.Response.CreatedAt
 			for key, value := range map[string]string{
@@ -488,13 +509,13 @@ func CopyImagesResponse(dst http.ResponseWriter, src *http.Response, startedAt t
 			}
 			payload["usage"] = completed.Response.ToolUsage.ImageGen
 			if err := writeImagesStreamEvent(dst, request, "completed", payload); err != nil {
-				return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, true), err
+				clientDisconnected = true
 			}
 		}
-		if flusher != nil {
+		if !clientDisconnected && flusher != nil {
 			flusher.Flush()
 		}
-		metrics := proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false)
+		metrics := proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, clientDisconnected)
 		metrics.ImageCount = int64(len(results))
 		metrics.ImageSize = imageSize
 		return metrics, nil

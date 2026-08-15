@@ -151,7 +151,7 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 			writeGatewayErrorStatus(w, http.StatusInternalServerError, "policy_error", policyErr.Error())
 			return
 		}
-		attemptCtx, cancelAttempt := upstreamAttemptContext(r.Context())
+		attemptCtx, cancelAttempt, acceptUpstream := upstreamAttemptContext(r.Context())
 		upstream, err := s.gateway.Forward(attemptCtx, r, policyBody, policyMetadata, access.AccessToken, access.Credential.Account.ChatGPTAccountID, access.Credential.APIKeyID, access.ProxyURL, openai.CodexFingerprintContext{
 			AccountID: access.Credential.Account.ID, Mode: access.Credential.Account.CodexFingerprintMode,
 		})
@@ -181,6 +181,12 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 			writeGatewayErrorStatus(w, http.StatusBadGateway, "upstream_unavailable", err.Error())
 			return
 		}
+		if !acceptUpstream() {
+			_ = upstream.Body.Close()
+			cancelAttempt()
+			s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, billingMetadata.Model, policyMetadata, clientClosedRequestStatus, domain.GatewayErrorSourceRequest, "client_disconnected", "client disconnected before response completed", time.Since(attemptStartedAt)), attemptStartedAt)
+			return
+		}
 
 		requestID := upstreamRequestID(upstream, gatewayRequestID)
 		quotaObservedAt := time.Now()
@@ -190,6 +196,15 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 			cancelAttempt()
 			if drainErr != nil {
 				s.logger.Warn("drain rejected upstream response", "request_id", requestID, "error", drainErr)
+			}
+			if r.Context().Err() != nil {
+				metric := gatewayMetric(requestID, billingMetadata.Model, r.URL.Path, policyMetadata, clientClosedRequestStatus, metrics)
+				metric.ErrorSource = domain.GatewayErrorSourceRequest
+				metric.ErrorCode = "client_disconnected"
+				metric.ErrorMessage = "client disconnected before response completed"
+				s.recordGatewayMetric(r.Context(), access, metric, attemptStartedAt)
+				_ = s.recordGatewayAccountQuota(r.Context(), access, upstream.Header, quotaObservedAt)
+				return
 			}
 			planGated := openai.IsCodexPlanGatedModelError(upstream.StatusCode, rejectedBody)
 			if planGated && shouldBlockPlanGatedModel(false, policyMetadata.Model) {
@@ -321,7 +336,7 @@ func (s *Server) images(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		attemptStartedAt := time.Now()
-		attemptCtx, cancelAttempt := upstreamAttemptContext(r.Context())
+		attemptCtx, cancelAttempt, acceptUpstream := upstreamAttemptContext(r.Context())
 		upstream, forwardErr := s.gateway.Forward(attemptCtx, r, forwardBody, billingMetadata, access.AccessToken, access.Credential.Account.ChatGPTAccountID, access.Credential.APIKeyID, access.ProxyURL, openai.CodexFingerprintContext{
 			AccountID: access.Credential.Account.ID, Mode: access.Credential.Account.CodexFingerprintMode,
 		})
@@ -353,6 +368,12 @@ func (s *Server) images(w http.ResponseWriter, r *http.Request) {
 			writeGatewayErrorStatus(w, http.StatusBadGateway, "upstream_unavailable", forwardErr.Error())
 			return
 		}
+		if !acceptUpstream() {
+			_ = upstream.Body.Close()
+			cancelAttempt()
+			s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, imageRequest.Model, billingMetadata, clientClosedRequestStatus, domain.GatewayErrorSourceRequest, "client_disconnected", "client disconnected before response completed", time.Since(attemptStartedAt)), attemptStartedAt)
+			return
+		}
 
 		requestID := upstreamRequestID(upstream, gatewayRequestID)
 		quotaObservedAt := time.Now()
@@ -363,6 +384,15 @@ func (s *Server) images(w http.ResponseWriter, r *http.Request) {
 			cancelAttempt()
 			if drainErr != nil {
 				s.logger.Warn("drain rejected images response", "request_id", requestID, "error", drainErr)
+			}
+			if r.Context().Err() != nil {
+				metric := gatewayMetric(requestID, imageRequest.Model, r.URL.Path, billingMetadata, clientClosedRequestStatus, metrics)
+				metric.ErrorSource = domain.GatewayErrorSourceRequest
+				metric.ErrorCode = "client_disconnected"
+				metric.ErrorMessage = "client disconnected before response completed"
+				s.recordGatewayMetric(r.Context(), access, metric, attemptStartedAt)
+				_ = s.recordGatewayAccountQuota(r.Context(), access, upstream.Header, quotaObservedAt)
+				return
 			}
 			if s.refreshRejectedGatewayAccess(r.Context(), &access, upstream.StatusCode, rejectedBody, authRefreshed) {
 				continue
@@ -456,8 +486,18 @@ func shouldSwitchUpstreamAccount(status int) bool {
 const gatewayMetricWriteTimeout = 5 * time.Second
 const gatewayUpstreamTimeout = 10 * time.Minute
 
-func upstreamAttemptContext(parent context.Context) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(parent, gatewayUpstreamTimeout)
+func upstreamAttemptContext(parent context.Context) (context.Context, context.CancelFunc, func() bool) {
+	ctx, cancelTimeout := context.WithTimeout(context.WithoutCancel(parent), gatewayUpstreamTimeout)
+	stopClientCancel := context.AfterFunc(parent, cancelTimeout)
+	cancel := func() {
+		stopClientCancel()
+		cancelTimeout()
+	}
+	// A successful stop means response headers arrived before the client canceled.
+	// From that point onward the caller may drain the accepted upstream response
+	// independently so terminal usage is still accounted.
+	accept := func() bool { return stopClientCancel() }
+	return ctx, cancel, accept
 }
 
 func upstreamRequestID(upstream *http.Response, fallback string) string {

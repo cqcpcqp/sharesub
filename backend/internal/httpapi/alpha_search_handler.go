@@ -40,7 +40,7 @@ func (s *Server) alphaSearch(w http.ResponseWriter, r *http.Request) {
 	authRefreshed := make(map[string]bool)
 	for switches := 0; ; {
 		attemptStartedAt := time.Now()
-		attemptCtx, cancelAttempt := upstreamAttemptContext(r.Context())
+		attemptCtx, cancelAttempt, acceptUpstream := upstreamAttemptContext(r.Context())
 		upstream, forwardErr := s.gateway.ForwardAlphaSearch(attemptCtx, r, forwardBody, access.AccessToken, access.Credential.Account.ChatGPTAccountID, access.ProxyURL, openai.CodexFingerprintConfig{
 			AccountID: access.Credential.Account.ID, APIKeyID: access.Credential.APIKeyID, Mode: access.Credential.Account.CodexFingerprintMode,
 		})
@@ -70,6 +70,12 @@ func (s *Server) alphaSearch(w http.ResponseWriter, r *http.Request) {
 			writeGatewayErrorStatus(w, http.StatusBadGateway, "upstream_unavailable", forwardErr.Error())
 			return
 		}
+		if !acceptUpstream() {
+			_ = upstream.Body.Close()
+			cancelAttempt()
+			s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(requestID, r.URL.Path, metadata.Model, metadata, clientClosedRequestStatus, domain.GatewayErrorSourceRequest, "client_disconnected", "client disconnected before response completed", time.Since(attemptStartedAt)), attemptStartedAt)
+			return
+		}
 
 		selectedRequestID := upstreamRequestID(upstream, requestID)
 		quotaObservedAt := time.Now()
@@ -79,6 +85,15 @@ func (s *Server) alphaSearch(w http.ResponseWriter, r *http.Request) {
 			cancelAttempt()
 			if drainErr != nil {
 				s.logger.Warn("drain rejected alpha search response", "request_id", selectedRequestID, "error", drainErr)
+			}
+			if r.Context().Err() != nil {
+				metric := gatewayMetric(selectedRequestID, metadata.Model, r.URL.Path, metadata, clientClosedRequestStatus, metrics)
+				metric.ErrorSource = domain.GatewayErrorSourceRequest
+				metric.ErrorCode = "client_disconnected"
+				metric.ErrorMessage = "client disconnected before response completed"
+				s.recordGatewayMetric(r.Context(), access, metric, attemptStartedAt)
+				_ = s.recordGatewayAccountQuota(r.Context(), access, upstream.Header, quotaObservedAt)
+				return
 			}
 			if s.refreshRejectedGatewayAccess(r.Context(), &access, upstream.StatusCode, rejectedBody, authRefreshed) {
 				continue

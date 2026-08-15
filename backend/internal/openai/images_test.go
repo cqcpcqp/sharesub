@@ -165,6 +165,24 @@ func TestCopyImagesResponseStreamsImageEvents(t *testing.T) {
 	}
 }
 
+func TestCopyImagesResponseDrainsTerminalUsageAfterClientDisconnect(t *testing.T) {
+	body := "data: {\"type\":\"response.created\",\"response\":{\"created_at\":1710000000}}\n\n" +
+		"data: {\"type\":\"response.image_generation_call.partial_image\",\"partial_image_index\":0,\"partial_image_b64\":\"cGFydA==\"}\n\n" +
+		"data: {\"type\":\"response.completed\",\"response\":{\"created_at\":1710000000,\"model\":\"gpt-5.4-mini\",\"tool_usage\":{\"image_gen\":{\"input_tokens\":3,\"output_tokens\":4,\"output_tokens_details\":{\"image_tokens\":4},\"images\":1}},\"output\":[{\"type\":\"image_generation_call\",\"result\":\"ZmluYWw=\",\"output_format\":\"png\"}]}}\n\n"
+	source := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}
+	destination := &failingResponseWriter{}
+	metrics, err := CopyImagesResponse(destination, source, time.Now(), ImagesRequest{Endpoint: imagesGenerationsEndpoint, Model: "gpt-image-2", Stream: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !metrics.ClientDisconnected || destination.writes != 1 {
+		t.Fatalf("disconnect metrics = %+v, writes = %d", metrics, destination.writes)
+	}
+	if metrics.InputTokens != 3 || metrics.OutputTokens != 4 || metrics.ImageOutputTokens != 4 || metrics.ImageCount != 1 {
+		t.Fatalf("terminal usage was not drained: %+v", metrics)
+	}
+}
+
 func TestCopyImagesResponseReturnsFailoverForRetryableTerminalFailure(t *testing.T) {
 	body := `data: {"type":"response.failed","response":{"model":"gpt-5.4-mini","error":{"code":"rate_limit_exceeded","message":"limited"}}}` + "\n\n"
 	source := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}
