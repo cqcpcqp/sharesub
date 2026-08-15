@@ -877,7 +877,8 @@ func TestResponsesWebSocketHTTPMaxSessionDurationReleasesAccountSlot(t *testing.
 func TestResponsesWebSocketHTTPConnectionLimitRejectsSecondHandshake(t *testing.T) {
 	config := responsesWebSocketHTTPConfig()
 	config.MaxConnectionsPerAPIKey = 1
-	httpServer, _, _, _, _ := newResponsesWebSocketHTTPServer(t, config)
+	requestDone := make(chan struct{}, 2)
+	httpServer, _, _, _, _ := newResponsesWebSocketHTTPServerWithRequestDone(t, config, requestDone)
 	defer httpServer.Close()
 
 	first, _, err := dialResponsesWebSocketHTTP(t, httpServer.URL)
@@ -895,9 +896,19 @@ func TestResponsesWebSocketHTTPConnectionLimitRejectsSecondHandshake(t *testing.
 	if response == nil || response.StatusCode != http.StatusTooManyRequests || response.Header.Get("Retry-After") != "5" {
 		t.Fatalf("second handshake response = %#v, error = %v", response, err)
 	}
+	select {
+	case <-requestDone:
+	case <-time.After(time.Second):
+		t.Fatal("rejected WebSocket handler did not finish")
+	}
 
 	if err := first.Close(websocket.StatusNormalClosure, "done"); err != nil {
 		t.Fatalf("close first Responses WebSocket: %v", err)
+	}
+	select {
+	case <-requestDone:
+	case <-time.After(time.Second):
+		t.Fatal("closed WebSocket handler did not finish")
 	}
 	third, response, err := dialResponsesWebSocketHTTP(t, httpServer.URL)
 	if err != nil {
