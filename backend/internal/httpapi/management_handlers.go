@@ -174,6 +174,10 @@ func (s *Server) updateAccount(w http.ResponseWriter, r *http.Request) {
 	v, err := s.app.UpdateAccountConfig(r.Context(), currentUser(r).ID, r.PathValue("accountID"), input)
 	writeResult(w, v, err)
 }
+func (s *Server) manualAccountTokenRefresh(w http.ResponseWriter, r *http.Request) {
+	v, err := s.app.ManualRefreshAccountToken(r.Context(), currentUser(r).ID, r.PathValue("accountID"))
+	writeResult(w, v, err)
+}
 func (s *Server) listPlans(w http.ResponseWriter, r *http.Request) {
 	v, err := s.app.ListPlans(r.Context(), currentUser(r).ID)
 	writeResult(w, v, err)

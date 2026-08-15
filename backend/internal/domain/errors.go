@@ -15,6 +15,7 @@ var (
 	ErrShareExceeded          = errors.New("allocated shares exceed 100 percent")
 	ErrQuotaExhausted         = errors.New("member quota exhausted")
 	ErrAccountUnavailable     = errors.New("OpenAI account unavailable")
+	ErrAccountTokenRefresh    = errors.New("OpenAI account token refresh failed")
 	ErrNoRouteAvailable       = errors.New("no configured Plan has available quota")
 	ErrPublicPlanFull         = errors.New("public Plan has no available seats")
 	ErrAccountConcurrency     = errors.New("OpenAI account concurrency limit reached")

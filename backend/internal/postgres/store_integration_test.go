@@ -364,6 +364,32 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if configuredAccount.Name != "团队主账号" || configuredAccount.Notes != "仅用于 Codex" || configuredAccount.MaxConcurrency != 6 || configuredAccount.RPMLimit != 90 || string(configuredAccount.ProxyURLCiphertext) != "encrypted-proxy" {
 		t.Fatalf("updated account configuration = %+v", configuredAccount)
 	}
+	tokenRefreshAudit := domain.AuditEvent{
+		ID: "account-token-refreshed", ActorUserID: "owner", Action: "account.token_refreshed",
+		ResourceType: "account", ResourceID: "account", Metadata: json.RawMessage(`{}`), CreatedAt: now,
+	}
+	updatedTokens, err := store.UpdateAccountTokensIfRefreshTokenUnchanged(ctx, "account", []byte("refresh"), []byte("refreshed-access"), []byte("refreshed-refresh"), now.Add(90*time.Minute), &tokenRefreshAudit)
+	if err != nil || !updatedTokens {
+		t.Fatalf("update account tokens with audit: updated = %v, error = %v", updatedTokens, err)
+	}
+	var tokenRefreshAction string
+	if err := pool.QueryRow(ctx, `SELECT action FROM audit_events WHERE id=$1`, tokenRefreshAudit.ID).Scan(&tokenRefreshAction); err != nil {
+		t.Fatal(err)
+	}
+	if tokenRefreshAction != tokenRefreshAudit.Action {
+		t.Fatalf("token refresh audit action = %q, want %q", tokenRefreshAction, tokenRefreshAudit.Action)
+	}
+	updatedTokens, err = store.UpdateAccountTokensIfRefreshTokenUnchanged(ctx, "account", []byte("refreshed-refresh"), []byte("must-roll-back-access"), []byte("must-roll-back-refresh"), now.Add(2*time.Hour), &tokenRefreshAudit)
+	if err == nil || updatedTokens {
+		t.Fatalf("duplicate audit should roll back token update: updated = %v, error = %v", updatedTokens, err)
+	}
+	accountAfterAuditRollback, err := store.AccountByID(ctx, "account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(accountAfterAuditRollback.AccessTokenCiphertext) != "refreshed-access" || string(accountAfterAuditRollback.RefreshTokenCiphertext) != "refreshed-refresh" {
+		t.Fatalf("tokens changed despite audit rollback: access = %q, refresh = %q", accountAfterAuditRollback.AccessTokenCiphertext, accountAfterAuditRollback.RefreshTokenCiphertext)
+	}
 	if _, err := pool.Exec(ctx, `UPDATE openai_accounts SET status='refresh_required',last_error='expired credentials' WHERE id='account'`); err != nil {
 		t.Fatal(err)
 	}

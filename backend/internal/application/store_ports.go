@@ -44,7 +44,7 @@ type AccountStore interface {
 	AccountByID(context.Context, string) (domain.Account, error)
 	UpdateAccountConfig(context.Context, string, domain.Account, domain.AuditEvent) (domain.Account, error)
 	UpdateAccountAuthorization(context.Context, string, domain.Account, domain.AuditEvent) (domain.Account, error)
-	UpdateAccountTokensIfRefreshTokenUnchanged(context.Context, string, []byte, []byte, []byte, time.Time) (bool, error)
+	UpdateAccountTokensIfRefreshTokenUnchanged(context.Context, string, []byte, []byte, []byte, time.Time, *domain.AuditEvent) (bool, error)
 	UpdateAccountSubscriptionExpiresAtIfRefreshTokenUnchanged(context.Context, string, []byte, *time.Time) (bool, error)
 	MarkAccountErrorIfRefreshTokenUnchanged(context.Context, string, []byte, string) (bool, error)
 	ListExpiringAccounts(context.Context, time.Time, int) ([]domain.Account, error)

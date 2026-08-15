@@ -94,6 +94,8 @@ func writeError(w http.ResponseWriter, err error) {
 		writeErrorStatus(w, 429, "quota_exhausted", err.Error())
 	case errors.Is(err, domain.ErrAccountUnavailable):
 		writeErrorStatus(w, 503, "account_unavailable", err.Error())
+	case errors.Is(err, domain.ErrAccountTokenRefresh):
+		writeErrorStatus(w, 502, "openai_token_refresh_failed", err.Error())
 	case errors.Is(err, domain.ErrNoRouteAvailable):
 		writeErrorStatus(w, 503, "no_route_available", err.Error())
 	case errors.Is(err, domain.ErrPublicPlanFull):

@@ -22,7 +22,9 @@ type tokenRefreshStore struct {
 	updates             int
 	subscriptionUpdates int
 	marks               int
+	events              []domain.AuditEvent
 	updateErr           error
+	recordEventCalls    int
 }
 
 func (s *tokenRefreshStore) AccountByID(context.Context, string) (domain.Account, error) {
@@ -48,7 +50,7 @@ func (s *tokenRefreshStore) ReleaseAccountRefreshLease(context.Context, string, 
 	return nil
 }
 
-func (s *tokenRefreshStore) UpdateAccountTokensIfRefreshTokenUnchanged(_ context.Context, _ string, expectedRefresh, access, refresh []byte, expiresAt time.Time) (bool, error) {
+func (s *tokenRefreshStore) UpdateAccountTokensIfRefreshTokenUnchanged(_ context.Context, _ string, expectedRefresh, access, refresh []byte, expiresAt time.Time, event *domain.AuditEvent) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.updateErr != nil {
@@ -62,6 +64,9 @@ func (s *tokenRefreshStore) UpdateAccountTokensIfRefreshTokenUnchanged(_ context
 	s.account.TokenExpiresAt = expiresAt
 	s.account.Status = domain.StatusActive
 	s.updates++
+	if event != nil {
+		s.events = append(s.events, *event)
+	}
 	return true, nil
 }
 
@@ -90,6 +95,14 @@ func (s *tokenRefreshStore) MarkAccountErrorIfRefreshTokenUnchanged(_ context.Co
 	s.account.LastError = message
 	s.marks++
 	return true, nil
+}
+
+func (s *tokenRefreshStore) RecordAuditEvent(_ context.Context, event domain.AuditEvent) error {
+	s.mu.Lock()
+	s.recordEventCalls++
+	s.events = append(s.events, event)
+	s.mu.Unlock()
+	return nil
 }
 
 type tokenRefreshOAuth struct {
@@ -209,6 +222,128 @@ func TestRefreshAccountTokenRemainsUsableWhenSubscriptionQueryFails(t *testing.T
 	}
 	if access != "new-access" || !refreshed || store.updates != 1 || store.subscriptionUpdates != 0 {
 		t.Fatalf("access = %q, refreshed = %v, token updates = %d, subscription updates = %d", access, refreshed, store.updates, store.subscriptionUpdates)
+	}
+}
+
+func TestManualRefreshAccountTokenForcesRefreshForOwner(t *testing.T) {
+	now := time.Date(2026, 8, 6, 10, 0, 0, 0, time.UTC)
+	manager := testSecurityManager(t)
+	account := encryptedRefreshAccount(t, manager, now)
+	account.Name = "Team account"
+	account.TokenExpiresAt = now.Add(12 * time.Hour)
+	store := &tokenRefreshStore{account: account}
+	oauth := &tokenRefreshOAuth{token: OAuthToken{
+		AccessToken: "manual-access", RefreshToken: "manual-refresh", ExpiresAt: now.Add(10 * 24 * time.Hour),
+	}}
+	service := &Service{store: store, security: manager, oauth: oauth, now: func() time.Time { return now }}
+
+	updated, err := service.ManualRefreshAccountToken(context.Background(), account.OwnerUserID, account.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.TokenExpiresAt != oauth.token.ExpiresAt || oauth.calls.Load() != 1 || store.updates != 1 {
+		t.Fatalf("expires at = %v, refresh calls = %d, updates = %d", updated.TokenExpiresAt, oauth.calls.Load(), store.updates)
+	}
+	if len(store.events) != 1 || store.events[0].ActorUserID != account.OwnerUserID || store.events[0].Action != "account.token_refreshed" || store.recordEventCalls != 0 {
+		t.Fatalf("audit events = %+v, separate record calls = %d", store.events, store.recordEventCalls)
+	}
+}
+
+func TestManualRefreshAccountTokenKeepsUsableAccountActiveOnRefreshFailure(t *testing.T) {
+	now := time.Date(2026, 8, 6, 10, 0, 0, 0, time.UTC)
+	manager := testSecurityManager(t)
+	account := encryptedRefreshAccount(t, manager, now)
+	account.TokenExpiresAt = now.Add(12 * time.Hour)
+	store := &tokenRefreshStore{account: account}
+	oauth := &tokenRefreshOAuth{err: errors.New("temporary upstream failure")}
+	service := &Service{store: store, security: manager, oauth: oauth, now: func() time.Time { return now }}
+
+	_, err := service.ManualRefreshAccountToken(context.Background(), account.OwnerUserID, account.ID)
+	if !errors.Is(err, domain.ErrAccountTokenRefresh) {
+		t.Fatalf("error = %v", err)
+	}
+	if store.account.Status != domain.StatusActive || store.marks != 0 || store.updates != 0 || len(store.events) != 0 {
+		t.Fatalf("status = %q, marks = %d, updates = %d, audit events = %+v", store.account.Status, store.marks, store.updates, store.events)
+	}
+}
+
+func TestManualRefreshAccountTokenMarksExpiredAccountOnRefreshFailure(t *testing.T) {
+	now := time.Date(2026, 8, 6, 10, 0, 0, 0, time.UTC)
+	manager := testSecurityManager(t)
+	account := encryptedRefreshAccount(t, manager, now)
+	account.TokenExpiresAt = now.Add(-time.Minute)
+	store := &tokenRefreshStore{account: account}
+	oauth := &tokenRefreshOAuth{err: errors.New("upstream rejected expired credentials")}
+	service := &Service{store: store, security: manager, oauth: oauth, now: func() time.Time { return now }}
+
+	_, err := service.ManualRefreshAccountToken(context.Background(), account.OwnerUserID, account.ID)
+	if !errors.Is(err, domain.ErrAccountTokenRefresh) {
+		t.Fatalf("error = %v", err)
+	}
+	if store.account.Status != domain.StatusRefreshRequired || store.marks != 1 || store.updates != 0 || len(store.events) != 0 {
+		t.Fatalf("status = %q, marks = %d, updates = %d, audit events = %+v", store.account.Status, store.marks, store.updates, store.events)
+	}
+}
+
+func TestManualRefreshAccountTokenRejectsNonOwner(t *testing.T) {
+	now := time.Date(2026, 8, 6, 10, 0, 0, 0, time.UTC)
+	manager := testSecurityManager(t)
+	account := encryptedRefreshAccount(t, manager, now)
+	store := &tokenRefreshStore{account: account}
+	oauth := &tokenRefreshOAuth{}
+	service := &Service{store: store, security: manager, oauth: oauth, now: func() time.Time { return now }}
+
+	_, err := service.ManualRefreshAccountToken(context.Background(), "other-user", account.ID)
+	if !errors.Is(err, domain.ErrForbidden) || oauth.calls.Load() != 0 || store.updates != 0 {
+		t.Fatalf("error = %v, refresh calls = %d, updates = %d", err, oauth.calls.Load(), store.updates)
+	}
+}
+
+func TestAdminManualRefreshAccountTokenRefreshesAnotherUsersAccount(t *testing.T) {
+	now := time.Date(2026, 8, 6, 10, 0, 0, 0, time.UTC)
+	manager := testSecurityManager(t)
+	account := encryptedRefreshAccount(t, manager, now)
+	store := &tokenRefreshStore{account: account}
+	oauth := &tokenRefreshOAuth{token: OAuthToken{
+		AccessToken: "admin-access", RefreshToken: "admin-refresh", ExpiresAt: now.Add(10 * 24 * time.Hour),
+	}}
+	service := &Service{store: store, security: manager, oauth: oauth, now: func() time.Time { return now }}
+	admin := domain.User{ID: "admin", IsAdmin: true, Role: domain.RoleAdmin}
+
+	if _, err := service.AdminManualRefreshAccountToken(context.Background(), admin, account.ID); err != nil {
+		t.Fatal(err)
+	}
+	if oauth.calls.Load() != 1 || len(store.events) != 1 || store.events[0].ActorUserID != admin.ID {
+		t.Fatalf("refresh calls = %d, audit events = %+v", oauth.calls.Load(), store.events)
+	}
+}
+
+func TestAdminManualRefreshAccountTokenRejectsRegularUser(t *testing.T) {
+	now := time.Date(2026, 8, 6, 10, 0, 0, 0, time.UTC)
+	manager := testSecurityManager(t)
+	account := encryptedRefreshAccount(t, manager, now)
+	store := &tokenRefreshStore{account: account}
+	oauth := &tokenRefreshOAuth{}
+	service := &Service{store: store, security: manager, oauth: oauth, now: func() time.Time { return now }}
+
+	_, err := service.AdminManualRefreshAccountToken(context.Background(), domain.User{ID: "member"}, account.ID)
+	if !errors.Is(err, domain.ErrForbidden) || oauth.calls.Load() != 0 {
+		t.Fatalf("error = %v, refresh calls = %d", err, oauth.calls.Load())
+	}
+}
+
+func TestManualRefreshAccountTokenRejectsInactiveAccount(t *testing.T) {
+	now := time.Date(2026, 8, 6, 10, 0, 0, 0, time.UTC)
+	manager := testSecurityManager(t)
+	account := encryptedRefreshAccount(t, manager, now)
+	account.Status = domain.StatusRefreshRequired
+	store := &tokenRefreshStore{account: account}
+	oauth := &tokenRefreshOAuth{}
+	service := &Service{store: store, security: manager, oauth: oauth, now: func() time.Time { return now }}
+
+	_, err := service.ManualRefreshAccountToken(context.Background(), account.OwnerUserID, account.ID)
+	if !errors.Is(err, domain.ErrAccountUnavailable) || oauth.calls.Load() != 0 {
+		t.Fatalf("error = %v, refresh calls = %d", err, oauth.calls.Load())
 	}
 }
 

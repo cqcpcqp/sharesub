@@ -86,6 +86,11 @@ func (s *Server) adminUpdateAccountStatus(w http.ResponseWriter, r *http.Request
 	writeResult(w, v, err)
 }
 
+func (s *Server) adminManualAccountTokenRefresh(w http.ResponseWriter, r *http.Request) {
+	v, err := s.app.AdminManualRefreshAccountToken(r.Context(), currentUser(r), r.PathValue("accountID"))
+	writeResult(w, v, err)
+}
+
 func (s *Server) adminListPlans(w http.ResponseWriter, r *http.Request) {
 	v, err := s.app.AdminListPlans(r.Context(), currentUser(r))
 	writeResult(w, v, err)

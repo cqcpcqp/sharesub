@@ -63,6 +63,7 @@
 | `PATCH` | `/api/accounts/{accountID}` | 登录 Token | 账号配置字段 | 账号所有者修改配置 |
 | `POST` | `/api/accounts/{accountID}/oauth/start` | 登录 Token | 无 | 为指定账号开始重新授权 |
 | `POST` | `/api/accounts/{accountID}/oauth/complete` | 登录 Token | `state`, `code` | 完成指定账号重新授权 |
+| `POST` | `/api/accounts/{accountID}/token/refresh` | 登录 Token | 无 | 账号所有者使用现有 refresh token 立即刷新单个正常账号的 OAuth 凭据 |
 
 OAuth 开始接口返回 `authorization_url` 和 `flow_id`。完成授权后，从回调 URL 中取得固定的 `state`、`code` 字段提交给完成接口。`config` 是包含以下字段的对象：
 
@@ -80,7 +81,7 @@ OAuth 开始接口返回 `authorization_url` 和 `flow_id`。完成授权后，�
 
 账号规则的 `filter`、`force_priority` 和 `block` 是最终决定；账号规则为空、未命中或结果为 `pass` 时继续执行当前 API Key 的规则。`force_priority` 即使请求未携带 `service_tier` 也会主动写入 ChatGPT Codex 上游当前接受的兼容值 `priority`；入站 `fast` 与 `priority` 均按 Fast 模式匹配，其他透传请求保留原始值。过滤或强制后的 service tier 同步用于请求成本统计。ShareSub 负责识别、过滤、改写或拦截该字段，实际 Fast/Flex 推理、额度消耗和模型可用性由 OpenAI 上游决定。
 
-账号列表与已绑定 Plan 详情中的 `account` 返回 `id`、`owner_user_id`、上述配置、OpenAI 邮箱、ChatGPT Account ID、套餐类型、付费订阅有效期 `subscription_expires_at`、OAuth Token 到期时间、状态、最近错误和创建时间。`subscription_expires_at` 的固定类型为 RFC 3339 时间字符串或 `null`；当前没有取得订阅有效期时返回 `null`。未绑定账号的 Plan 固定返回 `account: null` 和 `plan.account_id: ""`。OAuth access token、refresh token 以及任何密文字段永远不会进入 JSON 响应。账号所有者和平台管理员可以修改配置与重新授权；管理员操作不改变 `owner_user_id`，并以真实管理员身份记录审计事件。Plan 的所有有效成员都能通过 Plan 详情查看该账号的完整配置。
+账号列表与已绑定 Plan 详情中的 `account` 返回 `id`、`owner_user_id`、上述配置、OpenAI 邮箱、ChatGPT Account ID、套餐类型、付费订阅有效期 `subscription_expires_at`、OAuth Token 到期时间、状态、最近错误和创建时间。`subscription_expires_at` 的固定类型为 RFC 3339 时间字符串或 `null`；当前没有取得订阅有效期时返回 `null`。未绑定账号的 Plan 固定返回 `account: null` 和 `plan.account_id: ""`。OAuth access token、refresh token 以及任何密文字段永远不会进入 JSON 响应。账号所有者和平台管理员可以修改配置、手动刷新令牌与重新授权；管理员操作不改变 `owner_user_id`，并以真实管理员身份记录审计事件。Plan 的所有有效成员都能通过 Plan 详情查看该账号的完整配置。
 
 “OAuth Token 到期时间”是当前 OpenAI OAuth access token 的到期时间；`subscription_expires_at` 是 ChatGPT 当前付费订阅的有效截止时间，两者含义不同。API 服务默认每 5 分钟扫描一次，并提前 30 分钟使用 refresh token 自动换取新凭据，同时重新查询订阅有效期；请求与额度探测路径在剩余不足 2 分钟时也会触发同一刷新流程。刷新使用数据库租约锁和凭据条件更新，避免多实例重复刷新或覆盖刚完成的重新授权。连续刷新失败后账号会进入 `refresh_required` 状态。
 
@@ -183,6 +184,7 @@ Plan 详情的 `insights.window_usage` 按当前 OpenAI 账号实际返回的 5h
 | `PATCH` | `/api/admin/accounts/{accountID}/status` | 管理员 Token | `status` | 启用或禁用 OpenAI 账号 |
 | `POST` | `/api/admin/accounts/{accountID}/oauth/start` | 管理员 Token | 无 | 为任意 OpenAI 账号开始重新授权 |
 | `POST` | `/api/admin/accounts/{accountID}/oauth/complete` | 管理员 Token | `state`, `code` | 完成重新授权；只接受相同 ChatGPT Account ID |
+| `POST` | `/api/admin/accounts/{accountID}/token/refresh` | 管理员 Token | 无 | 管理员使用现有 refresh token 立即刷新任意单个正常账号的 OAuth 凭据 |
 | `GET` | `/api/admin/plans` | 管理员 Token | 无 | 列出全部 Plan 及最近 24 小时用量 |
 | `GET` | `/api/admin/plans/{planID}` | 管理员 Token | 无 | 以管理员权限获取任意 Plan 的完整详情 |
 | `GET` | `/api/admin/plans/{planID}/performance` | 管理员 Token | `period`, `timezone` | 获取任意 Plan 的性能与用量汇总 |

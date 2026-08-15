@@ -7,6 +7,7 @@ export const accountAPI = {
   oauthComplete: (state: string, code: string, config: AccountConfigInput) => request<Account>('/api/accounts/openai/oauth/complete', { method: 'POST', body: JSON.stringify({ state, code, config }) }),
   oauthReauthorizeStart: (id: string) => request<OAuthStart>(`/api/accounts/${id}/oauth/start`, { method: 'POST' }),
   oauthReauthorizeComplete: (id: string, state: string, code: string) => request<Account>(`/api/accounts/${id}/oauth/complete`, { method: 'POST', body: JSON.stringify({ state, code }) }),
+  refreshAccountToken: (id: string) => request<Account>(`/api/accounts/${id}/token/refresh`, { method: 'POST' }),
   updateAccount: (id: string, config: AccountConfigInput) => request<Account>(`/api/accounts/${id}`, { method: 'PATCH', body: JSON.stringify(config) }),
 }
 

@@ -852,6 +852,23 @@ describe('form interactions', () => {
     expect(wrapper.text()).toContain('2026')
   })
 
+  it('lets the account owner manually refresh one active account token', async () => {
+    const refresh = vi.spyOn(api, 'refreshAccountToken').mockResolvedValue({ ...account, token_expires_at: '2026-08-14T00:00:00Z' })
+    const wrapper = mount(AccountsView, { props: { accounts: [account] } })
+
+    await wrapper.get('button[aria-label="刷新令牌"]').trigger('click')
+    await flushPromises()
+
+    expect(refresh).toHaveBeenCalledWith(account.id)
+    expect(wrapper.emitted('message')).toContainEqual(['success', 'OpenAI 账号令牌已刷新'])
+    expect(wrapper.emitted('changed')).toHaveLength(1)
+  })
+
+  it('does not allow manual token refresh for a non-active owned account', () => {
+    const wrapper = mount(AccountsView, { props: { accounts: [{ ...account, status: 'refresh_required' }] } })
+    expect(wrapper.get('button[aria-label="刷新令牌"]').attributes('disabled')).toBeDefined()
+  })
+
   it('edits and clears the profile username', async () => {
     const wrapper = mount(ProfileView, {
       attachTo: document.body,

@@ -40,7 +40,7 @@
           <thead><tr><th>OpenAI 账号</th><th>所有者</th><th>套餐</th><th>状态</th><th>绑定 Plan</th><th>操作</th></tr></thead>
           <tbody><tr v-for="item in filteredAccounts" :key="item.id">
             <td><div class="admin-primary"><strong>{{ item.name }}</strong><small>{{ item.email }}</small></div></td><td><div class="admin-primary"><strong>{{ item.owner_username }}</strong><small>{{ item.owner_email }}</small></div></td><td>{{ item.plan_type }}</td><td><StatusBadge :value="item.status" /></td><td>{{ item.plan_name || '未绑定' }}</td>
-            <td><div class="admin-row-actions"><NButton size="tiny" secondary @click="openAccountEditor(item)"><template #icon><Pencil :size="13" /></template>编辑</NButton><NButton size="tiny" quaternary :loading="reauthorizeStartingID === item.id" @click="startReauthorize(item)"><template #icon><RotateCw :size="13" /></template>重新授权</NButton><NPopconfirm :positive-text="item.status === 'active' ? '禁用账号' : '启用账号'" negative-text="取消" @positive-click="toggleAccount(item)"><template #trigger><NButton size="tiny" secondary :type="item.status === 'active' ? 'error' : 'primary'" :loading="actionID === item.id">{{ item.status === 'active' ? '禁用' : '启用' }}</NButton></template>{{ item.status === 'active' ? '禁用后网关将停止向该账号调度请求。' : '启用后账号将重新参与网关调度。' }}</NPopconfirm></div></td>
+            <td><div class="admin-row-actions"><NButton size="tiny" secondary :disabled="refreshingAccountID === item.id || reauthorizeStartingID === item.id" @click="openAccountEditor(item)"><template #icon><Pencil :size="13" /></template>编辑</NButton><NButton size="tiny" quaternary :disabled="item.status !== 'active' || actionID === item.id || reauthorizeStartingID === item.id" :loading="refreshingAccountID === item.id" @click="refreshAccountToken(item)"><template #icon><RefreshCw :size="13" /></template>刷新令牌</NButton><NButton size="tiny" quaternary :disabled="refreshingAccountID === item.id || actionID === item.id" :loading="reauthorizeStartingID === item.id" @click="startReauthorize(item)"><template #icon><RotateCw :size="13" /></template>重新授权</NButton><NPopconfirm :positive-text="item.status === 'active' ? '禁用账号' : '启用账号'" negative-text="取消" @positive-click="toggleAccount(item)"><template #trigger><NButton size="tiny" secondary :type="item.status === 'active' ? 'error' : 'primary'" :disabled="refreshingAccountID === item.id || reauthorizeStartingID === item.id" :loading="actionID === item.id">{{ item.status === 'active' ? '禁用' : '启用' }}</NButton></template>{{ item.status === 'active' ? '禁用后网关将停止向该账号调度请求。' : '启用后账号将重新参与网关调度。' }}</NPopconfirm></div></td>
           </tr></tbody>
         </table>
 
@@ -127,6 +127,7 @@ const reauthorizing = ref<OAuthStart | null>(null)
 const reauthorizeAccount = ref<AdminAccount | null>(null)
 const callbackURL = ref('')
 const reauthorizeStartingID = ref('')
+const refreshingAccountID = ref('')
 const reauthorizeCompleting = ref(false)
 const normalizedQuery = computed(() => query.value.trim().toLowerCase())
 const matches = (...values: string[]) => !normalizedQuery.value || values.some(value => value.toLowerCase().includes(normalizedQuery.value))
@@ -163,6 +164,18 @@ async function toggleAccount(item: AdminAccount) {
   try { Object.assign(item, await api.adminUpdateAccountStatus(item.id, item.status === 'active' ? 'disabled' : 'active')); overview.value = await api.adminOverview(); emit('message', 'success', '账号状态已更新') }
   catch (error) { emit('message', 'error', error instanceof Error ? error.message : String(error)) }
   finally { actionID.value = '' }
+}
+async function refreshAccountToken(item: AdminAccount) {
+  if (refreshingAccountID.value || reauthorizeStartingID.value === item.id || actionID.value === item.id || item.status !== 'active') return
+  refreshingAccountID.value = item.id
+  try {
+    Object.assign(item, await adminAPI.adminRefreshAccountToken(item.id))
+    emit('message', 'success', 'OpenAI 账号令牌已刷新')
+  } catch (error) {
+    emit('message', 'error', error instanceof Error ? error.message : String(error))
+  } finally {
+    refreshingAccountID.value = ''
+  }
 }
 async function openAccountEditor(account: AdminAccount) {
   emit('openAccount', account.id)
@@ -202,6 +215,7 @@ function startReauthorizeFromEditor(account: Account) {
   if (adminAccount) void startReauthorize(adminAccount)
 }
 async function startReauthorize(account: AdminAccount) {
+  if (refreshingAccountID.value === account.id || reauthorizeStartingID.value || actionID.value === account.id) return
   emit('openAccount', account.id)
   reauthorizeStartingID.value = account.id
   editingAccount.value = null

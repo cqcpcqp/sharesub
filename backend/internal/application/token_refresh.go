@@ -20,7 +20,7 @@ const (
 
 var (
 	errAccountRefreshInProgress  = errors.New("account token refresh is already in progress")
-	errAccountTokenRefreshFailed = errors.New("account token refresh failed")
+	errAccountTokenRefreshFailed = domain.ErrAccountTokenRefresh
 )
 
 type TokenRefreshResult struct {
@@ -28,6 +28,59 @@ type TokenRefreshResult struct {
 	Refreshed int
 	Skipped   int
 	Failed    int
+}
+
+func (s *Service) ManualRefreshAccountToken(ctx context.Context, userID, accountID string) (domain.Account, error) {
+	return s.manualRefreshAccountToken(ctx, userID, userID, accountID)
+}
+
+func (s *Service) AdminManualRefreshAccountToken(ctx context.Context, admin domain.User, accountID string) (domain.Account, error) {
+	if err := requireAdmin(admin); err != nil {
+		return domain.Account{}, err
+	}
+	return s.manualRefreshAccountToken(ctx, admin.ID, "", accountID)
+}
+
+func (s *Service) manualRefreshAccountToken(ctx context.Context, actorUserID, requiredOwnerUserID, accountID string) (domain.Account, error) {
+	account, err := s.store.AccountByID(ctx, accountID)
+	if err != nil {
+		return domain.Account{}, err
+	}
+	if requiredOwnerUserID != "" && account.OwnerUserID != requiredOwnerUserID {
+		return domain.Account{}, domain.ErrForbidden
+	}
+	if account.Status != domain.StatusActive {
+		return domain.Account{}, domain.ErrAccountUnavailable
+	}
+	event, err := s.newAuditEvent(actorUserID, "account.token_refreshed", "account", account.ID, map[string]string{"account_name": account.Name})
+	if err != nil {
+		return domain.Account{}, err
+	}
+	refreshBefore := account.TokenExpiresAt.Sub(s.now()) + time.Minute
+	if refreshBefore < time.Minute {
+		refreshBefore = time.Minute
+	}
+	markAccountError := !account.TokenExpiresAt.After(s.now())
+	_, refreshed, err := s.refreshAccountTokenWithAttempts(ctx, account, refreshBefore, true, 1, &event, markAccountError)
+	if err != nil {
+		if errors.Is(err, errAccountRefreshInProgress) {
+			return domain.Account{}, domain.ErrConflict
+		}
+		return domain.Account{}, err
+	}
+	if !refreshed {
+		if err := s.store.RecordAuditEvent(ctx, event); err != nil {
+			return domain.Account{}, err
+		}
+	}
+	updated, err := s.store.AccountByID(ctx, account.ID)
+	if err != nil {
+		return domain.Account{}, err
+	}
+	if err := s.hydrateAccountProxy(&updated); err != nil {
+		return domain.Account{}, err
+	}
+	return updated, nil
 }
 
 func (s *Service) RefreshExpiringAccountTokens(ctx context.Context, refreshBefore time.Duration, limit, concurrency, maxRetries int) (TokenRefreshResult, error) {
@@ -86,15 +139,15 @@ func (s *Service) RefreshExpiringAccountTokens(ctx context.Context, refreshBefor
 }
 
 func (s *Service) refreshAccountWithRetry(ctx context.Context, account domain.Account, refreshBefore time.Duration, maxRetries int) (bool, error) {
-	_, refreshed, err := s.refreshAccountTokenWithAttempts(ctx, account, refreshBefore, false, maxRetries)
+	_, refreshed, err := s.refreshAccountTokenWithAttempts(ctx, account, refreshBefore, false, maxRetries, nil, true)
 	return refreshed, err
 }
 
 func (s *Service) refreshAccountToken(ctx context.Context, account domain.Account, refreshBefore time.Duration, waitForPeer bool) (string, bool, error) {
-	return s.refreshAccountTokenWithAttempts(ctx, account, refreshBefore, waitForPeer, 1)
+	return s.refreshAccountTokenWithAttempts(ctx, account, refreshBefore, waitForPeer, 1, nil, true)
 }
 
-func (s *Service) refreshAccountTokenWithAttempts(ctx context.Context, account domain.Account, refreshBefore time.Duration, waitForPeer bool, maxAttempts int) (string, bool, error) {
+func (s *Service) refreshAccountTokenWithAttempts(ctx context.Context, account domain.Account, refreshBefore time.Duration, waitForPeer bool, maxAttempts int, auditEvent *domain.AuditEvent, markAccountError bool) (string, bool, error) {
 	if account.TokenExpiresAt.After(s.now().Add(refreshBefore)) {
 		accessToken, err := s.decryptAccountAccessToken(account)
 		return accessToken, false, err
@@ -135,7 +188,9 @@ func (s *Service) refreshAccountTokenWithAttempts(ctx context.Context, account d
 	refreshToken, err := s.security.Decrypt(latest.RefreshTokenCiphertext, []byte(scope+":refresh"))
 	if err != nil {
 		refreshErr := fmt.Errorf("%w: %w", errAccountTokenRefreshFailed, err)
-		_, _ = s.store.MarkAccountErrorIfRefreshTokenUnchanged(ctx, latest.ID, latest.RefreshTokenCiphertext, refreshErr.Error())
+		if markAccountError {
+			_, _ = s.store.MarkAccountErrorIfRefreshTokenUnchanged(ctx, latest.ID, latest.RefreshTokenCiphertext, refreshErr.Error())
+		}
 		return "", false, refreshErr
 	}
 	if maxAttempts < 1 {
@@ -159,7 +214,9 @@ func (s *Service) refreshAccountTokenWithAttempts(ctx context.Context, account d
 	}
 	if err != nil {
 		refreshErr := fmt.Errorf("%w: %w", errAccountTokenRefreshFailed, err)
-		_, _ = s.store.MarkAccountErrorIfRefreshTokenUnchanged(ctx, latest.ID, latest.RefreshTokenCiphertext, refreshErr.Error())
+		if markAccountError {
+			_, _ = s.store.MarkAccountErrorIfRefreshTokenUnchanged(ctx, latest.ID, latest.RefreshTokenCiphertext, refreshErr.Error())
+		}
 		return "", false, refreshErr
 	}
 	accessCiphertext, err := s.security.Encrypt(refreshed.AccessToken, []byte(scope+":access"))
@@ -170,7 +227,7 @@ func (s *Service) refreshAccountTokenWithAttempts(ctx context.Context, account d
 	if err != nil {
 		return "", false, err
 	}
-	updated, err := s.store.UpdateAccountTokensIfRefreshTokenUnchanged(ctx, latest.ID, latest.RefreshTokenCiphertext, accessCiphertext, refreshCiphertext, refreshed.ExpiresAt)
+	updated, err := s.store.UpdateAccountTokensIfRefreshTokenUnchanged(ctx, latest.ID, latest.RefreshTokenCiphertext, accessCiphertext, refreshCiphertext, refreshed.ExpiresAt, auditEvent)
 	if err != nil {
 		return "", false, err
 	}

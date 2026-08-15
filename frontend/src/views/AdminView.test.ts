@@ -98,6 +98,23 @@ describe('AdminView', () => {
     expect(wrapper.text()).toContain('请登录同一个 OpenAI 账号')
   })
 
+  it('lets an administrator manually refresh one account token', async () => {
+    vi.spyOn(api, 'adminOverview').mockResolvedValue(overview)
+    vi.spyOn(api, 'adminUsers').mockResolvedValue([])
+    vi.spyOn(api, 'adminAccounts').mockResolvedValue([account])
+    vi.spyOn(api, 'adminPlans').mockResolvedValue([])
+    vi.spyOn(api, 'adminKeys').mockResolvedValue([])
+    const refresh = vi.spyOn(adminAPI, 'adminRefreshAccountToken').mockResolvedValue({ ...account, token_expires_at: '2026-08-14T00:00:00Z' })
+    const wrapper = mount(AdminView, { props: { currentUser: admin, activeTab: 'accounts' }, global: { stubs: { teleport: true } } })
+    await flushPromises()
+
+    await wrapper.findAll('button').find(button => button.text().includes('刷新令牌'))!.trigger('click')
+    await flushPromises()
+
+    expect(refresh).toHaveBeenCalledWith(account.id)
+    expect(wrapper.emitted('message')).toContainEqual(['success', 'OpenAI 账号令牌已刷新'])
+  })
+
   it('opens the shared Plan workspace instead of a management modal', async () => {
     vi.spyOn(api, 'adminOverview').mockResolvedValue(overview)
     vi.spyOn(api, 'adminUsers').mockResolvedValue([])

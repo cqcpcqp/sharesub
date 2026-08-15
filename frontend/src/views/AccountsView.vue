@@ -23,8 +23,20 @@
             <NButton
               quaternary
               class="icon-button"
+              :title="account.status === 'active' ? '刷新令牌' : '仅正常账号可刷新令牌'"
+              aria-label="刷新令牌"
+              :disabled="account.status !== 'active' || reauthorizeStartingID === account.id"
+              :loading="refreshingID === account.id"
+              @click="refreshToken(account)"
+            >
+              <template #icon><RefreshCw :size="17" /></template>
+            </NButton>
+            <NButton
+              quaternary
+              class="icon-button"
               title="重新授权"
               aria-label="重新授权"
+              :disabled="refreshingID === account.id"
               :loading="reauthorizeStartingID === account.id"
               @click="startReauthorize(account)"
             >
@@ -35,6 +47,7 @@
               class="icon-button"
               title="编辑账号"
               aria-label="编辑账号"
+              :disabled="refreshingID === account.id || reauthorizeStartingID === account.id"
               @click="openEdit(account)"
             >
               <template #icon><Pencil :size="17" /></template>
@@ -118,7 +131,7 @@
 <script setup lang="ts">
 import { NAlert, NButton } from 'naive-ui'
 import { computed, ref } from 'vue'
-import { Bot, CalendarRange, ExternalLink, Gauge, Network, Pencil, Plus, RotateCw, TimerReset } from 'lucide-vue-next'
+import { Bot, CalendarRange, ExternalLink, Gauge, Network, Pencil, Plus, RefreshCw, RotateCw, TimerReset } from 'lucide-vue-next'
 import { api, parseOAuthCallback } from '../api'
 import type { Account, AccountConfigInput, Member, OAuthStart, Plan } from '../types'
 import AccountConfigDialog from '../components/AccountConfigDialog.vue'
@@ -137,6 +150,7 @@ const reauthorizing = ref<OAuthStart | null>(null)
 const reauthorizeAccount = ref<Account | null>(null)
 const reauthorizeCallback = ref('')
 const reauthorizeStartingID = ref('')
+const refreshingID = ref('')
 const reauthorizeCompleting = ref(false)
 const saving = ref(false)
 const policyMembers = ref<Member[]>([])
@@ -156,7 +170,22 @@ function handleConnected() {
 
 function forwardError(_: 'error', text: string) { emit('message', 'error', text) }
 
+async function refreshToken(account: Account) {
+  if (refreshingID.value || reauthorizeStartingID.value === account.id || account.status !== 'active') return
+  refreshingID.value = account.id
+  try {
+    await api.refreshAccountToken(account.id)
+    emit('message', 'success', 'OpenAI 账号令牌已刷新')
+    emit('changed')
+  } catch (error) {
+    notifyError(error)
+  } finally {
+    refreshingID.value = ''
+  }
+}
+
 async function startReauthorize(account: Account) {
+  if (refreshingID.value === account.id || reauthorizeStartingID.value) return
   reauthorizeStartingID.value = account.id
   try {
     reauthorizeAccount.value = account

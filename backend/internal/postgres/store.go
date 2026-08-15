@@ -263,12 +263,28 @@ func (s *Store) UpdateAccountConfig(ctx context.Context, userID string, account 
 	return out, tx.Commit(ctx)
 }
 
-func (s *Store) UpdateAccountTokensIfRefreshTokenUnchanged(ctx context.Context, id string, expectedRefresh, access, refresh []byte, expiresAt time.Time) (bool, error) {
-	result, err := s.pool.Exec(ctx, `UPDATE openai_accounts SET access_token_ciphertext=$3,refresh_token_ciphertext=$4,token_expires_at=$5,last_error='',updated_at=now() WHERE id=$1 AND refresh_token_ciphertext=$2 AND status='active'`, id, expectedRefresh, access, refresh, expiresAt)
+func (s *Store) UpdateAccountTokensIfRefreshTokenUnchanged(ctx context.Context, id string, expectedRefresh, access, refresh []byte, expiresAt time.Time, auditEvent *domain.AuditEvent) (bool, error) {
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return false, mapError(err)
 	}
-	return result.RowsAffected() == 1, nil
+	defer tx.Rollback(ctx)
+	result, err := tx.Exec(ctx, `UPDATE openai_accounts SET access_token_ciphertext=$3,refresh_token_ciphertext=$4,token_expires_at=$5,last_error='',updated_at=now() WHERE id=$1 AND refresh_token_ciphertext=$2 AND status='active'`, id, expectedRefresh, access, refresh, expiresAt)
+	if err != nil {
+		return false, mapError(err)
+	}
+	if result.RowsAffected() != 1 {
+		return false, nil
+	}
+	if auditEvent != nil {
+		if err := insertAuditEvent(ctx, tx, *auditEvent); err != nil {
+			return false, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, mapError(err)
+	}
+	return true, nil
 }
 
 func (s *Store) UpdateAccountSubscriptionExpiresAtIfRefreshTokenUnchanged(ctx context.Context, id string, expectedRefresh []byte, subscriptionExpiresAt *time.Time) (bool, error) {

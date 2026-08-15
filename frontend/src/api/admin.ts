@@ -37,6 +37,7 @@ export const adminAPI = {
   adminUpdateAccountStatus: (id: string, status: 'active' | 'disabled') => request<AdminAccount>(`/api/admin/accounts/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
   adminOAuthReauthorizeStart: (id: string) => request<OAuthStart>(`/api/admin/accounts/${id}/oauth/start`, { method: 'POST' }),
   adminOAuthReauthorizeComplete: (id: string, state: string, code: string) => request<Account>(`/api/admin/accounts/${id}/oauth/complete`, { method: 'POST', body: JSON.stringify({ state, code }) }),
+  adminRefreshAccountToken: (id: string) => request<Account>(`/api/admin/accounts/${id}/token/refresh`, { method: 'POST' }),
   adminPlans: () => request<AdminPlan[]>('/api/admin/plans'),
   adminPlan: (id: string) => request<PlanDetail>(`/api/admin/plans/${id}?timezone=${encodeURIComponent(browserTimezone())}`),
   adminPlanPerformance: (id: string, period: PerformancePeriod) => request<PlanPerformance>(`/api/admin/plans/${id}/performance?period=${period}&timezone=${encodeURIComponent(browserTimezone())}`),
