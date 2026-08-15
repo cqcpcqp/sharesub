@@ -1,6 +1,7 @@
 package application
 
 import (
+	"context"
 	"strings"
 	"time"
 
@@ -12,15 +13,20 @@ const oauthFlowTTL = 15 * time.Minute
 const MaxAvatarBytes = 2 << 20
 
 type Service struct {
-	store       Store
-	security    *security.Manager
-	oauth       OpenAIOAuth
-	quotaProber QuotaProber
-	sessionTTL  time.Duration
-	redirectURI string
-	publicURL   string
-	now         func() time.Time
-	traffic     *accountTrafficController
+	store         Store
+	security      *security.Manager
+	oauth         OpenAIOAuth
+	quotaProber   QuotaProber
+	sessionTTL    time.Duration
+	redirectURI   string
+	publicURL     string
+	now           func() time.Time
+	traffic       *accountTrafficController
+	runtimeStatus RuntimeStatusProvider
+}
+
+type RuntimeStatusProvider interface {
+	Snapshot(context.Context) domain.AdminRuntimeStatus
 }
 
 type AuthResult struct {
@@ -60,6 +66,10 @@ func NewService(store Store, securityManager *security.Manager, oauth OpenAIOAut
 		service.quotaProber = quotaProber[0]
 	}
 	return service
+}
+
+func (s *Service) SetRuntimeStatusProvider(provider RuntimeStatusProvider) {
+	s.runtimeStatus = provider
 }
 
 func (s *Service) decorateUser(user domain.User) domain.User {

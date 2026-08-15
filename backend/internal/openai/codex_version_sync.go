@@ -132,15 +132,17 @@ func SyncCodexVersion(ctx context.Context, client *http.Client) error {
 	return nil
 }
 
-func RunCodexVersionSync(ctx context.Context, client *http.Client, interval time.Duration, report func(error)) {
+func RunCodexVersionSync(ctx context.Context, client *http.Client, interval time.Duration, report func(time.Duration, error)) {
 	if interval <= 0 {
 		interval = 6 * time.Hour
 	}
 	sync := func() {
+		startedAt := time.Now()
 		requestCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
-		if err := SyncCodexVersion(requestCtx, client); err != nil && report != nil {
-			report(err)
+		err := SyncCodexVersion(requestCtx, client)
+		if report != nil {
+			report(time.Since(startedAt), err)
 		}
 	}
 	sync()

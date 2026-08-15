@@ -22,7 +22,14 @@ func (s *Service) AdminOverview(ctx context.Context, admin domain.User) (domain.
 	if err := requireAdmin(admin); err != nil {
 		return domain.AdminOverview{}, err
 	}
-	return s.store.AdminOverview(ctx, s.now().Add(-24*time.Hour))
+	overview, err := s.store.AdminOverview(ctx, s.now().Add(-24*time.Hour))
+	if err != nil {
+		return domain.AdminOverview{}, err
+	}
+	if s.runtimeStatus != nil {
+		overview.Runtime = s.runtimeStatus.Snapshot(ctx)
+	}
+	return overview, nil
 }
 
 func (s *Service) AdminListUsers(ctx context.Context, admin domain.User) ([]domain.AdminUser, error) {

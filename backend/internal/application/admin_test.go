@@ -36,6 +36,12 @@ type adminStore struct {
 	passwordSessionHash []byte
 }
 
+type adminRuntimeStatusProvider struct{ status domain.AdminRuntimeStatus }
+
+func (p adminRuntimeStatusProvider) Snapshot(context.Context) domain.AdminRuntimeStatus {
+	return p.status
+}
+
 func (s *adminStore) AdminListUsers(context.Context) ([]domain.AdminUser, error) { return s.users, nil }
 func (s *adminStore) AdminUpdateUserStatus(_ context.Context, userID, status string) (domain.User, error) {
 	s.updatedUserID, s.updatedStatus = userID, status
@@ -129,6 +135,7 @@ func TestPersistedAdminIdentityAndAuthorization(t *testing.T) {
 	now := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)
 	store := &adminStore{users: []domain.AdminUser{{User: domain.User{ID: "admin", Email: "ADMIN@example.com", Role: domain.RoleAdmin}}, {User: domain.User{ID: "member", Email: "member@example.com", Role: domain.RoleUser}}}}
 	service := NewService(store, nil, nil, 0, "", "")
+	service.SetRuntimeStatusProvider(adminRuntimeStatusProvider{status: domain.AdminRuntimeStatus{JobsStatus: "healthy"}})
 	service.now = func() time.Time { return now }
 	admin := service.decorateUser(domain.User{ID: "admin", Email: "admin@example.com", Role: domain.RoleAdmin})
 	member := service.decorateUser(domain.User{ID: "member", Email: "member@example.com", Role: domain.RoleUser})
@@ -136,7 +143,7 @@ func TestPersistedAdminIdentityAndAuthorization(t *testing.T) {
 		t.Fatalf("admin = %+v, member = %+v", admin, member)
 	}
 	overview, err := service.AdminOverview(context.Background(), admin)
-	if err != nil || overview.UserCount != 3 || !store.metricsStarted.Equal(now.Add(-24*time.Hour)) {
+	if err != nil || overview.UserCount != 3 || overview.Runtime.JobsStatus != "healthy" || !store.metricsStarted.Equal(now.Add(-24*time.Hour)) {
 		t.Fatalf("overview = %+v, start = %s, error = %v", overview, store.metricsStarted, err)
 	}
 	if _, err := service.AdminOverview(context.Background(), member); err != domain.ErrForbidden {

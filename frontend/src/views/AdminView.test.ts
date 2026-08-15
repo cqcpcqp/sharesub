@@ -12,6 +12,15 @@ const overview: AdminOverview = {
   user_count: 2, active_user_count: 2, account_count: 1, active_accounts: 1,
   plan_count: 1, active_plans: 1, api_key_count: 1, active_api_keys: 1,
   requests_24h: 12, tokens_24h: 3456, cost_micros_24h: 125000, success_rate_24h: 100,
+  runtime: {
+    collected_at: '2026-08-15T03:37:28Z',
+    cpu: { status: 'healthy', usage_percent: 7 },
+    memory: { status: 'healthy', used_bytes: 50 * 1024 * 1024, total_bytes: 1024 * 1024 * 1024, usage_percent: 4.9 },
+    database: { status: 'healthy', open_connections: 2, active_connections: 1, idle_connections: 1, waiting_requests: 0, max_connections: 10 },
+    goroutines: { status: 'healthy', count: 157 },
+    jobs_status: 'healthy',
+    jobs: [{ id: 'resource_cleanup', name: '资源清理', status: 'healthy', last_run_at: '2026-08-15T03:30:00Z', last_success_at: '2026-08-15T03:30:00Z', last_error_at: null, last_error: '', last_duration_ms: 12, last_result: '网关指标 0，会话 0' }],
+  },
 }
 const account: AdminAccount = {
   id: 'account', owner_user_id: admin.id, owner_username: admin.username, owner_email: admin.email,
@@ -41,8 +50,24 @@ describe('AdminView', () => {
     expect(wrapper.text()).toContain('后台管理')
     expect(wrapper.text()).toContain('3.46K')
     expect(wrapper.text()).toContain('管理员')
+    expect(wrapper.text()).toContain('运行状态')
+    expect(wrapper.text()).toContain('7.0%')
+    expect(wrapper.text()).toContain('连接 2 / 10')
     const currentAccountButton = wrapper.findAll('button').find(button => button.text() === '当前账号')!
     expect(currentAccountButton.attributes('disabled')).toBeDefined()
+  })
+
+  it('shows background task execution details', async () => {
+    vi.spyOn(api, 'adminOverview').mockResolvedValue(overview)
+    vi.spyOn(api, 'adminUsers').mockResolvedValue([])
+    vi.spyOn(api, 'adminAccounts').mockResolvedValue([])
+    vi.spyOn(api, 'adminPlans').mockResolvedValue([])
+    vi.spyOn(api, 'adminKeys').mockResolvedValue([])
+    const wrapper = mount(AdminView, { props: { currentUser: admin }, global: { stubs: { teleport: true } } })
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === '详情')!.trigger('click')
+    expect(wrapper.text()).toContain('resource_cleanup')
+    expect(wrapper.text()).toContain('网关指标 0，会话 0')
   })
 
   it('does not expose OAuth token expiry in the account table', async () => {

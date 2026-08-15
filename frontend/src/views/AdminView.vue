@@ -14,6 +14,40 @@
       <article><Coins :size="19" /><div><small>24h Token / 费用</small><strong>{{ formatTokens(overview.tokens_24h) }}</strong><span>{{ formatUSD(overview.cost_micros_24h) }}</span></div></article>
     </div>
 
+    <section v-if="overview" class="runtime-panel" aria-labelledby="runtime-heading">
+      <header class="runtime-heading">
+        <div><h2 id="runtime-heading">运行状态</h2><p><span class="runtime-live-dot" aria-hidden="true" />采集于 {{ formatRuntimeTime(overview.runtime.collected_at) }}</p></div>
+        <small>容器与服务实时快照</small>
+      </header>
+      <div class="runtime-grid">
+        <article title="API 容器相对于 CPU 限额的使用率">
+          <span>CPU</span>
+          <strong :class="runtimeStatusClass(overview.runtime.cpu.status)">{{ formatRuntimePercent(overview.runtime.cpu.status, overview.runtime.cpu.usage_percent) }}</strong>
+          <small>警告 80% · 严重 95%</small>
+        </article>
+        <article title="API 容器当前内存用量与容器限制">
+          <span>内存</span>
+          <strong :class="runtimeStatusClass(overview.runtime.memory.status)">{{ formatRuntimePercent(overview.runtime.memory.status, overview.runtime.memory.usage_percent) }}</strong>
+          <small>{{ formatBytes(overview.runtime.memory.used_bytes) }} / {{ formatBytes(overview.runtime.memory.total_bytes) }}</small>
+        </article>
+        <article title="PostgreSQL 连通性与连接池状态">
+          <span>数据库</span>
+          <strong :class="runtimeStatusClass(overview.runtime.database.status)">{{ runtimeStatusLabel(overview.runtime.database.status) }}</strong>
+          <small>连接 {{ overview.runtime.database.open_connections }} / {{ overview.runtime.database.max_connections }} · 活跃 {{ overview.runtime.database.active_connections }} · 空闲 {{ overview.runtime.database.idle_connections }} · 等待累计 {{ overview.runtime.database.waiting_requests }}</small>
+        </article>
+        <article title="当前 Go 进程的 goroutine 数量">
+          <span>协程</span>
+          <strong :class="runtimeStatusClass(overview.runtime.goroutines.status)">{{ runtimeStatusLabel(overview.runtime.goroutines.status) }}</strong>
+          <small>当前 {{ formatNumber(overview.runtime.goroutines.count) }} · 警告 8,000 · 严重 15,000</small>
+        </article>
+        <article title="服务内定时任务的最近执行状态">
+          <div class="runtime-card-heading"><span>后台任务</span><NButton text size="tiny" @click="jobsVisible = true">详情</NButton></div>
+          <strong :class="runtimeStatusClass(overview.runtime.jobs_status)">{{ runtimeStatusLabel(overview.runtime.jobs_status) }}</strong>
+          <small>总计 {{ overview.runtime.jobs.length }} · 警告 {{ warningJobCount }}</small>
+        </article>
+      </div>
+    </section>
+
     <div class="admin-resource-panel">
       <div class="admin-resource-toolbar">
         <NTabs v-model:value="activeTab" type="segment" size="small">
@@ -92,6 +126,21 @@
       </NButton>
     </template>
   </ModalShell>
+
+  <ModalShell v-if="jobsVisible && overview" title="后台任务" subtitle="最近一次执行结果与耗时" wide @close="jobsVisible = false">
+    <div class="runtime-job-list">
+      <article v-for="job in overview.runtime.jobs" :key="job.id">
+        <div class="runtime-job-heading"><div><strong>{{ job.name }}</strong><small>{{ job.id }}</small></div><span class="runtime-job-status" :class="runtimeStatusClass(job.status)">{{ runtimeStatusLabel(job.status) }}</span></div>
+        <dl>
+          <div><dt>最近运行</dt><dd>{{ formatOptionalRuntimeTime(job.last_run_at) }}</dd></div>
+          <div><dt>最近成功</dt><dd>{{ formatOptionalRuntimeTime(job.last_success_at) }}</dd></div>
+          <div><dt>耗时</dt><dd>{{ job.last_run_at ? `${job.last_duration_ms} ms` : '尚未运行' }}</dd></div>
+          <div><dt>结果</dt><dd>{{ job.last_result || '—' }}</dd></div>
+        </dl>
+        <p v-if="job.last_error" class="runtime-job-error">{{ job.last_error }}</p>
+      </article>
+    </div>
+  </ModalShell>
 </template>
 
 <script setup lang="ts">
@@ -100,7 +149,7 @@ import { NAlert, NButton, NEmpty, NInput, NPopconfirm, NSpin, NTab, NTabs } from
 import { Activity, ArrowRight, Bot, Coins, ExternalLink, KeyRound, Layers3, Pencil, RefreshCw, RotateCw, Search, UsersRound } from 'lucide-vue-next'
 import { api, parseOAuthCallback } from '../api'
 import { adminAPI } from '../api/admin'
-import type { Account, AccountConfigInput, AdminAPIKey, AdminAccount, AdminOverview, AdminPlan, AdminUser, Member, OAuthStart, User } from '../types'
+import type { Account, AccountConfigInput, AdminAPIKey, AdminAccount, AdminOverview, AdminPlan, AdminUser, Member, OAuthStart, RuntimeStatus, User } from '../types'
 import AccountConfigDialog from '../components/AccountConfigDialog.vue'
 import AppInput from '../components/AppInput.vue'
 import ModalShell from '../components/ModalShell.vue'
@@ -129,6 +178,7 @@ const callbackURL = ref('')
 const reauthorizeStartingID = ref('')
 const refreshingAccountID = ref('')
 const reauthorizeCompleting = ref(false)
+const jobsVisible = ref(false)
 const normalizedQuery = computed(() => query.value.trim().toLowerCase())
 const matches = (...values: string[]) => !normalizedQuery.value || values.some(value => value.toLowerCase().includes(normalizedQuery.value))
 const filteredUsers = computed(() => users.value.filter(item => matches(item.username, item.email, item.id)))
@@ -136,15 +186,29 @@ const filteredAccounts = computed(() => accounts.value.filter(item => matches(it
 const filteredPlans = computed(() => plans.value.filter(item => matches(item.name, item.owner_username, item.account_email, item.id)))
 const filteredKeys = computed(() => keys.value.filter(item => matches(item.name, item.key_prefix, item.username, item.email)))
 const currentCount = computed(() => ({ users: filteredUsers.value.length, accounts: filteredAccounts.value.length, plans: filteredPlans.value.length, keys: filteredKeys.value.length })[activeTab.value ?? 'users'])
+const warningJobCount = computed(() => overview.value?.runtime.jobs.filter(job => job.status === 'warning' || job.status === 'critical').length ?? 0)
 const policyUserOptions = computed(() => policyMembers.value.map(member => ({ label: member.email ? `${member.username} · ${member.email}` : member.username, value: member.user_id })))
 const accountDialogSubtitle = computed(() => editingAccount.value ? `${editingAccount.value.email} · 所有者 ${editingAccount.value.owner_username}` : '')
 const numberFormatter = new Intl.NumberFormat('zh-CN')
 const usdFormatter = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 4 })
 const dateFormatter = new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
+const runtimeTimeFormatter = new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
+const runtimeStatusLabels: Record<RuntimeStatus, string> = { healthy: '正常', warning: '警告', critical: '严重', pending: '待运行', disabled: '已停用', unavailable: '不可用' }
 
 function formatNumber(value: number) { return numberFormatter.format(value) }
 function formatUSD(value: number) { return usdFormatter.format(value / 1_000_000) }
 function formatDate(value: string) { return dateFormatter.format(new Date(value)) }
+function formatRuntimeTime(value: string) { return runtimeTimeFormatter.format(new Date(value)) }
+function formatOptionalRuntimeTime(value: string | null) { return value ? dateFormatter.format(new Date(value)) : '尚未运行' }
+function runtimeStatusLabel(status: RuntimeStatus) { return runtimeStatusLabels[status] }
+function runtimeStatusClass(status: RuntimeStatus) { return `runtime-status-${status}` }
+function formatRuntimePercent(status: RuntimeStatus, value: number) { return status === 'unavailable' ? runtimeStatusLabel(status) : `${value.toFixed(1)}%` }
+function formatBytes(value: number) {
+  if (value === 0) return '—'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1)
+  return `${(value / 1024 ** index).toFixed(index >= 3 ? 1 : 0)} ${units[index]}`
+}
 function rememberScroll(event: Event) { scrollTop.value = (event.currentTarget as HTMLElement).scrollTop }
 async function loadAll() {
   if (loading.value) return
@@ -288,6 +352,37 @@ watch([() => props.initialAccountId, () => accounts.value.map(account => account
 .admin-overview-grid article div { min-width: 0; display: grid; gap: 3px; }
 .admin-overview-grid small,.admin-overview-grid span { color: var(--muted); font-size: 11px; }
 .admin-overview-grid strong { overflow: hidden; color: var(--ink-strong); font-size: 18px; text-overflow: ellipsis; }
+.runtime-panel { overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); box-shadow: var(--shadow-xs); }
+.runtime-heading { min-height: 58px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 11px 14px; border-bottom: 1px solid var(--line-soft); }
+.runtime-heading h2 { margin: 0; color: var(--ink-strong); font-size: 13px; }
+.runtime-heading p { display: flex; align-items: center; gap: 6px; margin: 4px 0 0; color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+.runtime-heading > small { color: var(--muted); font-size: 10px; }
+.runtime-live-dot { width: 6px; height: 6px; flex: 0 0 auto; border-radius: 999px; background: var(--teal); }
+.runtime-grid { display: grid; grid-template-columns: .8fr 1fr 1.55fr 1.3fr 1fr; }
+.runtime-grid > article { min-width: 0; min-height: 102px; display: grid; align-content: center; gap: 7px; padding: 14px 15px; border-right: 1px solid var(--line-soft); background: var(--surface); }
+.runtime-grid > article:last-child { border-right: 0; }
+.runtime-grid span,.runtime-card-heading { color: var(--muted); font-size: 10px; font-weight: 760; letter-spacing: .06em; text-transform: uppercase; }
+.runtime-grid strong { overflow: hidden; font-size: 19px; font-variant-numeric: tabular-nums; line-height: 1.1; text-overflow: ellipsis; }
+.runtime-grid small { overflow: hidden; color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; line-height: 1.5; text-overflow: ellipsis; }
+.runtime-card-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.runtime-card-heading .n-button { min-width: 36px; min-height: 36px; padding: 0 8px; color: var(--blue); font-size: 10px; font-weight: 750; letter-spacing: 0; text-transform: none; }
+.runtime-status-healthy { color: var(--teal); }
+.runtime-status-warning,.runtime-status-pending { color: var(--amber); }
+.runtime-status-critical { color: var(--red); }
+.runtime-status-disabled,.runtime-status-unavailable { color: var(--muted); }
+.runtime-job-list { display: grid; gap: 10px; }
+.runtime-job-list > article { padding: 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-soft); }
+.runtime-job-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.runtime-job-heading > div { min-width: 0; display: grid; gap: 3px; }
+.runtime-job-heading strong { color: var(--ink-strong); font-size: 12px; }
+.runtime-job-heading small { color: var(--muted); font-family: "SFMono-Regular", Consolas, monospace; font-size: 10px; }
+.runtime-job-status { padding: 3px 8px; border-radius: 999px; background: var(--surface); font-size: 10px; font-weight: 750; }
+.runtime-job-status.runtime-status-warning,.runtime-job-status.runtime-status-pending { background: var(--amber-soft); color: var(--ink); }
+.runtime-job-list dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px 18px; margin: 13px 0 0; }
+.runtime-job-list dl div { min-width: 0; display: grid; gap: 3px; }
+.runtime-job-list dt { color: var(--muted); font-size: 10px; }
+.runtime-job-list dd { overflow-wrap: anywhere; margin: 0; color: var(--ink); font-size: 11px; font-variant-numeric: tabular-nums; }
+.runtime-job-error { margin: 12px 0 0; padding: 9px 10px; border: 1px solid var(--danger-border); border-radius: 7px; background: var(--red-soft); color: var(--danger-ink); font-size: 11px; line-height: 1.55; }
 .admin-resource-panel { min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); box-shadow: var(--shadow-xs); }
 .admin-resource-toolbar { display: grid; grid-template-columns: minmax(420px, 1fr) 240px; gap: 14px; align-items: center; padding: 12px 14px; border-bottom: 1px solid var(--line-soft); }
 .admin-table-scroll { min-width: 0; overflow: auto; }
@@ -303,5 +398,6 @@ watch([() => props.initialAccountId, () => accounts.value.map(account => account
 .admin-loading { min-height: 240px; display: grid; place-items: center; }
 :deep(.n-empty) { padding: 48px 20px; }
 @media (max-width: 1200px) { .admin-overview-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-@media (max-width: 720px) { .admin-overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .admin-resource-toolbar { grid-template-columns: 1fr; } }
+@media (max-width: 1200px) { .runtime-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } .runtime-grid > article { border-bottom: 1px solid var(--line-soft); } .runtime-grid > article:nth-child(3n) { border-right: 0; } .runtime-grid > article:nth-last-child(-n+2) { border-bottom: 0; } }
+@media (max-width: 720px) { .admin-overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .admin-resource-toolbar { grid-template-columns: 1fr; } .runtime-heading > small { display: none; } .runtime-grid { grid-template-columns: 1fr; } .runtime-grid > article { min-height: 92px; border-right: 0; border-bottom: 1px solid var(--line-soft); } .runtime-grid > article:nth-last-child(-n+2) { border-bottom: 1px solid var(--line-soft); } .runtime-grid > article:last-child { border-bottom: 0; } .runtime-job-list dl { grid-template-columns: 1fr; } }
 </style>

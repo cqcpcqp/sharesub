@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"github.com/sharesub/sharesub/backend/internal/config"
 	"github.com/sharesub/sharesub/backend/internal/httpapi"
 	"github.com/sharesub/sharesub/backend/internal/openai"
+	"github.com/sharesub/sharesub/backend/internal/operations"
 	"github.com/sharesub/sharesub/backend/internal/postgres"
 	"github.com/sharesub/sharesub/backend/internal/security"
 )
@@ -69,10 +71,21 @@ func main() {
 	oauthClient := openai.NewOAuthClient(cfg.OutboundProxy)
 	gateway := openai.NewGateway(httpClient)
 	defer gateway.Close()
-	go openai.RunCodexVersionSync(ctx, httpClient, 6*time.Hour, func(syncErr error) {
-		logger.Warn("sync official Codex version", "error", syncErr, "effective_version", openai.EffectiveCodexVersion())
+	runtimeMonitor := operations.NewMonitor(store)
+	runtimeMonitor.RegisterJob("codex_version_sync", "Codex 版本同步", true)
+	runtimeMonitor.RegisterJob("resource_cleanup", "资源清理", true)
+	runtimeMonitor.RegisterJob("token_refresh", "Token 自动刷新", cfg.TokenRefreshEnabled)
+	go runtimeMonitor.RunCPUSampler(ctx)
+	go openai.RunCodexVersionSync(ctx, httpClient, 6*time.Hour, func(duration time.Duration, syncErr error) {
+		if syncErr != nil {
+			runtimeMonitor.RecordJobFailure("codex_version_sync", syncErr, duration)
+			logger.Warn("sync official Codex version", "error", syncErr, "effective_version", openai.EffectiveCodexVersion())
+			return
+		}
+		runtimeMonitor.RecordJobSuccess("codex_version_sync", "当前版本 "+openai.EffectiveCodexVersion(), duration)
 	})
 	app := application.NewService(store, securityManager, oauthClient, cfg.SessionTTL, cfg.OAuthRedirect, cfg.PublicURL, gateway)
+	app.SetRuntimeStatusProvider(runtimeMonitor)
 	bootstrapAdmin, err := app.EnsureBootstrapAdmin(ctx)
 	if err != nil {
 		logger.Error("bootstrap admin", "error", err)
@@ -107,9 +120,9 @@ func main() {
 		AuditEvents:    cfg.AuditEventRetention, ReadNotifications: cfg.ReadNotificationRetention,
 		TerminalRecords: cfg.TerminalRecordRetention,
 	}
-	go runResourceCleanup(ctx, store, retention, cfg.CleanupInterval, logger)
+	go runResourceCleanup(ctx, store, retention, cfg.CleanupInterval, logger, runtimeMonitor)
 	if cfg.TokenRefreshEnabled {
-		go runTokenRefresh(ctx, app, cfg, logger)
+		go runTokenRefresh(ctx, app, cfg, logger, runtimeMonitor)
 	}
 
 	go func() {
@@ -130,14 +143,22 @@ func main() {
 	}
 }
 
-func runTokenRefresh(ctx context.Context, app *application.Service, cfg config.Config, logger *slog.Logger) {
+func runTokenRefresh(ctx context.Context, app *application.Service, cfg config.Config, logger *slog.Logger, monitor *operations.Monitor) {
 	refresh := func() {
+		startedAt := time.Now()
 		result, err := app.RefreshExpiringAccountTokens(ctx, cfg.TokenRefreshBeforeExpiry, cfg.TokenRefreshBatchSize, cfg.TokenRefreshConcurrency, cfg.TokenRefreshMaxRetries)
 		if err != nil {
+			monitor.RecordJobFailure("token_refresh", err, time.Since(startedAt))
 			if ctx.Err() == nil {
 				logger.Error("refresh OpenAI account tokens", "error", err)
 			}
 			return
+		}
+		resultSummary := fmt.Sprintf("扫描 %d，刷新 %d，失败 %d", result.Scanned, result.Refreshed, result.Failed)
+		if result.Failed > 0 {
+			monitor.RecordJobWarning("token_refresh", fmt.Sprintf("%d 个账号刷新失败", result.Failed), resultSummary, time.Since(startedAt))
+		} else {
+			monitor.RecordJobSuccess("token_refresh", resultSummary, time.Since(startedAt))
 		}
 		logger.Info("OpenAI account token refresh completed", "scanned", result.Scanned, "refreshed", result.Refreshed, "skipped", result.Skipped, "failed", result.Failed)
 	}
@@ -154,15 +175,18 @@ func runTokenRefresh(ctx context.Context, app *application.Service, cfg config.C
 	}
 }
 
-func runResourceCleanup(ctx context.Context, store *postgres.Store, policy postgres.RetentionPolicy, interval time.Duration, logger *slog.Logger) {
+func runResourceCleanup(ctx context.Context, store *postgres.Store, policy postgres.RetentionPolicy, interval time.Duration, logger *slog.Logger, monitor *operations.Monitor) {
 	cleanup := func() {
+		startedAt := time.Now()
 		result, err := store.CleanupResources(ctx, time.Now(), policy)
 		if err != nil {
+			monitor.RecordJobFailure("resource_cleanup", err, time.Since(startedAt))
 			if ctx.Err() == nil {
 				logger.Error("clean expired resources", "error", err)
 			}
 			return
 		}
+		monitor.RecordJobSuccess("resource_cleanup", fmt.Sprintf("网关指标 %d，会话 %d", result.GatewayMetrics, result.Sessions), time.Since(startedAt))
 		logger.Info("resource cleanup completed", "gateway_metrics", result.GatewayMetrics, "audit_events", result.AuditEvents, "read_notifications", result.ReadNotifications, "sessions", result.Sessions, "oauth_flows", result.OAuthFlows, "invites", result.Invites, "applications", result.Applications, "api_keys", result.APIKeys)
 	}
 	cleanup()

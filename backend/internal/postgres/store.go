@@ -32,6 +32,24 @@ func Open(ctx context.Context, databaseURL string) (*Store, error) {
 
 func (s *Store) Close() { s.pool.Close() }
 
+func (s *Store) AdminDatabaseRuntime(ctx context.Context) domain.AdminRuntimeDatabase {
+	stats := s.pool.Stat()
+	status := domain.RuntimeStatusHealthy
+	pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if err := s.pool.Ping(pingCtx); err != nil {
+		status = domain.RuntimeStatusCritical
+	}
+	return domain.AdminRuntimeDatabase{
+		Status:            status,
+		OpenConnections:   stats.TotalConns(),
+		ActiveConnections: stats.AcquiredConns(),
+		IdleConnections:   stats.IdleConns(),
+		WaitingRequests:   stats.EmptyAcquireCount(),
+		MaxConnections:    stats.MaxConns(),
+	}
+}
+
 func (s *Store) Migrate(ctx context.Context) error {
 	if _, err := s.pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())`); err != nil {
 		return err

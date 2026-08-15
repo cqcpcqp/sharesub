@@ -175,7 +175,7 @@ Plan 详情的 `insights.window_usage` 按当前 OpenAI 账号实际返回的 5h
 | `GET` | `/api/notifications` | 登录 Token | 无 | 返回 `items` 和 `unread_count` |
 | `PATCH` | `/api/notifications/{notificationID}` | 登录 Token | `read` | 设置单条通知已读或未读 |
 | `POST` | `/api/notifications/read-all` | 登录 Token | 无 | 全部标为已读，返回 `updated_count` |
-| `GET` | `/api/admin/overview` | 管理员 Token | 无 | 获取平台资源与最近 24 小时用量概览 |
+| `GET` | `/api/admin/overview` | 管理员 Token | 无 | 获取平台资源、最近 24 小时用量和当前运行状态概览 |
 | `GET` | `/api/admin/users` | 管理员 Token | 无 | 列出用户及资源数量 |
 | `PATCH` | `/api/admin/users/{userID}/status` | 管理员 Token | `status` | 禁用或恢复用户；管理员不能禁用自己 |
 | `GET` | `/api/admin/accounts` | 管理员 Token | 无 | 列出全部 OpenAI 账号及绑定关系 |
@@ -208,6 +208,8 @@ Plan 详情的 `insights.window_usage` 按当前 OpenAI 账号实际返回的 5h
 | `DELETE` | `/api/admin/keys/{keyID}` | 管理员 Token | 无 | 吊销 API Key |
 
 管理员 Plan 接口复用房主业务约束，但不会把管理员写入 Plan 成员表，也不会让管理员的 API Key 获得该 Plan 的路由资格。涉及 Plan 变更和账号重新授权的审计事件使用真实管理员作为 `actor_user_id`；资源归属校验、账号凭据加密关联数据仍使用实际 `owner_user_id`。
+
+`GET /api/admin/overview` 固定包含 `runtime`：`collected_at`、`cpu`、`memory`、`database`、`goroutines`、`jobs_status` 和 `jobs`。资源及任务状态使用 `healthy`、`warning`、`critical`、`pending`、`disabled` 或 `unavailable`；CPU 和内存按照 API 容器 cgroup 限额计算，CPU 使用率是后台按固定 5 秒窗口采样的最近结果，首个窗口完成前或运行环境未提供可计算限额时明确返回 `unavailable`。数据库部分返回 `open_connections`、`active_connections`、`idle_connections`、累计等待获取连接的 `waiting_requests` 和 `max_connections`。后台任务记录资源清理、Token 自动刷新和 Codex 版本同步在当前 API 进程内的最近运行、成功、错误、耗时与结果；进程重启后由各任务首次执行重新建立状态，不保存历史趋势。
 
 ## 用户 API Key
 

@@ -28,6 +28,38 @@ export interface AdminOverview {
   tokens_24h: number
   cost_micros_24h: number
   success_rate_24h: number
+  runtime: AdminRuntimeStatus
+}
+
+export type RuntimeStatus = 'healthy' | 'warning' | 'critical' | 'pending' | 'disabled' | 'unavailable'
+
+export interface AdminRuntimeJob {
+  id: string
+  name: string
+  status: RuntimeStatus
+  last_run_at: string | null
+  last_success_at: string | null
+  last_error_at: string | null
+  last_error: string
+  last_duration_ms: number
+  last_result: string
+}
+
+export interface AdminRuntimeStatus {
+  collected_at: string
+  cpu: { status: RuntimeStatus; usage_percent: number }
+  memory: { status: RuntimeStatus; used_bytes: number; total_bytes: number; usage_percent: number }
+  database: {
+    status: RuntimeStatus
+    open_connections: number
+    active_connections: number
+    idle_connections: number
+    waiting_requests: number
+    max_connections: number
+  }
+  goroutines: { status: RuntimeStatus; count: number }
+  jobs_status: RuntimeStatus
+  jobs: AdminRuntimeJob[]
 }
 
 export interface AdminUser extends User {

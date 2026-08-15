@@ -6,24 +6,30 @@ import (
 )
 
 const (
-	StatusActive          = "active"
-	StatusDisabled        = "disabled"
-	StatusRefreshRequired = "refresh_required"
-	StatusArchived        = "archived"
-	RoleOwner             = "owner"
-	RoleMember            = "member"
-	RoleUser              = "user"
-	RoleAdmin             = "admin"
-	Window5H              = "5h"
-	Window7D              = "7d"
-	VisibilityPrivate     = "private"
-	VisibilityPublic      = "public"
-	AllocationFixed       = "fixed"
-	AllocationShared      = "shared"
-	RoutePriority         = "priority"
-	RouteBalanced         = "balanced"
-	MaxShareBPS           = 10_000
-	PercentMicros         = 1_000_000
+	StatusActive             = "active"
+	StatusDisabled           = "disabled"
+	StatusRefreshRequired    = "refresh_required"
+	StatusArchived           = "archived"
+	RoleOwner                = "owner"
+	RoleMember               = "member"
+	RoleUser                 = "user"
+	RoleAdmin                = "admin"
+	Window5H                 = "5h"
+	Window7D                 = "7d"
+	VisibilityPrivate        = "private"
+	VisibilityPublic         = "public"
+	AllocationFixed          = "fixed"
+	AllocationShared         = "shared"
+	RoutePriority            = "priority"
+	RouteBalanced            = "balanced"
+	MaxShareBPS              = 10_000
+	PercentMicros            = 1_000_000
+	RuntimeStatusHealthy     = "healthy"
+	RuntimeStatusWarning     = "warning"
+	RuntimeStatusCritical    = "critical"
+	RuntimeStatusPending     = "pending"
+	RuntimeStatusDisabled    = "disabled"
+	RuntimeStatusUnavailable = "unavailable"
 )
 
 type User struct {
@@ -48,18 +54,67 @@ type AgreementAcceptance struct {
 }
 
 type AdminOverview struct {
-	UserCount       int64   `json:"user_count"`
-	ActiveUserCount int64   `json:"active_user_count"`
-	AccountCount    int64   `json:"account_count"`
-	ActiveAccounts  int64   `json:"active_accounts"`
-	PlanCount       int64   `json:"plan_count"`
-	ActivePlans     int64   `json:"active_plans"`
-	APIKeyCount     int64   `json:"api_key_count"`
-	ActiveAPIKeys   int64   `json:"active_api_keys"`
-	Requests24H     int64   `json:"requests_24h"`
-	Tokens24H       int64   `json:"tokens_24h"`
-	CostMicros24H   int64   `json:"cost_micros_24h"`
-	SuccessRate24H  float64 `json:"success_rate_24h"`
+	UserCount       int64              `json:"user_count"`
+	ActiveUserCount int64              `json:"active_user_count"`
+	AccountCount    int64              `json:"account_count"`
+	ActiveAccounts  int64              `json:"active_accounts"`
+	PlanCount       int64              `json:"plan_count"`
+	ActivePlans     int64              `json:"active_plans"`
+	APIKeyCount     int64              `json:"api_key_count"`
+	ActiveAPIKeys   int64              `json:"active_api_keys"`
+	Requests24H     int64              `json:"requests_24h"`
+	Tokens24H       int64              `json:"tokens_24h"`
+	CostMicros24H   int64              `json:"cost_micros_24h"`
+	SuccessRate24H  float64            `json:"success_rate_24h"`
+	Runtime         AdminRuntimeStatus `json:"runtime"`
+}
+
+type AdminRuntimeMetric struct {
+	Status       string  `json:"status"`
+	UsagePercent float64 `json:"usage_percent"`
+}
+
+type AdminRuntimeMemory struct {
+	Status       string  `json:"status"`
+	UsedBytes    uint64  `json:"used_bytes"`
+	TotalBytes   uint64  `json:"total_bytes"`
+	UsagePercent float64 `json:"usage_percent"`
+}
+
+type AdminRuntimeDatabase struct {
+	Status            string `json:"status"`
+	OpenConnections   int32  `json:"open_connections"`
+	ActiveConnections int32  `json:"active_connections"`
+	IdleConnections   int32  `json:"idle_connections"`
+	WaitingRequests   int64  `json:"waiting_requests"`
+	MaxConnections    int32  `json:"max_connections"`
+}
+
+type AdminRuntimeGoroutines struct {
+	Status string `json:"status"`
+	Count  int    `json:"count"`
+}
+
+type AdminRuntimeJob struct {
+	ID             string     `json:"id"`
+	Name           string     `json:"name"`
+	Status         string     `json:"status"`
+	LastRunAt      *time.Time `json:"last_run_at"`
+	LastSuccessAt  *time.Time `json:"last_success_at"`
+	LastErrorAt    *time.Time `json:"last_error_at"`
+	LastError      string     `json:"last_error"`
+	LastDurationMS int64      `json:"last_duration_ms"`
+	LastResult     string     `json:"last_result"`
+}
+
+type AdminRuntimeStatus struct {
+	CollectedAt time.Time              `json:"collected_at"`
+	CPU         AdminRuntimeMetric     `json:"cpu"`
+	Memory      AdminRuntimeMemory     `json:"memory"`
+	Database    AdminRuntimeDatabase   `json:"database"`
+	Goroutines  AdminRuntimeGoroutines `json:"goroutines"`
+	JobsStatus  string                 `json:"jobs_status"`
+	Jobs        []AdminRuntimeJob      `json:"jobs"`
 }
 
 type AdminUser struct {
