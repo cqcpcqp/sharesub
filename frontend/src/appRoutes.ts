@@ -3,6 +3,7 @@ export type PublicPageID = 'home' | 'terms' | 'privacy' | 'acceptable-use'
 
 export type AppRoute =
   | { kind: 'login' }
+  | { kind: 'email-verification' }
   | { kind: 'public'; page: PublicPageID }
   | { kind: 'view'; view: ViewID }
   | { kind: 'admin-plan'; id: string }
@@ -36,6 +37,7 @@ function decodeRouteID(value: string) {
 export function parseAppRoute(pathname: string): AppRoute | null {
   const path = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname
   if (path === '/login') return { kind: 'login' }
+  if (path === '/verify-email') return { kind: 'email-verification' }
   const adminPlanMatch = path.match(/^\/admin\/plans\/([^/]+)$/)
   if (adminPlanMatch) {
     const id = decodeRouteID(adminPlanMatch[1])
@@ -54,6 +56,7 @@ export function parseAppRoute(pathname: string): AppRoute | null {
 
 export function appRoutePath(route: AppRoute): string {
   if (route.kind === 'login') return '/login'
+  if (route.kind === 'email-verification') return '/verify-email'
   if (route.kind === 'admin-plan') return `/admin/plans/${encodeURIComponent(route.id)}`
   if (route.kind === 'admin-account') return `/admin/accounts/${encodeURIComponent(route.id)}`
   return route.kind === 'public' ? publicPagePaths[route.page] : viewPaths[route.view]

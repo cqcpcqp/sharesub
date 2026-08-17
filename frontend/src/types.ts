@@ -7,6 +7,7 @@ export interface User {
   id: string
   username: string
   email: string
+  email_verified_at: string | null
   avatar_url: string
   status: string
   created_at: string
@@ -98,6 +99,17 @@ export interface AdminAPIKey {
 }
 
 export interface AuthResult { user: User; token: string }
+
+export interface RegistrationResult {
+  email: string
+  verification_expires_at: string
+  resend_available_at: string
+}
+
+export interface EmailVerificationDispatch {
+  accepted: boolean
+  resend_available_at: string
+}
 
 export interface Account {
   id: string

@@ -23,6 +23,11 @@ type Store interface {
 type IdentityStore interface {
 	CreateUser(context.Context, domain.User) error
 	CreateUserWithAgreement(context.Context, domain.User, domain.AgreementAcceptance) error
+	CreateUserWithEmailVerification(context.Context, domain.User, domain.AgreementAcceptance, domain.EmailVerificationToken) error
+	CreateEmailVerificationToken(context.Context, domain.EmailVerificationToken, time.Duration, time.Duration, int) error
+	DeleteEmailVerificationToken(context.Context, string, string) error
+	SupersedeEmailVerificationTokens(context.Context, string, string, time.Time) error
+	ConsumeEmailVerificationToken(context.Context, []byte, time.Time) (domain.User, error)
 	UserByEmail(context.Context, string) (domain.User, error)
 	UserBySessionHash(context.Context, []byte, time.Time) (domain.User, error)
 	UpdateUsername(context.Context, string, string) (domain.User, error)

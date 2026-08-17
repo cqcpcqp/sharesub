@@ -107,6 +107,8 @@ func (s *Server) routes() {
 		writeJSON(w, http.StatusOK, buildinfo.Current())
 	})
 	s.mux.HandleFunc("POST /api/auth/register", s.register)
+	s.mux.HandleFunc("POST /api/auth/email/verify", s.verifyEmail)
+	s.mux.HandleFunc("POST /api/auth/email/resend", s.resendEmailVerification)
 	s.mux.HandleFunc("POST /api/auth/login", s.login)
 	s.mux.Handle("POST /api/auth/logout", s.requireUser(http.HandlerFunc(s.logout)))
 	s.mux.Handle("GET /api/me", s.requireUser(http.HandlerFunc(s.me)))

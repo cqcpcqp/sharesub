@@ -24,8 +24,14 @@ describe('public pages', () => {
   ] as const)('renders the public %s document', (page, title) => {
     const wrapper = mount(LegalDocumentView, { props: { page } })
     expect(wrapper.text()).toContain(title)
-    expect(wrapper.text()).toContain('2026-08-05')
+    expect(wrapper.text()).toContain(page === 'privacy' ? '2026-08-17' : '2026-08-05')
     expect(wrapper.findAll('h1')).toHaveLength(1)
     expect(wrapper.find('aside h2').text()).toBe(title)
+  })
+
+  it('discloses Tencent SES as the verification email processor', () => {
+    const wrapper = mount(LegalDocumentView, { props: { page: 'privacy' } })
+    expect(wrapper.text()).toContain('腾讯云邮件推送（SES）')
+    expect(wrapper.text()).toContain('2026 年 8 月 17 日')
   })
 })

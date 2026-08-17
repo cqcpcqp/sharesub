@@ -113,3 +113,31 @@ func TestLoadRejectsInvalidResourceLimits(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadTencentSESConfiguration(t *testing.T) {
+	setRequiredEnvironment(t)
+	t.Setenv("SHARESUB_EMAIL_DELIVERY_PROVIDER", "tencent_ses")
+	t.Setenv("SHARESUB_TENCENT_SES_SECRET_ID", "secret-id")
+	t.Setenv("SHARESUB_TENCENT_SES_SECRET_KEY", "secret-key")
+	t.Setenv("SHARESUB_TENCENT_SES_REGION", "ap-hongkong")
+	t.Setenv("SHARESUB_TENCENT_SES_FROM_EMAIL", "no-reply@notify.underelay.com")
+	t.Setenv("SHARESUB_TENCENT_SES_FROM_NAME", "ShareSub")
+	t.Setenv("SHARESUB_TENCENT_SES_TEMPLATE_ID", "212354")
+	t.Setenv("SHARESUB_EMAIL_VERIFICATION_TTL", "45m")
+	t.Setenv("SHARESUB_EMAIL_RESEND_COOLDOWN", "90s")
+	config, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.EmailDeliveryProvider != "tencent_ses" || config.TencentSESTemplateID != 212354 || config.EmailVerificationTTL != 45*time.Minute || config.EmailResendCooldown != 90*time.Second {
+		t.Fatalf("Tencent SES configuration = %+v", config)
+	}
+}
+
+func TestLoadRequiresCompleteTencentSESConfiguration(t *testing.T) {
+	setRequiredEnvironment(t)
+	t.Setenv("SHARESUB_EMAIL_DELIVERY_PROVIDER", "tencent_ses")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "SHARESUB_TENCENT_SES_SECRET_ID") {
+		t.Fatalf("Load() error = %v", err)
+	}
+}

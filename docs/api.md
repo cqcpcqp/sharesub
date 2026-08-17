@@ -29,7 +29,9 @@
 
 | 方法 | 路径 | 鉴权 | 请求体 | 用途 |
 |---|---|---|---|---|
-| `POST` | `/api/auth/register` | 无 | `username`, `email`, `password`, `agreement` | 接受当前协议后注册并创建会话 |
+| `POST` | `/api/auth/register` | 无 | `username`, `email`, `password`, `agreement` | 接受当前协议后注册并发送验证邮件 |
+| `POST` | `/api/auth/email/verify` | 无 | `token` | 消费一次性邮箱验证 Token 并创建会话 |
+| `POST` | `/api/auth/email/resend` | 无 | `email` | 为未验证账户重新发送验证邮件 |
 | `POST` | `/api/auth/login` | 无 | `email`, `password` | 登录并创建会话 |
 | `POST` | `/api/auth/logout` | 登录 Token | 无 | 注销当前会话 |
 | `GET` | `/api/me` | 登录 Token | 无 | 获取当前用户 |
@@ -39,9 +41,13 @@
 | `DELETE` | `/api/me/avatar` | 登录 Token | 无 | 移除头像 |
 | `GET` | `/api/users/{userID}/avatar` | 无 | 无 | 读取用户头像二进制 |
 
-注册请求中的 `agreement` 结构固定为 `accepted`、`terms_version`、`privacy_policy_version` 和 `acceptable_use_version`。`accepted` 必须为 `true`，三个版本必须与服务端当前版本完全一致；用户与协议接受记录在同一个事务中写入，接受时间由服务端生成。
+注册请求中的 `agreement` 结构固定为 `accepted`、`terms_version`、`privacy_policy_version` 和 `acceptable_use_version`。`accepted` 必须为 `true`，三个版本必须与服务端当前版本完全一致；用户、协议接受记录和首个邮箱验证 Token 在同一个事务中写入，接受时间由服务端生成。
 
-注册和登录成功后返回 `user` 与完整的 `ss_session_...` Token。用户结构固定包含 `avatar_url`、`role`、`is_admin` 和 `must_change_password`；未配置头像时 `avatar_url` 为空字符串，配置后为带版本参数的站内图片地址。首次引导管理员在完成密码修改前只能访问当前用户、修改密码和退出登录接口。
+注册成功返回 HTTP `202`，响应固定包含 `email`、`verification_expires_at` 和 `resend_available_at`，此时不会创建登录会话。邮件中的 `ss_verify_...` Token 默认 1 小时有效且只能使用一次；验证成功后返回 `user` 与完整的 `ss_session_...` Token。验证前使用正确密码登录会返回 `403 email_verification_required`。
+
+重新发送接口对不存在的邮箱和已经验证的邮箱同样返回固定的 `accepted: true` 与 `resend_available_at`，避免暴露账户是否存在。对未验证账户，默认 1 分钟内不可重复发送，同一账户每小时最多创建 5 封验证邮件；超过限制分别返回 `429 email_resend_too_soon` 或 `429 email_verification_limited`。邮件服务不可用时返回 `502 email_delivery_unavailable`。验证 Token 无效、过期或已经使用时返回 `400 email_verification_invalid`。
+
+登录或邮箱验证成功后返回的用户结构固定包含 `email_verified_at`、`avatar_url`、`role`、`is_admin` 和 `must_change_password`；`email_verified_at` 为 RFC 3339 时间字符串，未验证用户为 `null`。未配置头像时 `avatar_url` 为空字符串，配置后为带版本参数的站内图片地址。首次引导管理员在完成密码修改前只能访问当前用户、修改密码和退出登录接口。
 
 ## 个人仪表盘
 

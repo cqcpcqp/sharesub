@@ -16,6 +16,10 @@
       @login="navigateToAuth('login')"
       @navigate="navigateToPublic"
     />
+    <template v-else-if="emailVerificationPage && !user">
+      <ThemeSwitcher v-model="themeMode" class="auth-theme-switcher" />
+      <EmailVerificationView :token="emailVerificationToken" @authenticated="onAuthenticated" @login="navigateToAuth('login')" />
+    </template>
     <template v-else-if="!user">
       <ThemeSwitcher v-model="themeMode" class="auth-theme-switcher" />
       <AuthView
@@ -192,6 +196,7 @@ import APIKeySetupWizard from './components/APIKeySetupWizard.vue'
 import AsyncViewError from './components/AsyncViewError.vue'
 import AsyncViewLoading from './components/AsyncViewLoading.vue'
 import AuthView from './views/AuthView.vue'
+import EmailVerificationView from './views/EmailVerificationView.vue'
 import BrandMark from './components/BrandMark.vue'
 import CustomerSupportPopover from './components/CustomerSupportPopover.vue'
 import InvitationStatusDialog from './components/InvitationStatusDialog.vue'
@@ -203,7 +208,8 @@ import LegalDocumentView from './views/LegalDocumentView.vue'
 import ThemeSwitcher from './components/ThemeSwitcher.vue'
 import UserAvatar from './components/UserAvatar.vue'
 import { darkThemeOverrides, lightThemeOverrides } from './theme'
-import { locationWithoutHash, parseNavigationIntent, type InviteIntent } from './navigationIntent'
+import { inviteIntentHash, locationWithoutHash, parseNavigationIntent, type InviteIntent } from './navigationIntent'
+import { parseEmailVerificationToken } from './emailVerificationToken'
 import { canMemberRoutePlan, isPlanRoutable } from './planAvailability'
 import { isThemeMode, resolveTheme, type ThemeMode } from './themePreference'
 import { appRoutePath, parseAppRoute, type AppRoute, type PublicPageID, type ViewID } from './appRoutes'
@@ -255,6 +261,8 @@ const adminListTab = ref<'users' | 'accounts' | 'plans' | 'keys'>('users')
 const adminListQuery = ref('')
 const adminListScrollTop = ref(0)
 const publicPage = ref<PublicPageID | null>(initialRoute?.kind === 'public' ? initialRoute.page : null)
+const emailVerificationPage = ref(initialRoute?.kind === 'email-verification')
+const emailVerificationToken = ref(parseEmailVerificationToken(window.location.hash))
 const legalPage = computed(() => publicPage.value && publicPage.value !== 'home' ? publicPage.value : null)
 const authInitialMode = ref<'login' | 'register'>(new URLSearchParams(window.location.search).get('mode') === 'register' ? 'register' : 'login')
 const authChecking = ref(initialRoute?.kind !== 'public' || Boolean(parseNavigationIntent(window.location.hash)))
@@ -273,6 +281,8 @@ const invitePreview = ref<InvitePreview | null>(null)
 const invitePreviewLoading = ref(false)
 const inviteAccepting = ref(false)
 const inviteError = ref('')
+const pendingInviteStorageKey = 'sharesub.pending-invite'
+if (inviteIntent.value) localStorage.setItem(pendingInviteStorageKey, inviteIntent.value.token)
 const sidebarStorageKey = 'sharesub.sidebar.collapsed'
 const sidebarCollapsed = ref(localStorage.getItem(sidebarStorageKey) === 'true')
 const themeStorageKey = 'sharesub.theme'
@@ -317,10 +327,12 @@ async function onAuthenticated(value: User) {
     navigateToView('dashboard', true)
     return
   }
+  restorePendingInvite()
   startNotificationPolling()
   navigateToView('dashboard', true)
   await refreshAll()
   await refreshNotifications()
+  if (inviteIntent.value && !invitePreview.value) await loadInvitePreview()
 }
 
 async function onPasswordChanged(value: User) {
@@ -334,6 +346,7 @@ async function onPasswordChanged(value: User) {
 function updateRoute(route: AppRoute, replace = false) {
   const path = appRoutePath(route)
   publicPage.value = route.kind === 'public' ? route.page : null
+  emailVerificationPage.value = route.kind === 'email-verification'
   if (window.location.pathname === path) return
   const search = new URLSearchParams(window.location.search)
   search.delete('mode')
@@ -373,6 +386,7 @@ function navigateToPublic(page: PublicPageID) { updateRoute({ kind: 'public', pa
 function navigateToAuth(mode: 'login' | 'register') {
   authInitialMode.value = mode
   publicPage.value = null
+  emailVerificationPage.value = false
   const location = `/login${mode === 'register' ? '?mode=register' : ''}${window.location.hash}`
   window.history.pushState(null, '', location)
 }
@@ -393,7 +407,10 @@ function syncPathRoute() {
   const route = parseAppRoute(window.location.pathname)
   if (route?.kind === 'login') authInitialMode.value = new URLSearchParams(window.location.search).get('mode') === 'register' ? 'register' : 'login'
   publicPage.value = route?.kind === 'public' ? route.page : null
+  emailVerificationPage.value = route?.kind === 'email-verification'
+  emailVerificationToken.value = emailVerificationPage.value ? parseEmailVerificationToken(window.location.hash) : ''
   if (route?.kind === 'public' && !inviteIntent.value) return
+  if (route?.kind === 'email-verification' && !user.value) return
   if (user.value) {
     if (route?.kind === 'admin-plan' && user.value.is_admin) {
       activeView.value = 'admin'
@@ -406,7 +423,7 @@ function syncPathRoute() {
       adminResource.value = null
     }
     else navigateToView('dashboard', true)
-  } else if (route?.kind !== 'login') navigateToLogin(true)
+  } else if (route?.kind !== 'login' && route?.kind !== 'email-verification') navigateToLogin(true)
 }
 
 async function refreshAll() {
@@ -567,15 +584,34 @@ async function syncNavigationIntent() {
   const nextIntent = parseNavigationIntent(window.location.hash)
   if (nextIntent?.token === inviteIntent.value?.token) return
   inviteIntent.value = nextIntent
+  if (nextIntent) localStorage.setItem(pendingInviteStorageKey, nextIntent.token)
   invitePreview.value = null
   inviteError.value = ''
   if (!nextIntent) return
   await loadInvitePreview()
 }
 
+async function syncHashState() {
+  emailVerificationToken.value = emailVerificationPage.value ? parseEmailVerificationToken(window.location.hash) : ''
+  await syncNavigationIntent()
+}
+
+function restorePendingInvite() {
+  if (inviteIntent.value) return
+  const token = localStorage.getItem(pendingInviteStorageKey) ?? ''
+  const intent = parseNavigationIntent(`#/invite/${encodeURIComponent(token)}`)
+  if (!intent) {
+    localStorage.removeItem(pendingInviteStorageKey)
+    return
+  }
+  inviteIntent.value = intent
+  window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}${inviteIntentHash(token)}`)
+}
+
 function clearInviteIntent() {
   window.history.replaceState(null, '', locationWithoutHash(window.location.pathname, window.location.search))
   inviteIntent.value = null
+  localStorage.removeItem(pendingInviteStorageKey)
   invitePreview.value = null
   inviteError.value = ''
 }
@@ -615,7 +651,7 @@ async function logout() {
 
 onMounted(async () => {
   systemThemeQuery.addEventListener('change', updateSystemTheme)
-  window.addEventListener('hashchange', syncNavigationIntent)
+  window.addEventListener('hashchange', syncHashState)
   window.addEventListener('popstate', syncPathRoute)
   document.addEventListener('visibilitychange', handleVisibilityChange)
   if (inviteIntent.value) await loadInvitePreview()
@@ -642,7 +678,7 @@ onMounted(async () => {
 })
 onBeforeUnmount(() => {
   systemThemeQuery.removeEventListener('change', updateSystemTheme)
-  window.removeEventListener('hashchange', syncNavigationIntent)
+  window.removeEventListener('hashchange', syncHashState)
   window.removeEventListener('popstate', syncPathRoute)
   document.removeEventListener('visibilitychange', handleVisibilityChange)
   clearTimeout(noticeTimer)

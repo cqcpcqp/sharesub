@@ -10,6 +10,7 @@ const member: User = {
   id: 'member',
   username: 'member',
   email: 'member@example.com',
+  email_verified_at: '2026-08-04T00:00:00Z',
   avatar_url: '',
   status: 'active',
   created_at: '2026-08-04T00:00:00Z',

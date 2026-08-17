@@ -27,9 +27,9 @@ func (s *Store) EnsureBootstrapAdmin(ctx context.Context, user domain.User) (boo
 	var existingID string
 	err = tx.QueryRow(ctx, `SELECT id FROM users WHERE lower(email)=lower($1) FOR UPDATE`, user.Email).Scan(&existingID)
 	if err == nil {
-		_, err = tx.Exec(ctx, `UPDATE users SET password_hash=$2,status='active',role='admin',must_change_password=true,updated_at=$3 WHERE id=$1`, existingID, user.PasswordHash, user.CreatedAt)
+		_, err = tx.Exec(ctx, `UPDATE users SET password_hash=$2,status='active',role='admin',must_change_password=true,email_verified_at=COALESCE(email_verified_at,$3),updated_at=$3 WHERE id=$1`, existingID, user.PasswordHash, user.CreatedAt)
 	} else if err == pgx.ErrNoRows {
-		_, err = tx.Exec(ctx, `INSERT INTO users(id,username,email,password_hash,status,role,must_change_password,created_at,updated_at) VALUES($1,CASE WHEN EXISTS(SELECT 1 FROM users WHERE lower(username)='admin') THEN 'admin_' || left($1,8) ELSE $2 END,$3,$4,'active','admin',true,$5,$5)`, user.ID, user.Username, user.Email, user.PasswordHash, user.CreatedAt)
+		_, err = tx.Exec(ctx, `INSERT INTO users(id,username,email,password_hash,status,role,must_change_password,email_verified_at,created_at,updated_at) VALUES($1,CASE WHEN EXISTS(SELECT 1 FROM users WHERE lower(username)='admin') THEN 'admin_' || left($1,8) ELSE $2 END,$3,$4,'active','admin',true,$5,$5,$5)`, user.ID, user.Username, user.Email, user.PasswordHash, user.CreatedAt)
 	}
 	if err != nil {
 		return false, mapError(err)
@@ -43,7 +43,7 @@ func (s *Store) ResetAdminPassword(ctx context.Context, email, passwordHash stri
 		return domain.User{}, err
 	}
 	defer tx.Rollback(ctx)
-	user, err := scanUser(tx.QueryRow(ctx, `UPDATE users SET password_hash=$2,must_change_password=true,status='active',updated_at=now() WHERE lower(email)=lower($1) AND role='admin' RETURNING id,username,email,password_hash,status,role,must_change_password,created_at,avatar_updated_at`, email, passwordHash))
+	user, err := scanUser(tx.QueryRow(ctx, `UPDATE users SET password_hash=$2,must_change_password=true,status='active',email_verified_at=COALESCE(email_verified_at,now()),updated_at=now() WHERE lower(email)=lower($1) AND role='admin' RETURNING id,username,email,password_hash,status,role,must_change_password,email_verified_at,created_at,avatar_updated_at`, email, passwordHash))
 	if err != nil {
 		return domain.User{}, err
 	}
@@ -78,7 +78,7 @@ func (s *Store) AdminOverview(ctx context.Context, metricsStart time.Time) (doma
 
 func (s *Store) AdminListUsers(ctx context.Context) ([]domain.AdminUser, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT u.id,u.username,u.email,u.password_hash,u.status,u.role,u.must_change_password,u.created_at,u.avatar_updated_at,
+		SELECT u.id,u.username,u.email,u.password_hash,u.status,u.role,u.must_change_password,u.email_verified_at,u.created_at,u.avatar_updated_at,
 			(SELECT count(*) FROM openai_accounts a WHERE a.owner_user_id=u.id),
 			(SELECT count(*) FROM plan_members m WHERE m.user_id=u.id AND m.status='active'),
 			(SELECT count(*) FROM api_keys k WHERE k.user_id=u.id)
@@ -91,7 +91,7 @@ func (s *Store) AdminListUsers(ctx context.Context) ([]domain.AdminUser, error) 
 	for rows.Next() {
 		var item domain.AdminUser
 		var avatarUpdatedAt *time.Time
-		if err := rows.Scan(&item.ID, &item.Username, &item.Email, &item.PasswordHash, &item.Status, &item.Role, &item.MustChangePassword, &item.CreatedAt, &avatarUpdatedAt, &item.AccountCount, &item.PlanCount, &item.APIKeyCount); err != nil {
+		if err := rows.Scan(&item.ID, &item.Username, &item.Email, &item.PasswordHash, &item.Status, &item.Role, &item.MustChangePassword, &item.EmailVerifiedAt, &item.CreatedAt, &avatarUpdatedAt, &item.AccountCount, &item.PlanCount, &item.APIKeyCount); err != nil {
 			return nil, err
 		}
 		item.AvatarURL = userAvatarURL(item.ID, avatarUpdatedAt)
@@ -106,7 +106,7 @@ func (s *Store) AdminUpdateUserStatus(ctx context.Context, userID, status string
 		return domain.User{}, err
 	}
 	defer tx.Rollback(ctx)
-	user, err := scanUser(tx.QueryRow(ctx, `UPDATE users SET status=$2,updated_at=now() WHERE id=$1 RETURNING id,username,email,password_hash,status,role,must_change_password,created_at,avatar_updated_at`, userID, status))
+	user, err := scanUser(tx.QueryRow(ctx, `UPDATE users SET status=$2,updated_at=now() WHERE id=$1 RETURNING id,username,email,password_hash,status,role,must_change_password,email_verified_at,created_at,avatar_updated_at`, userID, status))
 	if err != nil {
 		return domain.User{}, err
 	}

@@ -43,6 +43,15 @@ type Config struct {
 	ResponsesWSUpstreamReadLimitBytes    int64
 	GatewayMaxRequestsPerMinutePerAPIKey int
 	GatewayFirstOutputTimeout            time.Duration
+	EmailDeliveryProvider                string
+	EmailVerificationTTL                 time.Duration
+	EmailResendCooldown                  time.Duration
+	TencentSESSecretID                   string
+	TencentSESSecretKey                  string
+	TencentSESRegion                     string
+	TencentSESFromEmail                  string
+	TencentSESFromName                   string
+	TencentSESTemplateID                 uint64
 }
 
 func Load() (Config, error) {
@@ -161,6 +170,30 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	emailVerificationTTL, err := positiveDurationEnv("SHARESUB_EMAIL_VERIFICATION_TTL", time.Hour)
+	if err != nil {
+		return Config{}, err
+	}
+	emailResendCooldown, err := positiveDurationEnv("SHARESUB_EMAIL_RESEND_COOLDOWN", time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+	emailDeliveryProvider := os.Getenv("SHARESUB_EMAIL_DELIVERY_PROVIDER")
+	var tencentSESTemplateID uint64
+	if emailDeliveryProvider != "" && emailDeliveryProvider != "tencent_ses" {
+		return Config{}, fmt.Errorf("SHARESUB_EMAIL_DELIVERY_PROVIDER must be tencent_ses when configured")
+	}
+	if emailDeliveryProvider == "tencent_ses" {
+		for _, name := range []string{"SHARESUB_TENCENT_SES_SECRET_ID", "SHARESUB_TENCENT_SES_SECRET_KEY", "SHARESUB_TENCENT_SES_REGION", "SHARESUB_TENCENT_SES_FROM_EMAIL", "SHARESUB_TENCENT_SES_FROM_NAME", "SHARESUB_TENCENT_SES_TEMPLATE_ID"} {
+			if os.Getenv(name) == "" {
+				return Config{}, fmt.Errorf("%s is required when SHARESUB_EMAIL_DELIVERY_PROVIDER=tencent_ses", name)
+			}
+		}
+		tencentSESTemplateID, err = strconv.ParseUint(os.Getenv("SHARESUB_TENCENT_SES_TEMPLATE_ID"), 10, 64)
+		if err != nil || tencentSESTemplateID == 0 {
+			return Config{}, fmt.Errorf("SHARESUB_TENCENT_SES_TEMPLATE_ID must be a positive integer")
+		}
+	}
 	return Config{
 		HTTPAddr:                             envOr("SHARESUB_HTTP_ADDR", "127.0.0.1:8080"),
 		DatabaseURL:                          databaseURL,
@@ -193,6 +226,15 @@ func Load() (Config, error) {
 		ResponsesWSUpstreamReadLimitBytes:    responsesWSUpstreamReadLimitBytes,
 		GatewayMaxRequestsPerMinutePerAPIKey: gatewayMaxRequestsPerMinutePerAPIKey,
 		GatewayFirstOutputTimeout:            gatewayFirstOutputTimeout,
+		EmailDeliveryProvider:                emailDeliveryProvider,
+		EmailVerificationTTL:                 emailVerificationTTL,
+		EmailResendCooldown:                  emailResendCooldown,
+		TencentSESSecretID:                   os.Getenv("SHARESUB_TENCENT_SES_SECRET_ID"),
+		TencentSESSecretKey:                  os.Getenv("SHARESUB_TENCENT_SES_SECRET_KEY"),
+		TencentSESRegion:                     os.Getenv("SHARESUB_TENCENT_SES_REGION"),
+		TencentSESFromEmail:                  os.Getenv("SHARESUB_TENCENT_SES_FROM_EMAIL"),
+		TencentSESFromName:                   os.Getenv("SHARESUB_TENCENT_SES_FROM_NAME"),
+		TencentSESTemplateID:                 tencentSESTemplateID,
 	}, nil
 }
 

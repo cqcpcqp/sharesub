@@ -33,16 +33,25 @@ const (
 )
 
 type User struct {
-	ID                 string    `json:"id"`
-	Username           string    `json:"username"`
-	Email              string    `json:"email"`
-	AvatarURL          string    `json:"avatar_url"`
-	PasswordHash       string    `json:"-"`
-	Status             string    `json:"status"`
-	CreatedAt          time.Time `json:"created_at"`
-	IsAdmin            bool      `json:"is_admin"`
-	Role               string    `json:"role"`
-	MustChangePassword bool      `json:"must_change_password"`
+	ID                 string     `json:"id"`
+	Username           string     `json:"username"`
+	Email              string     `json:"email"`
+	EmailVerifiedAt    *time.Time `json:"email_verified_at"`
+	AvatarURL          string     `json:"avatar_url"`
+	PasswordHash       string     `json:"-"`
+	Status             string     `json:"status"`
+	CreatedAt          time.Time  `json:"created_at"`
+	IsAdmin            bool       `json:"is_admin"`
+	Role               string     `json:"role"`
+	MustChangePassword bool       `json:"must_change_password"`
+}
+
+type EmailVerificationToken struct {
+	ID        string
+	UserID    string
+	TokenHash []byte
+	ExpiresAt time.Time
+	CreatedAt time.Time
 }
 
 type AgreementAcceptance struct {

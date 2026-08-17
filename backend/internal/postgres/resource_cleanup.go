@@ -20,14 +20,15 @@ type RetentionPolicy struct {
 }
 
 type CleanupResult struct {
-	GatewayMetrics    int64
-	AuditEvents       int64
-	ReadNotifications int64
-	Sessions          int64
-	OAuthFlows        int64
-	Invites           int64
-	Applications      int64
-	APIKeys           int64
+	GatewayMetrics     int64
+	AuditEvents        int64
+	ReadNotifications  int64
+	Sessions           int64
+	OAuthFlows         int64
+	EmailVerifications int64
+	Invites            int64
+	Applications       int64
+	APIKeys            int64
 }
 
 func (s *Store) CleanupResources(ctx context.Context, now time.Time, policy RetentionPolicy) (CleanupResult, error) {
@@ -93,6 +94,7 @@ func (s *Store) CleanupResources(ctx context.Context, now time.Time, policy Rete
 		{&result.ReadNotifications, `WITH candidates AS (SELECT ctid FROM notifications WHERE read_at IS NOT NULL AND created_at<$1 LIMIT $2 FOR UPDATE SKIP LOCKED) DELETE FROM notifications t USING candidates c WHERE t.ctid=c.ctid`, []any{now.Add(-policy.ReadNotifications)}},
 		{&result.Sessions, `WITH candidates AS (SELECT ctid FROM user_sessions WHERE expires_at<$1 LIMIT $2 FOR UPDATE SKIP LOCKED) DELETE FROM user_sessions t USING candidates c WHERE t.ctid=c.ctid`, []any{now}},
 		{&result.OAuthFlows, `WITH candidates AS (SELECT ctid FROM oauth_flows WHERE expires_at<$1 LIMIT $2 FOR UPDATE SKIP LOCKED) DELETE FROM oauth_flows t USING candidates c WHERE t.ctid=c.ctid`, []any{now}},
+		{&result.EmailVerifications, `WITH candidates AS (SELECT ctid FROM email_verification_tokens WHERE expires_at<$1 AND created_at<$1-interval '1 hour' LIMIT $2 FOR UPDATE SKIP LOCKED) DELETE FROM email_verification_tokens t USING candidates c WHERE t.ctid=c.ctid`, []any{now}},
 		{&result.Invites, `WITH candidates AS (SELECT ctid FROM plan_invites WHERE COALESCE(accepted_at,revoked_at,expires_at)<$1 LIMIT $2 FOR UPDATE SKIP LOCKED) DELETE FROM plan_invites t USING candidates c WHERE t.ctid=c.ctid`, []any{now.Add(-policy.TerminalRecords)}},
 		{&result.Applications, `WITH candidates AS (SELECT ctid FROM plan_join_applications WHERE status<>'pending' AND COALESCE(reviewed_at,created_at)<$1 LIMIT $2 FOR UPDATE SKIP LOCKED) DELETE FROM plan_join_applications t USING candidates c WHERE t.ctid=c.ctid`, []any{now.Add(-policy.TerminalRecords)}},
 		{&result.APIKeys, `WITH candidates AS (SELECT k.ctid FROM api_keys k WHERE k.status='revoked' AND k.updated_at<$1 AND NOT EXISTS(SELECT 1 FROM gateway_request_metrics g WHERE g.api_key_id=k.id) LIMIT $2 FOR UPDATE OF k SKIP LOCKED) DELETE FROM api_keys k USING candidates c WHERE k.ctid=c.ctid`, []any{now.Add(-policy.TerminalRecords)}},

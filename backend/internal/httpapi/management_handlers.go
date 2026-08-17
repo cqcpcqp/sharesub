@@ -21,6 +21,30 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := s.app.Register(r.Context(), input.Username, input.Email, input.Password, input.Agreement)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, result)
+}
+func (s *Server) resendEmailVerification(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Email string `json:"email"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	result, err := s.app.ResendEmailVerification(r.Context(), input.Email)
+	writeResult(w, result, err)
+}
+func (s *Server) verifyEmail(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Token string `json:"token"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	result, err := s.app.VerifyEmail(r.Context(), input.Token)
 	writeResult(w, result, err)
 }
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {

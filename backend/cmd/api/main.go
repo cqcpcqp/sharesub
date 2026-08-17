@@ -20,6 +20,7 @@ import (
 	"github.com/sharesub/sharesub/backend/internal/operations"
 	"github.com/sharesub/sharesub/backend/internal/postgres"
 	"github.com/sharesub/sharesub/backend/internal/security"
+	"github.com/sharesub/sharesub/backend/internal/tencentmail"
 )
 
 func main() {
@@ -84,7 +85,18 @@ func main() {
 		}
 		runtimeMonitor.RecordJobSuccess("codex_version_sync", "当前版本 "+openai.EffectiveCodexVersion(), duration)
 	})
-	app := application.NewService(store, securityManager, oauthClient, cfg.SessionTTL, cfg.OAuthRedirect, cfg.PublicURL, gateway)
+	var emailSender application.EmailVerificationSender
+	if cfg.EmailDeliveryProvider == "tencent_ses" {
+		emailSender, err = tencentmail.New(tencentmail.Config{
+			SecretID: cfg.TencentSESSecretID, SecretKey: cfg.TencentSESSecretKey, Region: cfg.TencentSESRegion,
+			FromEmail: cfg.TencentSESFromEmail, FromName: cfg.TencentSESFromName, TemplateID: cfg.TencentSESTemplateID,
+		})
+		if err != nil {
+			logger.Error("initialize Tencent SES email sender", "error", err)
+			os.Exit(1)
+		}
+	}
+	app := application.NewServiceWithEmailVerification(store, securityManager, oauthClient, cfg.SessionTTL, cfg.OAuthRedirect, cfg.PublicURL, emailSender, cfg.EmailVerificationTTL, cfg.EmailResendCooldown, gateway)
 	app.SetRuntimeStatusProvider(runtimeMonitor)
 	bootstrapAdmin, err := app.EnsureBootstrapAdmin(ctx)
 	if err != nil {

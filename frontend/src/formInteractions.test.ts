@@ -22,6 +22,7 @@ const owner: User = {
   id: 'owner',
   username: '房主',
   email: 'owner@example.com',
+  email_verified_at: createdAt,
   avatar_url: '',
   status: 'active',
   created_at: createdAt,
@@ -33,6 +34,7 @@ const member: User = {
   id: 'member-user',
   username: '成员',
   email: 'member@example.com',
+  email_verified_at: createdAt,
   avatar_url: '',
   status: 'active',
   created_at: createdAt,
@@ -41,7 +43,7 @@ const member: User = {
   must_change_password: false,
 }
 const administrator: User = {
-  id: 'admin', username: '管理员', email: 'admin@example.com', avatar_url: '', status: 'active',
+  id: 'admin', username: '管理员', email: 'admin@example.com', email_verified_at: createdAt, avatar_url: '', status: 'active',
   created_at: createdAt, is_admin: true, role: 'admin', must_change_password: false,
 }
 const account: Account = {
@@ -731,7 +733,7 @@ describe('form interactions', () => {
   })
 
   it('requires every current agreement before registration', async () => {
-    const register = vi.spyOn(api, 'register').mockResolvedValue({ user: member, token: 'ss_session_test' })
+    const register = vi.spyOn(api, 'register').mockResolvedValue({ email: member.email, verification_expires_at: '2026-08-03T01:00:00Z', resend_available_at: '2026-08-03T00:01:00Z' })
     const wrapper = mount(AuthView, {
       attachTo: document.body,
       props: { invitePending: false, invitation: null, inviteLoading: false, inviteError: '', initialMode: 'register' },
@@ -752,6 +754,40 @@ describe('form interactions', () => {
       privacy_policy_version: agreementVersions.privacy,
       acceptable_use_version: agreementVersions.acceptableUse,
     })
+    expect(wrapper.get('.verification-pending').text()).toContain(member.email)
+  })
+
+  it('resends a verification email and explains delivery failures', async () => {
+    const register = vi.spyOn(api, 'register').mockResolvedValue({
+      email: member.email,
+      verification_expires_at: new Date(Date.now() + 60 * 60_000).toISOString(),
+      resend_available_at: new Date(Date.now() - 1_000).toISOString(),
+    })
+    const resend = vi.spyOn(api, 'resendEmailVerification')
+      .mockRejectedValueOnce(new APIRequestError(502, 'email_delivery_unavailable', 'unavailable'))
+      .mockResolvedValueOnce({ accepted: true, resend_available_at: new Date(Date.now() + 60_000).toISOString() })
+    const wrapper = mount(AuthView, {
+      attachTo: document.body,
+      props: { invitePending: false, invitation: null, inviteLoading: false, inviteError: '', initialMode: 'register' },
+    })
+    await wrapper.get('input[placeholder="你的公开昵称"]').setValue('成员')
+    await wrapper.get('input[placeholder="name@example.com"]').setValue(member.email)
+    await wrapper.get('input[placeholder="至少 10 个字符"]').setValue('strong-password')
+    await wrapper.get('.agreement-check').trigger('click')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(register).toHaveBeenCalledOnce()
+
+    await findButton(wrapper, '重新发送验证邮件')!.trigger('click')
+    await flushPromises()
+    expect(resend).toHaveBeenLastCalledWith(member.email)
+    expect(wrapper.text()).toContain('邮件服务暂时不可用')
+
+    await findButton(wrapper, '重新发送验证邮件')!.trigger('click')
+    await flushPromises()
+    expect(resend).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).toContain('秒后可重新发送')
+    wrapper.unmount()
   })
 
   it('edits and clears lobby search and application message', async () => {

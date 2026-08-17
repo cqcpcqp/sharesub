@@ -7,7 +7,7 @@ import { adminAPI } from '../api/admin'
 import type { AdminAccount, AdminOverview, AdminPlan, User } from '../types'
 import AdminView from './AdminView.vue'
 
-const admin: User = { id: 'admin', username: '管理员', email: 'admin@example.com', avatar_url: '', status: 'active', created_at: '2026-08-04T00:00:00Z', is_admin: true, role: 'admin', must_change_password: false }
+const admin: User = { id: 'admin', username: '管理员', email: 'admin@example.com', email_verified_at: '2026-08-04T00:00:00Z', avatar_url: '', status: 'active', created_at: '2026-08-04T00:00:00Z', is_admin: true, role: 'admin', must_change_password: false }
 const overview: AdminOverview = {
   user_count: 2, active_user_count: 2, account_count: 1, active_accounts: 1,
   plan_count: 1, active_plans: 1, api_key_count: 1, active_api_keys: 1,

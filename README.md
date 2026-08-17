@@ -19,6 +19,7 @@ ShareSub 是一个仅支持 OpenAI Codex 的账号共享平台。房主可以先
 - 额度同时按 Codex 5 小时窗口和 7 天窗口执行。
 - 登录后默认进入个人仪表盘，可查看今日/累计 Token、RPM/TPM、平均响应、成功率和最近 24 小时趋势。
 - 未登录用户可访问产品首页、用户协议、隐私政策和可接受使用规范；注册必须明确接受服务端当前协议版本，并由服务端记录接受时间。
+- 新注册账户必须先通过腾讯云 SES 事务邮件验证邮箱，验证完成后才会创建登录会话。
 - Plan 成员可以查看账号额度、每位成员的额度消耗、最近 30 分钟/6 小时/12 小时/24 小时聚合性能和最近 7 天请求指标；系统不保存请求正文。
 - 不包含通用供应商、渠道、分组、调度器、计费和支付抽象。
 
@@ -131,6 +132,15 @@ openssl rand -base64 32
 | `SHARESUB_WEB_PORT` | Docker Web 宿主机端口 | `8081` |
 | `SHARESUB_DATABASE_PORT` | 本地开发 PostgreSQL 宿主机端口 | `5432` |
 | `SHARESUB_SESSION_TTL` | 登录会话有效期 | `720h` |
+| `SHARESUB_EMAIL_DELIVERY_PROVIDER` | 注册邮件服务商；启用邮箱注册时填写 `tencent_ses` | 留空 |
+| `SHARESUB_TENCENT_SES_SECRET_ID` | 具有 SES 发信权限的腾讯云 CAM SecretId | 留空 |
+| `SHARESUB_TENCENT_SES_SECRET_KEY` | 对应 CAM SecretKey；只能保存在服务端环境变量中 | 留空 |
+| `SHARESUB_TENCENT_SES_REGION` | 腾讯云 SES API 地域 | `ap-hongkong` |
+| `SHARESUB_TENCENT_SES_FROM_EMAIL` | SES 已验证发信域名下的发件地址 | `no-reply@notify.example.com` |
+| `SHARESUB_TENCENT_SES_FROM_NAME` | 邮件中显示的发件人名称 | `ShareSub` |
+| `SHARESUB_TENCENT_SES_TEMPLATE_ID` | 腾讯云审核通过的邮箱验证模板 ID | 留空 |
+| `SHARESUB_EMAIL_VERIFICATION_TTL` | 一次性邮箱验证链接有效期 | `1h` |
+| `SHARESUB_EMAIL_RESEND_COOLDOWN` | 同一账户重新发送验证邮件的最短间隔 | `1m` |
 | `SHARESUB_CLEANUP_INTERVAL` | 过期资源清理周期 | `6h` |
 | `SHARESUB_GATEWAY_METRIC_RETENTION` | 网关请求明细保留期；至少 7 天，清理边界按 UTC 整日对齐，清理前会汇总 | `2160h`（90 天） |
 | `SHARESUB_GATEWAY_MAX_REQUESTS_PER_MINUTE_PER_API_KEY` | 每个 API Key 的网关请求分钟上限，用于抑制突发重试风暴 | `300` |
@@ -160,6 +170,8 @@ openssl rand -base64 32
 | `SHARESUB_CREDENTIAL_KEY` | OAuth 凭据加密密钥 | 必填，32 字节 Base64 |
 
 生产 Compose 默认将 API、Web、PostgreSQL 的内存限制为 `1 GiB`、`256 MiB`、`1 GiB`，CPU 限制为 `2`、`0.5`、`2`；可通过对应的 `SHARESUB_*_MEMORY_LIMIT` 和 `SHARESUB_*_CPU_LIMIT` 环境变量调整。容器日志单文件最多 20 MiB、保留 5 份。部署脚本将数据库备份限制为最近 14 份且不超过 30 天，并为 API/Web 各保留最近 3 个发布及回滚镜像。
+
+启用注册邮箱验证时，腾讯云 SES 模板变量必须包含 `token`，验证链接应使用 `SHARESUB_PUBLIC_URL` 对应站点的 `/verify-email#token={{token}}`。CAM 子账号只需授予 SES 发信所需权限，不要把腾讯云控制台登录密码写入 `.env`。
 
 ### 2. 启动 PostgreSQL
 

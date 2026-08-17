@@ -130,6 +130,9 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations WHERE name='026_authoritative_quota_snapshots.sql'`).Scan(&migrationCount); err != nil || migrationCount != 1 {
 		t.Fatalf("026 migration registrations = %d, error = %v", migrationCount, err)
 	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations WHERE name='027_email_verification.sql'`).Scan(&migrationCount); err != nil || migrationCount != 1 {
+		t.Fatalf("027 migration registrations = %d, error = %v", migrationCount, err)
+	}
 	var legacySnapshotAuthoritative bool
 	var legacySnapshotAuthoritativeAt *time.Time
 	if err := pool.QueryRow(ctx, `SELECT authoritative,authoritative_at FROM account_quota_snapshots WHERE account_id='account' AND window_type='7d'`).Scan(&legacySnapshotAuthoritative, &legacySnapshotAuthoritativeAt); err != nil {
@@ -329,6 +332,67 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	}
 	if !acceptedAt.Equal(now) {
 		t.Fatalf("agreement accepted_at = %s, want %s", acceptedAt, now)
+	}
+	verificationUser := domain.User{ID: "verification-user", Username: "verification-user", Email: "verification@example.com", PasswordHash: "hash", Status: domain.StatusActive, Role: domain.RoleUser, CreatedAt: now}
+	verificationAcceptance := domain.AgreementAcceptance{UserID: verificationUser.ID, TermsVersion: "2026-08-05", PrivacyPolicyVersion: "2026-08-17", AcceptableUseVersion: "2026-08-05", AcceptedAt: now}
+	verification := domain.EmailVerificationToken{ID: "verification-1", UserID: verificationUser.ID, TokenHash: []byte("verification-hash-1"), ExpiresAt: now.Add(time.Hour), CreatedAt: now}
+	if err := store.CreateUserWithEmailVerification(ctx, verificationUser, verificationAcceptance, verification); err != nil {
+		t.Fatal(err)
+	}
+	storedVerificationUser, err := store.UserByEmail(ctx, verificationUser.Email)
+	if err != nil || storedVerificationUser.EmailVerifiedAt != nil {
+		t.Fatalf("new verification user = %+v, error = %v", storedVerificationUser, err)
+	}
+	tooSoon := domain.EmailVerificationToken{ID: "verification-too-soon", UserID: verificationUser.ID, TokenHash: []byte("verification-hash-too-soon"), ExpiresAt: now.Add(time.Hour), CreatedAt: now.Add(30 * time.Second)}
+	if err := store.CreateEmailVerificationToken(ctx, tooSoon, time.Minute, time.Hour, 5); !errors.Is(err, domain.ErrEmailResendTooSoon) {
+		t.Fatalf("too-soon resend error = %v", err)
+	}
+	unsentVerification := domain.EmailVerificationToken{ID: "verification-unsent", UserID: verificationUser.ID, TokenHash: []byte("verification-hash-unsent"), ExpiresAt: now.Add(61*time.Second + time.Hour), CreatedAt: now.Add(61 * time.Second)}
+	if err := store.CreateEmailVerificationToken(ctx, unsentVerification, time.Minute, time.Hour, 5); err != nil {
+		t.Fatalf("create unsent verification token: %v", err)
+	}
+	if err := store.DeleteEmailVerificationToken(ctx, unsentVerification.ID, verificationUser.ID); err != nil {
+		t.Fatalf("delete unsent verification token: %v", err)
+	}
+	var originalConsumedAt *time.Time
+	var unsentTokenExists bool
+	if err := pool.QueryRow(ctx, `SELECT consumed_at FROM email_verification_tokens WHERE id=$1`, verification.ID).Scan(&originalConsumedAt); err != nil || originalConsumedAt != nil {
+		t.Fatalf("original verification remains active = %v, %v", originalConsumedAt, err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM email_verification_tokens WHERE id=$1)`, unsentVerification.ID).Scan(&unsentTokenExists); err != nil || unsentTokenExists {
+		t.Fatalf("unsent verification deleted = %v, %v", unsentTokenExists, err)
+	}
+	latestVerification := verification
+	for index := 2; index <= 5; index++ {
+		createdAt := now.Add(time.Duration(index-1) * 61 * time.Second)
+		latestVerification = domain.EmailVerificationToken{
+			ID: fmt.Sprintf("verification-%d", index), UserID: verificationUser.ID,
+			TokenHash: []byte(fmt.Sprintf("verification-hash-%d", index)), ExpiresAt: createdAt.Add(time.Hour), CreatedAt: createdAt,
+		}
+		if err := store.CreateEmailVerificationToken(ctx, latestVerification, time.Minute, time.Hour, 5); err != nil {
+			t.Fatalf("create verification token %d: %v", index, err)
+		}
+		if err := store.SupersedeEmailVerificationTokens(ctx, verificationUser.ID, latestVerification.ID, createdAt); err != nil {
+			t.Fatalf("supersede verification token %d: %v", index, err)
+		}
+	}
+	limitedAt := now.Add(5 * 61 * time.Second)
+	limited := domain.EmailVerificationToken{ID: "verification-limited", UserID: verificationUser.ID, TokenHash: []byte("verification-hash-limited"), ExpiresAt: limitedAt.Add(time.Hour), CreatedAt: limitedAt}
+	if err := store.CreateEmailVerificationToken(ctx, limited, time.Minute, time.Hour, 5); !errors.Is(err, domain.ErrEmailVerificationLimited) {
+		t.Fatalf("limited resend error = %v", err)
+	}
+	if _, err := store.ConsumeEmailVerificationToken(ctx, verification.TokenHash, latestVerification.CreatedAt.Add(time.Second)); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("superseded token error = %v", err)
+	}
+	verifiedUser, err := store.ConsumeEmailVerificationToken(ctx, latestVerification.TokenHash, latestVerification.CreatedAt.Add(time.Second))
+	if err != nil || verifiedUser.EmailVerifiedAt == nil {
+		t.Fatalf("verified user = %+v, error = %v", verifiedUser, err)
+	}
+	if _, err := store.ConsumeEmailVerificationToken(ctx, latestVerification.TokenHash, latestVerification.CreatedAt.Add(2*time.Second)); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("reused token error = %v", err)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM users WHERE id=$1`, verificationUser.ID); err != nil {
+		t.Fatalf("delete verification test user: %v", err)
 	}
 	avatarTime := now.Add(time.Second)
 	ownerAvatar := domain.UserAvatar{Data: []byte("\x89PNG\r\n\x1a\nowner-avatar"), MediaType: "image/png"}
@@ -1063,6 +1127,9 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	}
 
 	cleanupNow := now.Add(91 * 24 * time.Hour)
+	if _, err := pool.Exec(ctx, `INSERT INTO email_verification_tokens(id,user_id,token_hash,expires_at,created_at) VALUES('recent-expired-verification','registered',$1,$2,$3)`, []byte("recent-expired-verification-hash"), cleanupNow.Add(-5*time.Minute), cleanupNow.Add(-50*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
 	cleaned, err := store.CleanupResources(ctx, cleanupNow, RetentionPolicy{
 		GatewayMetrics: 90 * 24 * time.Hour,
 		AuditEvents:    365 * 24 * time.Hour, ReadNotifications: 90 * 24 * time.Hour,
@@ -1073,6 +1140,10 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	}
 	if cleaned.GatewayMetrics != 2 {
 		t.Fatalf("cleaned gateway metrics = %d, want 2", cleaned.GatewayMetrics)
+	}
+	var recentExpiredVerificationExists bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM email_verification_tokens WHERE id='recent-expired-verification')`).Scan(&recentExpiredVerificationExists); err != nil || !recentExpiredVerificationExists {
+		t.Fatalf("recent expired verification retained for rate limit = %v, %v", recentExpiredVerificationExists, err)
 	}
 	dashboard, err = store.Dashboard(ctx, "applicant", cleanupNow.Add(-12*time.Hour), cleanupNow.Add(-23*time.Hour), cleanupNow)
 	if err != nil {

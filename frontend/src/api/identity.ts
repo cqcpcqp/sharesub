@@ -1,4 +1,4 @@
-import type { AuthResult, Dashboard, User } from '../types'
+import type { AuthResult, Dashboard, EmailVerificationDispatch, RegistrationResult, User } from '../types'
 import { request } from './client'
 
 export interface RegistrationAgreementInput {
@@ -9,7 +9,9 @@ export interface RegistrationAgreementInput {
 }
 
 export const identityAPI = {
-  register: (username: string, email: string, password: string, agreement: RegistrationAgreementInput) => request<AuthResult>('/api/auth/register', { method: 'POST', body: JSON.stringify({ username, email, password, agreement }) }),
+  register: (username: string, email: string, password: string, agreement: RegistrationAgreementInput) => request<RegistrationResult>('/api/auth/register', { method: 'POST', body: JSON.stringify({ username, email, password, agreement }) }),
+  verifyEmail: (token: string) => request<AuthResult>('/api/auth/email/verify', { method: 'POST', body: JSON.stringify({ token }) }),
+  resendEmailVerification: (email: string) => request<EmailVerificationDispatch>('/api/auth/email/resend', { method: 'POST', body: JSON.stringify({ email }) }),
   login: (email: string, password: string) => request<AuthResult>('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
   me: () => request<User>('/api/me'),
   updateMe: (username: string) => request<User>('/api/me', { method: 'PATCH', body: JSON.stringify({ username }) }),

@@ -6,6 +6,8 @@ require (
 	github.com/coder/websocket v1.8.14
 	github.com/imroc/req/v3 v3.57.0
 	github.com/jackc/pgx/v5 v5.7.6
+	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common v1.3.136
+	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/ses v1.3.136
 	golang.org/x/crypto v0.51.0
 )
 

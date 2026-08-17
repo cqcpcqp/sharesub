@@ -19,6 +19,8 @@ describe('app routes', () => {
 
   it('recognizes the login route and harmless trailing slashes', () => {
     expect(parseAppRoute('/login')).toEqual({ kind: 'login' })
+    expect(parseAppRoute('/verify-email')).toEqual({ kind: 'email-verification' })
+    expect(appRoutePath({ kind: 'email-verification' })).toBe('/verify-email')
     expect(parseAppRoute('/plans/')).toEqual({ kind: 'view', view: 'plans' })
   })
 

@@ -7,12 +7,12 @@ import { api, setSessionToken } from './api'
 import type { Dashboard, InvitePreview, Member, Notification, NotificationList, Plan, User } from './types'
 
 const temporaryAdmin: User = {
-  id: 'admin', username: 'admin', email: 'admin@underelay.com', avatar_url: '', status: 'active',
+  id: 'admin', username: 'admin', email: 'admin@underelay.com', email_verified_at: '2026-08-04T00:00:00Z', avatar_url: '', status: 'active',
   created_at: '2026-08-04T00:00:00Z', role: 'admin', is_admin: true, must_change_password: true,
 }
 
 const member: User = {
-  id: 'member', username: 'member', email: 'member@example.com', avatar_url: '', status: 'active',
+  id: 'member', username: 'member', email: 'member@example.com', email_verified_at: '2026-08-04T00:00:00Z', avatar_url: '', status: 'active',
   created_at: '2026-08-06T00:00:00Z', role: 'user', is_admin: false, must_change_password: false,
 }
 

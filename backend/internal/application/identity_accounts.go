@@ -16,9 +16,12 @@ import (
 )
 
 const (
-	CurrentTermsVersion         = "2026-08-05"
-	CurrentPrivacyPolicyVersion = "2026-08-05"
-	CurrentAcceptableUseVersion = "2026-08-05"
+	CurrentTermsVersion          = "2026-08-05"
+	CurrentPrivacyPolicyVersion  = "2026-08-17"
+	CurrentAcceptableUseVersion  = "2026-08-05"
+	emailVerificationPrefix      = "ss_verify_"
+	emailVerificationLimit       = 5
+	emailVerificationLimitWindow = time.Hour
 )
 
 type RegistrationAgreement struct {
@@ -28,19 +31,30 @@ type RegistrationAgreement struct {
 	AcceptableUseVersion string `json:"acceptable_use_version"`
 }
 
-func (s *Service) Register(ctx context.Context, username, email, password string, agreement RegistrationAgreement) (AuthResult, error) {
+type RegistrationResult struct {
+	Email                 string    `json:"email"`
+	VerificationExpiresAt time.Time `json:"verification_expires_at"`
+	ResendAvailableAt     time.Time `json:"resend_available_at"`
+}
+
+type EmailVerificationDispatch struct {
+	Accepted          bool      `json:"accepted"`
+	ResendAvailableAt time.Time `json:"resend_available_at"`
+}
+
+func (s *Service) Register(ctx context.Context, username, email, password string, agreement RegistrationAgreement) (RegistrationResult, error) {
 	email = normalizeEmail(email)
 	username = strings.TrimSpace(username)
 	if !validEmail(email) || !validUsername(username) || !validRegistrationAgreement(agreement) {
-		return AuthResult{}, fmt.Errorf("%w: invalid registration", domain.ErrInvalidInput)
+		return RegistrationResult{}, fmt.Errorf("%w: invalid registration", domain.ErrInvalidInput)
 	}
 	hash, err := security.HashPassword(password)
 	if err != nil {
-		return AuthResult{}, fmt.Errorf("%w: %v", domain.ErrInvalidInput, err)
+		return RegistrationResult{}, fmt.Errorf("%w: %v", domain.ErrInvalidInput, err)
 	}
 	id, err := security.NewID()
 	if err != nil {
-		return AuthResult{}, err
+		return RegistrationResult{}, err
 	}
 	now := s.now()
 	user := domain.User{ID: id, Username: username, Email: email, PasswordHash: hash, Status: domain.StatusActive, Role: domain.RoleUser, CreatedAt: now}
@@ -48,10 +62,87 @@ func (s *Service) Register(ctx context.Context, username, email, password string
 		UserID: user.ID, TermsVersion: agreement.TermsVersion, PrivacyPolicyVersion: agreement.PrivacyPolicyVersion,
 		AcceptableUseVersion: agreement.AcceptableUseVersion, AcceptedAt: now,
 	}
-	if err := s.store.CreateUserWithAgreement(ctx, user, acceptance); err != nil {
+	plainToken, verification, err := s.newEmailVerification(user.ID, now)
+	if err != nil {
+		return RegistrationResult{}, err
+	}
+	if err := s.store.CreateUserWithEmailVerification(ctx, user, acceptance, verification); err != nil {
+		return RegistrationResult{}, err
+	}
+	if s.emailSender == nil {
+		return RegistrationResult{}, domain.ErrEmailDeliveryUnavailable
+	}
+	if err := s.emailSender.SendEmailVerification(ctx, user.Email, plainToken); err != nil {
+		return RegistrationResult{}, fmt.Errorf("%w: %v", domain.ErrEmailDeliveryUnavailable, err)
+	}
+	return RegistrationResult{Email: user.Email, VerificationExpiresAt: verification.ExpiresAt, ResendAvailableAt: now.Add(s.emailResendCooldown)}, nil
+}
+
+func (s *Service) ResendEmailVerification(ctx context.Context, email string) (EmailVerificationDispatch, error) {
+	email = normalizeEmail(email)
+	if !validEmail(email) {
+		return EmailVerificationDispatch{}, domain.ErrInvalidInput
+	}
+	now := s.now()
+	result := EmailVerificationDispatch{Accepted: true, ResendAvailableAt: now.Add(s.emailResendCooldown)}
+	user, err := s.store.UserByEmail(ctx, email)
+	if errors.Is(err, domain.ErrNotFound) || (err == nil && user.EmailVerifiedAt != nil) {
+		return result, nil
+	}
+	if err != nil {
+		return EmailVerificationDispatch{}, err
+	}
+	plainToken, verification, err := s.newEmailVerification(user.ID, now)
+	if err != nil {
+		return EmailVerificationDispatch{}, err
+	}
+	if s.emailSender == nil {
+		return EmailVerificationDispatch{}, domain.ErrEmailDeliveryUnavailable
+	}
+	if err := s.store.CreateEmailVerificationToken(ctx, verification, s.emailResendCooldown, emailVerificationLimitWindow, emailVerificationLimit); err != nil {
+		if errors.Is(err, domain.ErrConflict) || errors.Is(err, domain.ErrNotFound) {
+			return result, nil
+		}
+		return EmailVerificationDispatch{}, err
+	}
+	if err := s.emailSender.SendEmailVerification(ctx, user.Email, plainToken); err != nil {
+		if deleteErr := s.store.DeleteEmailVerificationToken(ctx, verification.ID, user.ID); deleteErr != nil {
+			return EmailVerificationDispatch{}, fmt.Errorf("%w: %v; discard unsent verification token: %v", domain.ErrEmailDeliveryUnavailable, err, deleteErr)
+		}
+		return EmailVerificationDispatch{}, fmt.Errorf("%w: %v", domain.ErrEmailDeliveryUnavailable, err)
+	}
+	if err := s.store.SupersedeEmailVerificationTokens(ctx, user.ID, verification.ID, now); err != nil {
+		return EmailVerificationDispatch{}, err
+	}
+	return result, nil
+}
+
+func (s *Service) VerifyEmail(ctx context.Context, token string) (AuthResult, error) {
+	token = strings.TrimSpace(token)
+	if !strings.HasPrefix(token, emailVerificationPrefix) || len(token) <= len(emailVerificationPrefix) {
+		return AuthResult{}, domain.ErrEmailVerificationInvalid
+	}
+	user, err := s.store.ConsumeEmailVerificationToken(ctx, s.security.HashToken(token), s.now())
+	if errors.Is(err, domain.ErrNotFound) {
+		return AuthResult{}, domain.ErrEmailVerificationInvalid
+	}
+	if err != nil {
 		return AuthResult{}, err
 	}
 	return s.newSession(ctx, s.decorateUser(user))
+}
+
+func (s *Service) newEmailVerification(userID string, now time.Time) (string, domain.EmailVerificationToken, error) {
+	plainToken, err := security.NewOpaqueToken(emailVerificationPrefix)
+	if err != nil {
+		return "", domain.EmailVerificationToken{}, err
+	}
+	id, err := security.NewID()
+	if err != nil {
+		return "", domain.EmailVerificationToken{}, err
+	}
+	verification := domain.EmailVerificationToken{ID: id, UserID: userID, TokenHash: s.security.HashToken(plainToken), ExpiresAt: now.Add(s.emailVerificationTTL), CreatedAt: now}
+	return plainToken, verification, nil
 }
 
 func validRegistrationAgreement(agreement RegistrationAgreement) bool {
@@ -122,6 +213,9 @@ func (s *Service) Login(ctx context.Context, email, password string) (AuthResult
 	user, err := s.store.UserByEmail(ctx, normalizeEmail(email))
 	if err != nil || user.Status != domain.StatusActive || !security.CheckPassword(user.PasswordHash, password) {
 		return AuthResult{}, domain.ErrUnauthorized
+	}
+	if user.EmailVerifiedAt == nil {
+		return AuthResult{}, domain.ErrEmailVerificationRequired
 	}
 	return s.newSession(ctx, s.decorateUser(user))
 }

@@ -10,7 +10,7 @@ afterEach(() => vi.restoreAllMocks())
 
 describe('PasswordChangeDialog', () => {
   it('cannot be dismissed and completes the forced password change', async () => {
-    const updated: User = { id: 'admin', username: 'admin', email: 'admin@underelay.com', avatar_url: '', status: 'active', created_at: '2026-08-04T00:00:00Z', role: 'admin', is_admin: true, must_change_password: false }
+    const updated: User = { id: 'admin', username: 'admin', email: 'admin@underelay.com', email_verified_at: '2026-08-04T00:00:00Z', avatar_url: '', status: 'active', created_at: '2026-08-04T00:00:00Z', role: 'admin', is_admin: true, must_change_password: false }
     vi.spyOn(api, 'changePassword').mockResolvedValue(updated)
     const wrapper = mount(PasswordChangeDialog, { attachTo: document.body, global: { stubs: { teleport: true } } })
     expect(wrapper.find('button[aria-label="关闭"]').exists()).toBe(false)
@@ -26,7 +26,7 @@ describe('PasswordChangeDialog', () => {
   })
 
   it('supports a dismissible password change for signed-in users', async () => {
-    const updated: User = { id: 'member', username: 'member', email: 'member@example.com', avatar_url: '', status: 'active', created_at: '2026-08-04T00:00:00Z', role: 'user', is_admin: false, must_change_password: false }
+    const updated: User = { id: 'member', username: 'member', email: 'member@example.com', email_verified_at: '2026-08-04T00:00:00Z', avatar_url: '', status: 'active', created_at: '2026-08-04T00:00:00Z', role: 'user', is_admin: false, must_change_password: false }
     vi.spyOn(api, 'changePassword').mockResolvedValue(updated)
     const wrapper = mount(PasswordChangeDialog, { props: { forced: false }, attachTo: document.body, global: { stubs: { teleport: true } } })
     expect(wrapper.text()).toContain('修改密码')

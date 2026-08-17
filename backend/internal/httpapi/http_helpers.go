@@ -80,6 +80,16 @@ func writeError(w http.ResponseWriter, err error) {
 		writeErrorStatus(w, 403, "forbidden", err.Error())
 	case errors.Is(err, domain.ErrPasswordChangeRequired):
 		writeErrorStatus(w, 403, "password_change_required", err.Error())
+	case errors.Is(err, domain.ErrEmailVerificationRequired):
+		writeErrorStatus(w, 403, "email_verification_required", domain.ErrEmailVerificationRequired.Error())
+	case errors.Is(err, domain.ErrEmailVerificationInvalid):
+		writeErrorStatus(w, 400, "email_verification_invalid", domain.ErrEmailVerificationInvalid.Error())
+	case errors.Is(err, domain.ErrEmailDeliveryUnavailable):
+		writeErrorStatus(w, 502, "email_delivery_unavailable", domain.ErrEmailDeliveryUnavailable.Error())
+	case errors.Is(err, domain.ErrEmailResendTooSoon):
+		writeErrorStatus(w, 429, "email_resend_too_soon", domain.ErrEmailResendTooSoon.Error())
+	case errors.Is(err, domain.ErrEmailVerificationLimited):
+		writeErrorStatus(w, 429, "email_verification_limited", domain.ErrEmailVerificationLimited.Error())
 	case errors.Is(err, domain.ErrNotFound):
 		writeErrorStatus(w, 404, "not_found", err.Error())
 	case errors.Is(err, domain.ErrAccountAlreadyBound):

@@ -11,22 +11,31 @@ import (
 
 const oauthFlowTTL = 15 * time.Minute
 const MaxAvatarBytes = 2 << 20
+const defaultEmailVerificationTTL = time.Hour
+const defaultEmailResendCooldown = time.Minute
 
 type Service struct {
-	store         Store
-	security      *security.Manager
-	oauth         OpenAIOAuth
-	quotaProber   QuotaProber
-	sessionTTL    time.Duration
-	redirectURI   string
-	publicURL     string
-	now           func() time.Time
-	traffic       *accountTrafficController
-	runtimeStatus RuntimeStatusProvider
+	store                Store
+	security             *security.Manager
+	oauth                OpenAIOAuth
+	quotaProber          QuotaProber
+	sessionTTL           time.Duration
+	redirectURI          string
+	publicURL            string
+	now                  func() time.Time
+	traffic              *accountTrafficController
+	runtimeStatus        RuntimeStatusProvider
+	emailSender          EmailVerificationSender
+	emailVerificationTTL time.Duration
+	emailResendCooldown  time.Duration
 }
 
 type RuntimeStatusProvider interface {
 	Snapshot(context.Context) domain.AdminRuntimeStatus
+}
+
+type EmailVerificationSender interface {
+	SendEmailVerification(context.Context, string, string) error
 }
 
 type AuthResult struct {
@@ -61,10 +70,18 @@ type AccountConfigInput struct {
 }
 
 func NewService(store Store, securityManager *security.Manager, oauth OpenAIOAuth, sessionTTL time.Duration, redirectURI, publicURL string, quotaProber ...QuotaProber) *Service {
-	service := &Service{store: store, security: securityManager, oauth: oauth, sessionTTL: sessionTTL, redirectURI: redirectURI, publicURL: strings.TrimRight(publicURL, "/"), now: time.Now, traffic: newAccountTrafficController()}
+	service := &Service{store: store, security: securityManager, oauth: oauth, sessionTTL: sessionTTL, redirectURI: redirectURI, publicURL: strings.TrimRight(publicURL, "/"), now: time.Now, traffic: newAccountTrafficController(), emailVerificationTTL: defaultEmailVerificationTTL, emailResendCooldown: defaultEmailResendCooldown}
 	if len(quotaProber) > 0 {
 		service.quotaProber = quotaProber[0]
 	}
+	return service
+}
+
+func NewServiceWithEmailVerification(store Store, securityManager *security.Manager, oauth OpenAIOAuth, sessionTTL time.Duration, redirectURI, publicURL string, emailSender EmailVerificationSender, verificationTTL, resendCooldown time.Duration, quotaProber ...QuotaProber) *Service {
+	service := NewService(store, securityManager, oauth, sessionTTL, redirectURI, publicURL, quotaProber...)
+	service.emailSender = emailSender
+	service.emailVerificationTTL = verificationTTL
+	service.emailResendCooldown = resendCooldown
 	return service
 }
 
