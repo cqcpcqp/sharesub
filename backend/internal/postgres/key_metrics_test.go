@@ -126,3 +126,71 @@ func TestMergeAccountQuotaSignalRejectsLateOldWindow(t *testing.T) {
 		t.Fatalf("late old window replaced the current snapshot: %+v", merged)
 	}
 }
+
+func TestReconcileAccountQuotaSignalLetsProbeReplaceLaterDifferentBucket(t *testing.T) {
+	oldStart := time.Date(2026, 8, 17, 0, 55, 0, 0, time.UTC)
+	oldReset := time.Date(2026, 8, 24, 0, 55, 0, 0, time.UTC)
+	probedAt := time.Date(2026, 8, 17, 11, 29, 0, 0, time.UTC)
+	globalSignal := domain.QuotaSignal{
+		WindowType:        domain.Window7D,
+		WindowStart:       time.Date(2026, 8, 13, 11, 29, 0, 0, time.UTC),
+		ResetAt:           time.Date(2026, 8, 20, 11, 29, 0, 0, time.UTC),
+		AccountUsedMicros: 48_000_000,
+	}
+
+	passive, authoritative, _, accepted, err := reconcileAccountQuotaSignal(oldStart, oldReset, 19_000_000, false, time.Time{}, globalSignal, false, probedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !accepted || authoritative || !passive.ResetAt.Equal(oldReset) || passive.AccountUsedMicros != 19_000_000 {
+		t.Fatalf("passive late signal was not protected: %+v", passive)
+	}
+
+	probed, authoritative, authoritativeAt, accepted, err := reconcileAccountQuotaSignal(oldStart, oldReset, 19_000_000, false, time.Time{}, globalSignal, true, probedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !accepted || !authoritative || !authoritativeAt.Equal(probedAt) || probed != globalSignal {
+		t.Fatalf("authoritative probe did not replace the old bucket: %+v", probed)
+	}
+}
+
+func TestReconcileAccountQuotaSignalProtectsAuthoritativeBucketFromPassiveSignal(t *testing.T) {
+	probedAt := time.Date(2026, 8, 17, 11, 29, 0, 0, time.UTC)
+	globalStart := time.Date(2026, 8, 13, 11, 29, 0, 0, time.UTC)
+	globalReset := time.Date(2026, 8, 20, 11, 29, 0, 0, time.UTC)
+	routedSignal := domain.QuotaSignal{
+		WindowType:        domain.Window7D,
+		WindowStart:       time.Date(2026, 8, 17, 0, 55, 0, 0, time.UTC),
+		ResetAt:           time.Date(2026, 8, 24, 0, 55, 0, 0, time.UTC),
+		AccountUsedMicros: 19_000_000,
+	}
+
+	_, authoritative, authoritativeAt, accepted, err := reconcileAccountQuotaSignal(globalStart, globalReset, 48_000_000, true, probedAt, routedSignal, false, probedAt.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if accepted || !authoritative || !authoritativeAt.Equal(probedAt) {
+		t.Fatalf("passive routed bucket replaced authoritative snapshot: accepted=%v authoritative=%v at=%s", accepted, authoritative, authoritativeAt)
+	}
+}
+
+func TestReconcileAccountQuotaSignalRejectsOlderProbeCompletingLate(t *testing.T) {
+	newerProbeAt := time.Date(2026, 8, 17, 11, 30, 0, 0, time.UTC)
+	oldStart := time.Date(2026, 8, 13, 11, 30, 0, 0, time.UTC)
+	oldReset := time.Date(2026, 8, 20, 11, 30, 0, 0, time.UTC)
+	lateSignal := domain.QuotaSignal{
+		WindowType:        domain.Window7D,
+		WindowStart:       oldStart.Add(-time.Minute),
+		ResetAt:           oldReset.Add(-time.Minute),
+		AccountUsedMicros: 20_000_000,
+	}
+
+	_, authoritative, authoritativeAt, accepted, err := reconcileAccountQuotaSignal(oldStart, oldReset, 40_000_000, true, newerProbeAt, lateSignal, true, newerProbeAt.Add(-time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if accepted || !authoritative || !authoritativeAt.Equal(newerProbeAt) {
+		t.Fatalf("older probe was accepted: accepted=%v authoritative=%v at=%s", accepted, authoritative, authoritativeAt)
+	}
+}

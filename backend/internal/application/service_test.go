@@ -155,6 +155,7 @@ type quotaProbeStore struct {
 	recordedGeneration    int64
 	recordedSignals       []domain.QuotaSignal
 	recordedAt            time.Time
+	recordedSource        string
 	ownerCredentialCalls  int
 	memberCredentialCalls int
 	memberPlanID          string
@@ -204,6 +205,19 @@ func (s *quotaProbeStore) RecordAccountQuotaSignals(_ context.Context, planID, a
 	s.recordedGeneration = generation
 	s.recordedSignals = signals
 	s.recordedAt = recordedAt
+	s.recordedSource = "passive"
+	return nil
+}
+
+func (s *quotaProbeStore) RecordProbedAccountQuotaSignals(_ context.Context, planID, accountID string, generation int64, signals []domain.QuotaSignal, recordedAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.recordedPlanID = planID
+	s.recordedAccountID = accountID
+	s.recordedGeneration = generation
+	s.recordedSignals = signals
+	s.recordedAt = recordedAt
+	s.recordedSource = "probe"
 	return nil
 }
 
@@ -539,7 +553,7 @@ func TestRecordResetQuotaSignalsUsesOwnerAccountAndForcedResetStorePath(t *testi
 	store := &quotaProbeStore{}
 	service := &Service{store: store, now: func() time.Time { return now }}
 	signals := completeQuotaSignals(now)[1:]
-	probe := PlanQuotaProbe{PlanID: "plan", AccountID: "account", AccountBindingGeneration: 2}
+	probe := PlanQuotaProbe{PlanID: "plan", AccountID: "account", AccountBindingGeneration: 2, StartedAt: now}
 	if err := service.RecordResetQuotaSignals(context.Background(), probe, signals); err != nil {
 		t.Fatal(err)
 	}
@@ -634,7 +648,8 @@ func TestQuotaSignalRecordingUsesPreparedBindingTuple(t *testing.T) {
 	now := time.Date(2026, 8, 6, 11, 30, 0, 0, time.UTC)
 	store := &quotaProbeStore{}
 	service := &Service{store: store, now: func() time.Time { return now }}
-	probe := PlanQuotaProbe{PlanID: "old-plan", AccountID: "old-account", AccountBindingGeneration: 7}
+	probeStartedAt := now.Add(-time.Minute)
+	probe := PlanQuotaProbe{PlanID: "old-plan", AccountID: "old-account", AccountBindingGeneration: 7, StartedAt: probeStartedAt}
 	signals := completeQuotaSignals(now)
 
 	for _, record := range []struct {
@@ -649,7 +664,7 @@ func TestQuotaSignalRecordingUsesPreparedBindingTuple(t *testing.T) {
 			if err := record.call(); err != nil {
 				t.Fatal(err)
 			}
-			if store.recordedPlanID != probe.PlanID || store.recordedAccountID != probe.AccountID || store.recordedGeneration != probe.AccountBindingGeneration || len(store.recordedSignals) != 2 || !store.recordedAt.Equal(now) {
+			if store.recordedPlanID != probe.PlanID || store.recordedAccountID != probe.AccountID || store.recordedGeneration != probe.AccountBindingGeneration || len(store.recordedSignals) != 2 || !store.recordedAt.Equal(probeStartedAt) || store.recordedSource != "probe" {
 				t.Fatalf("recorded tuple = %q/%q/%d, signals = %d, at = %s", store.recordedPlanID, store.recordedAccountID, store.recordedGeneration, len(store.recordedSignals), store.recordedAt)
 			}
 		})

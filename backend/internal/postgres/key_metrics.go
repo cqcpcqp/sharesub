@@ -19,11 +19,12 @@ func initializePlanAccountBinding(ctx context.Context, tx pgx.Tx, planID, accoun
 	}
 	for _, signal := range orderedSignals {
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO account_quota_snapshots(account_id,window_type,window_start,reset_at,used_micros,updated_at)
-			VALUES($1,$2,$3,$4,$5,$6)
+			INSERT INTO account_quota_snapshots(account_id,window_type,window_start,reset_at,used_micros,updated_at,authoritative,authoritative_at)
+			VALUES($1,$2,$3,$4,$5,$6,true,$6)
 			ON CONFLICT(account_id,window_type) DO UPDATE SET
 				window_start=EXCLUDED.window_start,reset_at=EXCLUDED.reset_at,
-				used_micros=EXCLUDED.used_micros,updated_at=EXCLUDED.updated_at`,
+				used_micros=EXCLUDED.used_micros,updated_at=EXCLUDED.updated_at,
+				authoritative=true,authoritative_at=EXCLUDED.authoritative_at`,
 			accountID, signal.WindowType, signal.WindowStart, signal.ResetAt, signal.AccountUsedMicros, observedAt); err != nil {
 			return err
 		}
@@ -316,6 +317,18 @@ func (s *Store) AccountQuotaExhausted(ctx context.Context, accountID string, now
 }
 
 func (s *Store) RecordAccountQuotaSignals(ctx context.Context, planID, accountID string, generation int64, signals []domain.QuotaSignal, now time.Time) error {
+	return s.recordAccountQuotaSignals(ctx, planID, accountID, generation, signals, now, false)
+}
+
+// RecordProbedAccountQuotaSignals persists an actively queried upstream
+// snapshot as authoritative. Unlike passive gateway observations, a probe can
+// intentionally switch quota dimensions, so an earlier reset_at must be able
+// to replace a later snapshot from a different upstream quota bucket.
+func (s *Store) RecordProbedAccountQuotaSignals(ctx context.Context, planID, accountID string, generation int64, signals []domain.QuotaSignal, now time.Time) error {
+	return s.recordAccountQuotaSignals(ctx, planID, accountID, generation, signals, now, true)
+}
+
+func (s *Store) recordAccountQuotaSignals(ctx context.Context, planID, accountID string, generation int64, signals []domain.QuotaSignal, now time.Time, authoritative bool) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -329,15 +342,33 @@ func (s *Store) RecordAccountQuotaSignals(ctx context.Context, planID, accountID
 	if currentAccountID != accountID || currentGeneration != generation {
 		return domain.ErrConflict
 	}
-	if err := removeMissingOptionalQuotaWindows(ctx, tx, accountID, signals); err != nil {
-		return err
+	if authoritative {
+		if err := removeMissingOptionalQuotaWindows(ctx, tx, accountID, signals); err != nil {
+			return err
+		}
 	}
 	for _, signal := range signals {
-		signal, err = lockAndMergeAccountQuotaSignal(ctx, tx, accountID, signal)
+		var snapshotAuthoritative bool
+		var authoritativeAt time.Time
+		var accepted bool
+		signal, snapshotAuthoritative, authoritativeAt, accepted, err = lockAndReconcileAccountQuotaSignal(ctx, tx, accountID, signal, authoritative, now)
 		if err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `INSERT INTO account_quota_snapshots(account_id,window_type,window_start,reset_at,used_micros,updated_at) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(account_id,window_type) DO UPDATE SET window_start=EXCLUDED.window_start,reset_at=EXCLUDED.reset_at,used_micros=EXCLUDED.used_micros,updated_at=EXCLUDED.updated_at`, accountID, signal.WindowType, signal.WindowStart, signal.ResetAt, signal.AccountUsedMicros, now)
+		if !accepted {
+			// A newer authoritative probe already committed. Roll this whole
+			// transaction back so an optional-window deletion or an earlier
+			// signal from the stale batch cannot partially survive.
+			if authoritative {
+				return nil
+			}
+			continue
+		}
+		var authoritativeAtValue any
+		if snapshotAuthoritative {
+			authoritativeAtValue = authoritativeAt
+		}
+		_, err = tx.Exec(ctx, `INSERT INTO account_quota_snapshots(account_id,window_type,window_start,reset_at,used_micros,updated_at,authoritative,authoritative_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(account_id,window_type) DO UPDATE SET window_start=EXCLUDED.window_start,reset_at=EXCLUDED.reset_at,used_micros=EXCLUDED.used_micros,updated_at=EXCLUDED.updated_at,authoritative=EXCLUDED.authoritative,authoritative_at=EXCLUDED.authoritative_at`, accountID, signal.WindowType, signal.WindowStart, signal.ResetAt, signal.AccountUsedMicros, now, snapshotAuthoritative, authoritativeAtValue)
 		if err != nil {
 			return err
 		}
@@ -382,7 +413,7 @@ func (s *Store) RecordQuotaResetSignals(ctx context.Context, planID, accountID s
 		return err
 	}
 	for _, signal := range orderedSignals {
-		_, err = tx.Exec(ctx, `INSERT INTO account_quota_snapshots(account_id,window_type,window_start,reset_at,used_micros,updated_at) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(account_id,window_type) DO UPDATE SET window_start=EXCLUDED.window_start,reset_at=EXCLUDED.reset_at,used_micros=EXCLUDED.used_micros,updated_at=EXCLUDED.updated_at`, accountID, signal.WindowType, signal.WindowStart, signal.ResetAt, signal.AccountUsedMicros, now)
+		_, err = tx.Exec(ctx, `INSERT INTO account_quota_snapshots(account_id,window_type,window_start,reset_at,used_micros,updated_at,authoritative,authoritative_at) VALUES($1,$2,$3,$4,$5,$6,true,$6) ON CONFLICT(account_id,window_type) DO UPDATE SET window_start=EXCLUDED.window_start,reset_at=EXCLUDED.reset_at,used_micros=EXCLUDED.used_micros,updated_at=EXCLUDED.updated_at,authoritative=true,authoritative_at=EXCLUDED.authoritative_at`, accountID, signal.WindowType, signal.WindowStart, signal.ResetAt, signal.AccountUsedMicros, now)
 		if err != nil {
 			return err
 		}
@@ -425,17 +456,33 @@ func removeMissingOptionalQuotaWindows(ctx context.Context, tx pgx.Tx, accountID
 	return err
 }
 
-func lockAndMergeAccountQuotaSignal(ctx context.Context, tx pgx.Tx, accountID string, signal domain.QuotaSignal) (domain.QuotaSignal, error) {
+func lockAndReconcileAccountQuotaSignal(ctx context.Context, tx pgx.Tx, accountID string, signal domain.QuotaSignal, authoritative bool, observedAt time.Time) (domain.QuotaSignal, bool, time.Time, bool, error) {
 	var oldUsed int64
 	var oldStart, oldReset time.Time
-	err := tx.QueryRow(ctx, `SELECT used_micros,window_start,reset_at FROM account_quota_snapshots WHERE account_id=$1 AND window_type=$2 FOR UPDATE`, accountID, signal.WindowType).Scan(&oldUsed, &oldStart, &oldReset)
+	var oldAuthoritative bool
+	var oldAuthoritativeAt time.Time
+	err := tx.QueryRow(ctx, `SELECT used_micros,window_start,reset_at,authoritative,COALESCE(authoritative_at,to_timestamp(0)) FROM account_quota_snapshots WHERE account_id=$1 AND window_type=$2 FOR UPDATE`, accountID, signal.WindowType).Scan(&oldUsed, &oldStart, &oldReset, &oldAuthoritative, &oldAuthoritativeAt)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return signal, nil
+		return signal, authoritative, observedAt, true, nil
 	}
 	if err != nil {
-		return domain.QuotaSignal{}, err
+		return domain.QuotaSignal{}, false, time.Time{}, false, err
 	}
-	return mergeAccountQuotaSignal(oldStart, oldReset, oldUsed, signal)
+	return reconcileAccountQuotaSignal(oldStart, oldReset, oldUsed, oldAuthoritative, oldAuthoritativeAt, signal, authoritative, observedAt)
+}
+
+func reconcileAccountQuotaSignal(oldStart, oldReset time.Time, oldUsed int64, oldAuthoritative bool, oldAuthoritativeAt time.Time, signal domain.QuotaSignal, authoritative bool, observedAt time.Time) (domain.QuotaSignal, bool, time.Time, bool, error) {
+	if authoritative {
+		if oldAuthoritative && !observedAt.After(oldAuthoritativeAt) {
+			return domain.QuotaSignal{}, true, oldAuthoritativeAt, false, nil
+		}
+		return signal, true, observedAt, true, nil
+	}
+	if oldAuthoritative && !sameQuotaWindow(oldReset, signal.ResetAt) {
+		return domain.QuotaSignal{}, true, oldAuthoritativeAt, false, nil
+	}
+	merged, err := mergeAccountQuotaSignal(oldStart, oldReset, oldUsed, signal)
+	return merged, oldAuthoritative, oldAuthoritativeAt, true, err
 }
 
 func mergeAccountQuotaSignal(oldStart, oldReset time.Time, oldUsed int64, signal domain.QuotaSignal) (domain.QuotaSignal, error) {

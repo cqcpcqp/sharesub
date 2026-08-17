@@ -117,6 +117,7 @@ type GatewayStore interface {
 	MemberQuotaExhausted(context.Context, string, string, string, int64, int, time.Time) (bool, error)
 	AccountQuotaExhausted(context.Context, string, time.Time) (bool, error)
 	RecordAccountQuotaSignals(context.Context, string, string, int64, []domain.QuotaSignal, time.Time) error
+	RecordProbedAccountQuotaSignals(context.Context, string, string, int64, []domain.QuotaSignal, time.Time) error
 	RecordQuotaResetSignals(context.Context, string, string, int64, []domain.QuotaSignal, time.Time) error
 	RecordGatewayMetric(context.Context, domain.GatewayMetric) error
 }

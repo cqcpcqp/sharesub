@@ -127,6 +127,17 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations WHERE name='025_repair_legacy_plan_quota_baselines.sql'`).Scan(&migrationCount); err != nil || migrationCount != 1 {
 		t.Fatalf("025 migration registrations = %d, error = %v", migrationCount, err)
 	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations WHERE name='026_authoritative_quota_snapshots.sql'`).Scan(&migrationCount); err != nil || migrationCount != 1 {
+		t.Fatalf("026 migration registrations = %d, error = %v", migrationCount, err)
+	}
+	var legacySnapshotAuthoritative bool
+	var legacySnapshotAuthoritativeAt *time.Time
+	if err := pool.QueryRow(ctx, `SELECT authoritative,authoritative_at FROM account_quota_snapshots WHERE account_id='account' AND window_type='7d'`).Scan(&legacySnapshotAuthoritative, &legacySnapshotAuthoritativeAt); err != nil {
+		t.Fatal(err)
+	}
+	if legacySnapshotAuthoritative || legacySnapshotAuthoritativeAt != nil {
+		t.Fatalf("legacy snapshot authority = %v at %v, want unclassified", legacySnapshotAuthoritative, legacySnapshotAuthoritativeAt)
+	}
 	for _, obsoleteTable := range []string{"member_quota_windows", "quota_usage_events"} {
 		var exists bool
 		if err := pool.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, obsoleteTable).Scan(&exists); err != nil {

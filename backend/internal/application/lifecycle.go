@@ -10,12 +10,13 @@ import (
 )
 
 type PlanQuotaProbe struct {
-	PlanID                   string `json:"-"`
-	AccountID                string `json:"account_id"`
-	AccountBindingGeneration int64  `json:"-"`
-	AccessToken              string `json:"-"`
-	ChatGPTAccountID         string `json:"chatgpt_account_id"`
-	ProxyURL                 string `json:"-"`
+	PlanID                   string    `json:"-"`
+	AccountID                string    `json:"account_id"`
+	AccountBindingGeneration int64     `json:"-"`
+	StartedAt                time.Time `json:"-"`
+	AccessToken              string    `json:"-"`
+	ChatGPTAccountID         string    `json:"chatgpt_account_id"`
+	ProxyURL                 string    `json:"-"`
 }
 
 const automaticQuotaProbeTTL = 10 * time.Minute
@@ -157,7 +158,7 @@ func (s *Service) PrepareAutomaticPlanQuotaProbe(ctx context.Context, userID, pl
 		return PlanQuotaProbe{}, false, nil, err
 	}
 	if s.now().Sub(updatedAt) < automaticQuotaProbeTTL {
-		return quotaProbeForCredential(credential), false, func() {}, nil
+		return quotaProbeForCredential(credential, s.now()), false, func() {}, nil
 	}
 	probe, release, err := s.reserveQuotaProbe(ctx, userID, credential)
 	return probe, true, release, err
@@ -218,39 +219,41 @@ func (s *Service) preparePlanQuotaProbe(ctx context.Context, credential domain.P
 			return PlanQuotaProbe{}, domain.ErrAccountUnavailable
 		}
 	}
-	probe := quotaProbeForCredential(credential)
+	probe := quotaProbeForCredential(credential, s.now())
 	probe.AccessToken = accessToken
 	probe.ChatGPTAccountID = credential.ChatGPTAccountID
 	probe.ProxyURL = proxyURL
 	return probe, nil
 }
 
-func quotaProbeForCredential(credential domain.PlanQuotaCredential) PlanQuotaProbe {
+func quotaProbeForCredential(credential domain.PlanQuotaCredential, startedAt time.Time) PlanQuotaProbe {
 	return PlanQuotaProbe{
 		PlanID:                   credential.PlanID,
 		AccountID:                credential.AccountID,
 		AccountBindingGeneration: credential.AccountBindingGeneration,
+		StartedAt:                startedAt,
 	}
 }
 
 func validQuotaProbeBinding(probe PlanQuotaProbe) bool {
 	return strings.TrimSpace(probe.PlanID) != "" &&
 		strings.TrimSpace(probe.AccountID) != "" &&
-		probe.AccountBindingGeneration >= 0
+		probe.AccountBindingGeneration >= 0 &&
+		!probe.StartedAt.IsZero()
 }
 
 func (s *Service) RecordManualQuotaSignals(ctx context.Context, probe PlanQuotaProbe, signals []domain.QuotaSignal) error {
-	if !validQuotaProbeBinding(probe) || len(signals) == 0 {
+	if !validQuotaProbeBinding(probe) || !hasRequiredQuotaWindows(signals) {
 		return domain.ErrInvalidInput
 	}
-	return s.store.RecordAccountQuotaSignals(ctx, probe.PlanID, probe.AccountID, probe.AccountBindingGeneration, signals, s.now())
+	return s.store.RecordProbedAccountQuotaSignals(ctx, probe.PlanID, probe.AccountID, probe.AccountBindingGeneration, signals, probe.StartedAt)
 }
 
 func (s *Service) RecordAutomaticQuotaSignals(ctx context.Context, probe PlanQuotaProbe, signals []domain.QuotaSignal) error {
-	if !validQuotaProbeBinding(probe) || len(signals) == 0 {
+	if !validQuotaProbeBinding(probe) || !hasRequiredQuotaWindows(signals) {
 		return domain.ErrInvalidInput
 	}
-	return s.store.RecordAccountQuotaSignals(ctx, probe.PlanID, probe.AccountID, probe.AccountBindingGeneration, signals, s.now())
+	return s.store.RecordProbedAccountQuotaSignals(ctx, probe.PlanID, probe.AccountID, probe.AccountBindingGeneration, signals, probe.StartedAt)
 }
 
 func (s *Service) RecordResetQuotaSignals(ctx context.Context, probe PlanQuotaProbe, signals []domain.QuotaSignal) error {
