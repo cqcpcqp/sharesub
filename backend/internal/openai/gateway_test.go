@@ -172,14 +172,14 @@ func assertProbeRequest(t *testing.T, req *http.Request) {
 		t.Fatalf("request target = %s %s (Host %q)", req.Method, req.URL, req.Host)
 	}
 	wantHeaders := map[string]string{
-		"Authorization":        "Bearer access-token",
-		"Chatgpt-Account-Id":   "account-id",
-		"Content-Type":         "application/json",
-		"Accept":               "text/event-stream",
-		"OpenAI-Beta":          "responses=experimental",
-		"Originator":           codexDefaultOriginator,
-		"Version":              codexProbeVersion,
-		"User-Agent":           codexProbeUserAgent,
+		"Authorization":      "Bearer access-token",
+		"Chatgpt-Account-Id": "account-id",
+		"Content-Type":       "application/json",
+		"Accept":             "text/event-stream",
+		"OpenAI-Beta":        "responses=experimental",
+		"Originator":         codexDefaultOriginator,
+		"Version":            codexProbeVersion,
+		"User-Agent":         codexProbeUserAgent,
 	}
 	for key, want := range wantHeaders {
 		if got := req.Header.Get(key); got != want {
