@@ -180,12 +180,14 @@ func assertProbeRequest(t *testing.T, req *http.Request) {
 		"Originator":           codexDefaultOriginator,
 		"Version":              codexProbeVersion,
 		"User-Agent":           codexProbeUserAgent,
-		codexRoutingHintHeader: "model=" + codexProbeModel,
 	}
 	for key, want := range wantHeaders {
 		if got := req.Header.Get(key); got != want {
 			t.Errorf("%s = %q, want %q", key, got, want)
 		}
+	}
+	if got := req.Header.Get(codexRoutingHintHeader); got != "" {
+		t.Errorf("%s = %q, want empty for the global quota probe", codexRoutingHintHeader, got)
 	}
 	deadline, ok := req.Context().Deadline()
 	if !ok {

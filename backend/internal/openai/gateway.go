@@ -333,7 +333,6 @@ func (g *Gateway) ProbeQuota(ctx context.Context, accessToken, chatgptAccountID,
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("OpenAI-Beta", "responses=experimental")
 	applyCodexOAuthIdentity(req.Header, "")
-	applyCodexRoutingHint(req.Header, codexProbeModel, "")
 	if chatgptAccountID != "" {
 		req.Header.Set("Chatgpt-Account-Id", chatgptAccountID)
 	}
