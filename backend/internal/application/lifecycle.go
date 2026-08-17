@@ -254,7 +254,7 @@ func (s *Service) RecordAutomaticQuotaSignals(ctx context.Context, probe PlanQuo
 }
 
 func (s *Service) RecordResetQuotaSignals(ctx context.Context, probe PlanQuotaProbe, signals []domain.QuotaSignal) error {
-	if !validQuotaProbeBinding(probe) || !hasCompleteQuotaWindows(signals) {
+	if !validQuotaProbeBinding(probe) || !hasRequiredQuotaWindows(signals) {
 		return domain.ErrInvalidInput
 	}
 	return s.store.RecordQuotaResetSignals(ctx, probe.PlanID, probe.AccountID, probe.AccountBindingGeneration, signals, s.now())
@@ -313,14 +313,14 @@ func (s *Service) probeAccountQuota(ctx context.Context, ownerID, accountID stri
 	if err != nil {
 		return domain.Account{}, nil, time.Time{}, err
 	}
-	if !hasCompleteQuotaWindows(signals) {
+	if !hasRequiredQuotaWindows(signals) {
 		return domain.Account{}, nil, time.Time{}, domain.ErrAccountUnavailable
 	}
 	return account, signals, s.now(), nil
 }
 
-func hasCompleteQuotaWindows(signals []domain.QuotaSignal) bool {
-	if len(signals) != 2 {
+func hasRequiredQuotaWindows(signals []domain.QuotaSignal) bool {
+	if len(signals) == 0 || len(signals) > 2 {
 		return false
 	}
 	has5H := false
@@ -341,7 +341,7 @@ func hasCompleteQuotaWindows(signals []domain.QuotaSignal) bool {
 			return false
 		}
 	}
-	return has5H && has7D
+	return has7D
 }
 
 func (s *Service) quiesceAccounts(ctx context.Context, accountIDs ...string) (func(), error) {

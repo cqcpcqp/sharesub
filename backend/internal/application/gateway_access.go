@@ -338,7 +338,7 @@ func (s *Service) resolveCredential(ctx context.Context, credential domain.Gatew
 func (s *Service) RecordGatewayUsage(ctx context.Context, access GatewayAccess, headers http.Header, observedAt time.Time) error {
 	signals := ParseCodexQuotaHeaders(headers, observedAt)
 	if len(signals) == 0 {
-		return errors.New("Codex response did not contain complete 5h or 7d quota signals")
+		return errors.New("Codex response did not contain a recognized 5h or 7d quota signal")
 	}
 	return s.store.RecordAccountQuotaSignals(
 		ctx,
@@ -354,7 +354,7 @@ func (s *Service) RecordGatewayUsage(ctx context.Context, access GatewayAccess, 
 func (s *Service) RecordGatewayAccountQuota(ctx context.Context, access GatewayAccess, headers http.Header, observedAt time.Time) error {
 	signals := ParseCodexQuotaHeaders(headers, observedAt)
 	if len(signals) == 0 {
-		return errors.New("Codex response did not contain complete 5h or 7d quota signals")
+		return errors.New("Codex response did not contain a recognized 5h or 7d quota signal")
 	}
 	return s.store.RecordAccountQuotaSignals(
 		ctx,

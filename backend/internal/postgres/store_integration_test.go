@@ -1275,7 +1275,7 @@ func TestFixedQuotaUsesCurrentBindingCostsAfterAccountBaseline(t *testing.T) {
 	})
 }
 
-func TestQuotaResetSignalsAreCompleteAndAtomic(t *testing.T) {
+func TestQuotaResetSignalsRequireWeeklyAndRemainAtomic(t *testing.T) {
 	databaseURL := os.Getenv("SHARESUB_TEST_DATABASE_URL")
 	if databaseURL == "" {
 		t.Skip("SHARESUB_TEST_DATABASE_URL is not set")
@@ -1367,12 +1367,11 @@ func TestQuotaResetSignalsAreCompleteAndAtomic(t *testing.T) {
 
 	for _, invalid := range [][]domain.QuotaSignal{
 		{initial[0]},
-		{initial[1]},
 		{initial[0], initial[0]},
 		{initial[0], {WindowType: "30d", WindowStart: now, ResetAt: now.Add(30 * 24 * time.Hour)}},
 	} {
 		if err := store.RecordQuotaResetSignals(ctx, "reset-plan", "reset-account", 1, invalid, now.Add(time.Minute)); err != domain.ErrInvalidInput {
-			t.Fatalf("incomplete reset error = %v, want invalid input", err)
+			t.Fatalf("invalid reset error = %v, want invalid input", err)
 		}
 		assertState(81_000_000, 73_000_000, now)
 	}
@@ -1397,4 +1396,34 @@ func TestQuotaResetSignalsAreCompleteAndAtomic(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertState(7_000_000, 19_000_000, resetAt)
+
+	weeklyOnlyAt := resetAt.Add(time.Minute)
+	weeklyOnly := []domain.QuotaSignal{{
+		WindowType: domain.Window7D, WindowStart: weeklyOnlyAt.Add(-24 * time.Hour),
+		ResetAt: weeklyOnlyAt.Add(6 * 24 * time.Hour), AccountUsedMicros: 11_000_000,
+	}}
+	if err := store.RecordQuotaResetSignals(ctx, "reset-plan", "reset-account", 1, weeklyOnly, weeklyOnlyAt); err != nil {
+		t.Fatal(err)
+	}
+	var fiveHourSnapshots, fiveHourBaselines int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM account_quota_snapshots WHERE account_id='reset-account' AND window_type='5h'`).Scan(&fiveHourSnapshots); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM plan_account_quota_baselines WHERE account_id='reset-account' AND window_type='5h'`).Scan(&fiveHourBaselines); err != nil {
+		t.Fatal(err)
+	}
+	if fiveHourSnapshots != 0 || fiveHourBaselines != 0 {
+		t.Fatalf("weekly-only reset retained 5h state: snapshots=%d baselines=%d", fiveHourSnapshots, fiveHourBaselines)
+	}
+	var weeklySnapshot, weeklyBaseline int64
+	if err := pool.QueryRow(ctx, `
+		SELECT q.used_micros,b.baseline_used_micros
+		FROM account_quota_snapshots q
+		JOIN plan_account_quota_baselines b ON b.plan_id='reset-plan' AND b.account_id=q.account_id AND b.window_type=q.window_type
+		WHERE q.account_id='reset-account' AND q.window_type='7d'`).Scan(&weeklySnapshot, &weeklyBaseline); err != nil {
+		t.Fatal(err)
+	}
+	if weeklySnapshot != 11_000_000 || weeklyBaseline != 11_000_000 {
+		t.Fatalf("weekly-only reset state = %d/%d, want 11000000/11000000", weeklySnapshot, weeklyBaseline)
+	}
 }

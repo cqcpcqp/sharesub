@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sharesub/sharesub/backend/internal/application"
 	"github.com/sharesub/sharesub/backend/internal/domain"
 )
 
@@ -23,13 +24,15 @@ const (
 	codexResponsesURL        = "https://chatgpt.com/backend-api/codex/responses"
 	codexCompactURL          = codexResponsesURL + "/compact"
 	codexModelsURL           = "https://chatgpt.com/backend-api/codex/models"
-	chatGPTUsageURL          = "https://chatgpt.com/backend-api/wham/usage"
 	maxBufferedResponseBytes = 64 << 20
 	maxProxyClients          = 16
 	proxyClientTTL           = 30 * time.Minute
 )
 
-const codexProbeTimeout = 20 * time.Second
+const (
+	codexProbeModel   = "gpt-5.4"
+	codexProbeTimeout = 20 * time.Second
+)
 
 var requestHeaderAllowlist = map[string]struct{}{
 	"accept": {}, "accept-language": {}, "content-type": {}, "conversation-id": {}, "conversation_id": {},
@@ -71,20 +74,21 @@ type proxyClientEntry struct {
 	lastUsed time.Time
 }
 
-type codexQuotaUsage struct {
-	RateLimit codexQuotaRateLimit `json:"rate_limit"`
+type codexProbePayload struct {
+	Model  string              `json:"model"`
+	Input  []codexProbeMessage `json:"input"`
+	Stream bool                `json:"stream"`
+	Store  bool                `json:"store"`
 }
 
-type codexQuotaRateLimit struct {
-	PrimaryWindow   *codexQuotaWindow `json:"primary_window"`
-	SecondaryWindow *codexQuotaWindow `json:"secondary_window"`
+type codexProbeMessage struct {
+	Role    string              `json:"role"`
+	Content []codexProbeContent `json:"content"`
 }
 
-type codexQuotaWindow struct {
-	UsedPercent       float64 `json:"used_percent"`
-	WindowSeconds     int64   `json:"limit_window_seconds"`
-	ResetAfterSeconds int64   `json:"reset_after_seconds"`
-	ResetAt           int64   `json:"reset_at"`
+type codexProbeContent struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
 }
 
 type RequestBilling struct {
@@ -301,22 +305,35 @@ func (g *Gateway) Close() {
 
 // ProbeQuota actively obtains the current Codex quota windows for an OAuth account.
 func (g *Gateway) ProbeQuota(ctx context.Context, accessToken, chatgptAccountID, proxyURL string) ([]domain.QuotaSignal, error) {
+	payload, err := json.Marshal(codexProbePayload{
+		Model: codexProbeModel,
+		Input: []codexProbeMessage{{
+			Role: "user",
+			Content: []codexProbeContent{{
+				Type: "input_text",
+				Text: "hi",
+			}},
+		}},
+		Stream: true,
+		Store:  false,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal Codex quota probe: %w", err)
+	}
+
 	probeCtx, cancel := context.WithTimeout(ctx, codexProbeTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, chatGPTUsageURL, nil)
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodPost, codexResponsesURL, bytes.NewReader(payload))
 	if err != nil {
 		return nil, fmt.Errorf("create Codex quota probe: %w", err)
 	}
 	req.Host = "chatgpt.com"
 	req.Header.Set("Authorization", "Bearer "+accessToken)
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("OpenAI-Beta", "codex-1")
-	req.Header.Set("OAI-Language", "zh-CN")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("OpenAI-Beta", "responses=experimental")
 	applyCodexOAuthIdentity(req.Header, "")
-	req.Header.Set("Priority", "u=4, i")
-	req.Header.Set("Sec-Fetch-Dest", "empty")
-	req.Header.Set("Sec-Fetch-Mode", "no-cors")
-	req.Header.Set("Sec-Fetch-Site", "none")
+	applyCodexRoutingHint(req.Header, codexProbeModel, "")
 	if chatgptAccountID != "" {
 		req.Header.Set("Chatgpt-Account-Id", chatgptAccountID)
 	}
@@ -330,51 +347,39 @@ func (g *Gateway) ProbeQuota(ctx context.Context, accessToken, chatgptAccountID,
 		return nil, fmt.Errorf("probe Codex quota: %w", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+
+	if resp.StatusCode != http.StatusTooManyRequests && (resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices) {
 		return nil, fmt.Errorf("probe Codex quota returned status %d", resp.StatusCode)
 	}
-	var usage codexQuotaUsage
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&usage); err != nil {
-		return nil, fmt.Errorf("decode Codex quota response: %w", err)
-	}
-	signals := make([]domain.QuotaSignal, 0, 2)
-	for _, window := range []*codexQuotaWindow{
-		usage.RateLimit.PrimaryWindow,
-		usage.RateLimit.SecondaryWindow,
-	} {
-		if window == nil {
-			continue
-		}
-		signal := quotaSignalFromUsageWindow(*window)
-		if signal.WindowType == "" {
-			return nil, errors.New("probe Codex quota returned unknown quota window")
-		}
-		signals = append(signals, signal)
-	}
-	if len(signals) == 0 {
-		return nil, errors.New("probe Codex quota returned no quota windows")
-	}
-	if len(signals) == 2 && signals[0].WindowType == signals[1].WindowType {
-		return nil, errors.New("probe Codex quota returned duplicate quota windows")
+	signals := application.ParseCodexQuotaHeaders(resp.Header, g.now())
+	if !hasRequiredQuotaWindows(signals) {
+		return nil, fmt.Errorf("probe Codex quota returned status %d without a valid 7d quota signal", resp.StatusCode)
 	}
 	return signals, nil
 }
 
-func quotaSignalFromUsageWindow(window codexQuotaWindow) domain.QuotaSignal {
-	var kind string
-	switch window.WindowSeconds {
-	case int64(5 * time.Hour / time.Second):
-		kind = domain.Window5H
-	case int64(7 * 24 * time.Hour / time.Second):
-		kind = domain.Window7D
+func hasRequiredQuotaWindows(signals []domain.QuotaSignal) bool {
+	if len(signals) == 0 || len(signals) > 2 {
+		return false
 	}
-	resetAt := time.Unix(window.ResetAt, 0).UTC()
-	return domain.QuotaSignal{
-		WindowType:        kind,
-		WindowStart:       resetAt.Add(-time.Duration(window.WindowSeconds) * time.Second),
-		ResetAt:           resetAt,
-		AccountUsedMicros: int64(window.UsedPercent * domain.PercentMicros),
+	has5H, has7D := false, false
+	for _, signal := range signals {
+		switch signal.WindowType {
+		case domain.Window5H:
+			if has5H {
+				return false
+			}
+			has5H = true
+		case domain.Window7D:
+			if has7D {
+				return false
+			}
+			has7D = true
+		default:
+			return false
+		}
 	}
+	return has7D
 }
 
 type CodexFingerprintContext struct {

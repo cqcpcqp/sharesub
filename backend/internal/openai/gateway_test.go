@@ -18,54 +18,104 @@ import (
 	"github.com/sharesub/sharesub/backend/internal/domain"
 )
 
-func TestProbeQuotaQueriesUsageEndpoint(t *testing.T) {
+func TestProbeQuotaQueriesResponsesEndpointAndParsesStandardWindows(t *testing.T) {
 	var captured *http.Request
 	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		captured = req
+		headers := make(http.Header)
+		headers.Set("x-codex-primary-used-percent", "48")
+		headers.Set("x-codex-primary-reset-after-seconds", "288000")
+		headers.Set("x-codex-primary-window-minutes", "10080")
+		headers.Set("x-codex-secondary-used-percent", "12.5")
+		headers.Set("x-codex-secondary-reset-after-seconds", "7200")
+		headers.Set("x-codex-secondary-window-minutes", "300")
 		return &http.Response{
 			StatusCode: http.StatusOK,
-			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(`{"rate_limit":{"primary_window":{"used_percent":18.25,"limit_window_seconds":604800,"reset_after_seconds":600,"reset_at":1786581415},"secondary_window":{"used_percent":2.5,"limit_window_seconds":18000,"reset_after_seconds":120,"reset_at":1786580935}}}`)),
+			Header:     headers,
+			Body:       io.NopCloser(strings.NewReader("data: {}\n\n")),
 			Request:    req,
 		}, nil
 	})}
 
-	signals, err := NewGateway(client).ProbeQuota(context.Background(), "access-token", "account-id", "")
+	observedAt := time.Date(2026, 8, 17, 1, 0, 0, 0, time.UTC)
+	gateway := NewGateway(client)
+	gateway.now = func() time.Time { return observedAt }
+	signals, err := gateway.ProbeQuota(context.Background(), "access-token", "account-id", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(signals) != 2 {
 		t.Fatalf("got %d signals, want 2", len(signals))
 	}
-	if signals[0].WindowType != domain.Window7D || signals[0].AccountUsedMicros != 18_250_000 {
+	if signals[0].WindowType != domain.Window7D || signals[0].AccountUsedMicros != 48_000_000 {
 		t.Fatalf("primary signal = %#v", signals[0])
 	}
-	if signals[1].WindowType != domain.Window5H || signals[1].AccountUsedMicros != 2_500_000 {
+	if signals[1].WindowType != domain.Window5H || signals[1].AccountUsedMicros != 12_500_000 {
 		t.Fatalf("secondary signal = %#v", signals[1])
 	}
 	if got := signals[0].ResetAt.Sub(signals[0].WindowStart); got != 7*24*time.Hour {
 		t.Fatalf("7d window duration = %v", got)
 	}
-	if got := signals[0].ResetAt; !got.Equal(time.Unix(1786581415, 0)) {
+	if got := signals[0].ResetAt; !got.Equal(observedAt.Add(288000 * time.Second)) {
 		t.Fatalf("7d reset_at = %v", got)
 	}
 	assertProbeRequest(t, captured)
 }
 
-func TestProbeQuotaReturnsStatusError(t *testing.T) {
-	for _, status := range []int{http.StatusUnauthorized, http.StatusTooManyRequests} {
+func TestProbeQuotaAcceptsCompleteHeadersBeforeErrorStatus(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		headers := make(http.Header)
+		headers.Set("x-codex-primary-used-percent", "48")
+		headers.Set("x-codex-primary-reset-after-seconds", "288000")
+		headers.Set("x-codex-primary-window-minutes", "10080")
+		headers.Set("x-codex-secondary-used-percent", "12.5")
+		headers.Set("x-codex-secondary-reset-after-seconds", "7200")
+		headers.Set("x-codex-secondary-window-minutes", "300")
+		return &http.Response{StatusCode: http.StatusTooManyRequests, Header: headers, Body: io.NopCloser(strings.NewReader("rate limited")), Request: req}, nil
+	})}
+
+	signals, err := NewGateway(client).ProbeQuota(context.Background(), "access-token", "account-id", "")
+	if err != nil || len(signals) != 2 {
+		t.Fatalf("signals = %#v, error = %v", signals, err)
+	}
+}
+
+func TestProbeQuotaRejectsNonRateLimitErrorWithCompleteHeaders(t *testing.T) {
+	for _, status := range []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusInternalServerError} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				headers := make(http.Header)
+				headers.Set("x-codex-primary-used-percent", "48")
+				headers.Set("x-codex-primary-reset-after-seconds", "288000")
+				headers.Set("x-codex-primary-window-minutes", "10080")
+				return &http.Response{StatusCode: status, Header: headers, Body: io.NopCloser(strings.NewReader("request failed")), Request: req}, nil
+			})}
+
+			signals, err := NewGateway(client).ProbeQuota(context.Background(), "access-token", "account-id", "")
+			if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("status %d", status)) {
+				t.Fatalf("signals = %#v, error = %v", signals, err)
+			}
+			if signals != nil {
+				t.Fatalf("signals = %#v, want nil", signals)
+			}
+		})
+	}
+}
+
+func TestProbeQuotaReturnsStatusErrorWithoutWeeklyWindow(t *testing.T) {
+	for _, status := range []int{http.StatusOK, http.StatusTooManyRequests} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 				return &http.Response{
 					StatusCode: status,
 					Header:     make(http.Header),
-					Body:       io.NopCloser(strings.NewReader("no quota headers")),
+					Body:       io.NopCloser(strings.NewReader("no weekly quota header")),
 					Request:    req,
 				}, nil
 			})}
 
 			signals, err := NewGateway(client).ProbeQuota(context.Background(), "access-token", "account-id", "")
-			if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("status %d", status)) {
+			if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("status %d without a valid 7d quota signal", status)) {
 				t.Fatalf("error = %v, want status %d", err, status)
 			}
 			if signals != nil {
@@ -75,53 +125,41 @@ func TestProbeQuotaReturnsStatusError(t *testing.T) {
 	}
 }
 
-func TestProbeQuotaAcceptsSingleUsageWindow(t *testing.T) {
+func TestProbeQuotaAcceptsWeeklyWindowWithoutFiveHourWindow(t *testing.T) {
 	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		headers := make(http.Header)
+		headers.Set("x-codex-primary-used-percent", "19")
+		headers.Set("x-codex-primary-reset-after-seconds", "604800")
+		headers.Set("x-codex-primary-window-minutes", "10080")
 		return &http.Response{
 			StatusCode: http.StatusOK,
-			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(`{"rate_limit":{"primary_window":{"used_percent":19,"limit_window_seconds":604800,"reset_after_seconds":120,"reset_at":1786580935},"secondary_window":null}}`)),
+			Header:     headers,
+			Body:       io.NopCloser(strings.NewReader("single 7d window")),
 			Request:    req,
 		}, nil
 	})}
 
 	signals, err := NewGateway(client).ProbeQuota(context.Background(), "access-token", "account-id", "")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("signals = %#v, error = %v", signals, err)
 	}
 	if len(signals) != 1 || signals[0].WindowType != domain.Window7D || signals[0].AccountUsedMicros != 19_000_000 {
-		t.Fatalf("signals = %#v, want one 7d signal", signals)
+		t.Fatalf("signals = %#v, want one weekly signal", signals)
 	}
 }
 
-func TestProbeQuotaRejectsMissingAndUnknownUsageWindows(t *testing.T) {
-	tests := []struct {
-		name string
-		body string
-		want string
-	}{
-		{name: "both null", body: `{"rate_limit":{"primary_window":null,"secondary_window":null}}`, want: "no quota windows"},
-		{name: "unknown duration", body: `{"rate_limit":{"primary_window":{"used_percent":2.5,"limit_window_seconds":3600,"reset_after_seconds":120,"reset_at":1786580935}}}`, want: "unknown quota window"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-				return &http.Response{
-					StatusCode: http.StatusOK,
-					Header:     make(http.Header),
-					Body:       io.NopCloser(strings.NewReader(test.body)),
-					Request:    req,
-				}, nil
-			})}
+func TestProbeQuotaRejectsFiveHourWindowWithoutWeeklyWindow(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		headers := make(http.Header)
+		headers.Set("x-codex-primary-used-percent", "19")
+		headers.Set("x-codex-primary-reset-after-seconds", "18000")
+		headers.Set("x-codex-primary-window-minutes", "300")
+		return &http.Response{StatusCode: http.StatusOK, Header: headers, Body: io.NopCloser(strings.NewReader("single 5h window")), Request: req}, nil
+	})}
 
-			signals, err := NewGateway(client).ProbeQuota(context.Background(), "access-token", "account-id", "")
-			if err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("error = %v, want %q", err, test.want)
-			}
-			if signals != nil {
-				t.Fatalf("signals = %#v, want nil", signals)
-			}
-		})
+	signals, err := NewGateway(client).ProbeQuota(context.Background(), "access-token", "account-id", "")
+	if err == nil || !strings.Contains(err.Error(), "without a valid 7d quota signal") {
+		t.Fatalf("signals = %#v, error = %v", signals, err)
 	}
 }
 
@@ -130,22 +168,19 @@ func assertProbeRequest(t *testing.T, req *http.Request) {
 	if req == nil {
 		t.Fatal("probe request was not captured")
 	}
-	if req.Method != http.MethodGet || req.URL.String() != chatGPTUsageURL || req.Host != "chatgpt.com" {
+	if req.Method != http.MethodPost || req.URL.String() != codexResponsesURL || req.Host != "chatgpt.com" {
 		t.Fatalf("request target = %s %s (Host %q)", req.Method, req.URL, req.Host)
 	}
 	wantHeaders := map[string]string{
-		"Authorization":      "Bearer access-token",
-		"Chatgpt-Account-Id": "account-id",
-		"Accept":             "application/json",
-		"OpenAI-Beta":        "codex-1",
-		"OAI-Language":       "zh-CN",
-		"Originator":         codexDefaultOriginator,
-		"Version":            codexProbeVersion,
-		"User-Agent":         codexProbeUserAgent,
-		"Priority":           "u=4, i",
-		"Sec-Fetch-Dest":     "empty",
-		"Sec-Fetch-Mode":     "no-cors",
-		"Sec-Fetch-Site":     "none",
+		"Authorization":        "Bearer access-token",
+		"Chatgpt-Account-Id":   "account-id",
+		"Content-Type":         "application/json",
+		"Accept":               "text/event-stream",
+		"OpenAI-Beta":          "responses=experimental",
+		"Originator":           codexDefaultOriginator,
+		"Version":              codexProbeVersion,
+		"User-Agent":           codexProbeUserAgent,
+		codexRoutingHintHeader: "model=" + codexProbeModel,
 	}
 	for key, want := range wantHeaders {
 		if got := req.Header.Get(key); got != want {
@@ -160,8 +195,14 @@ func assertProbeRequest(t *testing.T, req *http.Request) {
 	if remaining <= 19*time.Second || remaining > codexProbeTimeout {
 		t.Errorf("probe deadline remaining = %v", remaining)
 	}
-	if req.Body != nil {
-		t.Fatal("usage query must not send a request body")
+	var payload codexProbePayload
+	if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Model != codexProbeModel || !payload.Stream || payload.Store || len(payload.Input) != 1 ||
+		payload.Input[0].Role != "user" || len(payload.Input[0].Content) != 1 ||
+		payload.Input[0].Content[0].Type != "input_text" || payload.Input[0].Content[0].Text != "hi" {
+		t.Fatalf("probe payload = %#v", payload)
 	}
 }
 

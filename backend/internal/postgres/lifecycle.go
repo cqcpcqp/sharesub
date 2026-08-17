@@ -443,11 +443,7 @@ func (s *Store) PlanQuotaCredentialForMember(ctx context.Context, planID, userID
 func (s *Store) AccountQuotaUpdatedAt(ctx context.Context, accountID string) (time.Time, error) {
 	var updatedAt time.Time
 	err := s.pool.QueryRow(ctx, `
-		SELECT CASE
-			WHEN COUNT(DISTINCT window_type) FILTER (WHERE window_type IN ('5h','7d')) = 2
-			THEN MIN(updated_at) FILTER (WHERE window_type IN ('5h','7d'))
-			ELSE to_timestamp(0)
-		END
+		SELECT COALESCE(MAX(updated_at) FILTER (WHERE window_type='7d'),to_timestamp(0))
 		FROM account_quota_snapshots
 		WHERE account_id=$1`, accountID,
 	).Scan(&updatedAt)

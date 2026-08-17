@@ -39,15 +39,15 @@ func initializePlanAccountBinding(ctx context.Context, tx pgx.Tx, planID, accoun
 	return nil
 }
 
-func hasCompleteBindingQuotaSignals(signals []domain.QuotaSignal) bool {
+func hasRequiredBindingQuotaSignals(signals []domain.QuotaSignal) bool {
 	_, ok := orderedBindingQuotaSignals(signals)
 	return ok
 }
 
-// orderedBindingQuotaSignals both validates the fixed two-window contract and
-// gives every binding/reset transaction the same row-lock order.
+// orderedBindingQuotaSignals requires the weekly window, accepts the legacy 5h
+// window when OpenAI returns it, and gives every transaction a stable lock order.
 func orderedBindingQuotaSignals(signals []domain.QuotaSignal) ([]domain.QuotaSignal, bool) {
-	if len(signals) != 2 {
+	if len(signals) == 0 || len(signals) > 2 {
 		return nil, false
 	}
 	var fiveHour, sevenDay domain.QuotaSignal
@@ -70,10 +70,13 @@ func orderedBindingQuotaSignals(signals []domain.QuotaSignal) ([]domain.QuotaSig
 			return nil, false
 		}
 	}
-	if !has5H || !has7D {
+	if !has7D {
 		return nil, false
 	}
-	return []domain.QuotaSignal{fiveHour, sevenDay}, true
+	if has5H {
+		return []domain.QuotaSignal{fiveHour, sevenDay}, true
+	}
+	return []domain.QuotaSignal{sevenDay}, true
 }
 
 func (s *Store) CreateAPIKey(ctx context.Context, key domain.APIKey, routes []domain.APIKeyRoute) error {
@@ -326,6 +329,9 @@ func (s *Store) RecordAccountQuotaSignals(ctx context.Context, planID, accountID
 	if currentAccountID != accountID || currentGeneration != generation {
 		return domain.ErrConflict
 	}
+	if err := removeMissingOptionalQuotaWindows(ctx, tx, accountID, signals); err != nil {
+		return err
+	}
 	for _, signal := range signals {
 		signal, err = lockAndMergeAccountQuotaSignal(ctx, tx, accountID, signal)
 		if err != nil {
@@ -372,6 +378,9 @@ func (s *Store) RecordQuotaResetSignals(ctx context.Context, planID, accountID s
 	if currentAccountID != accountID || currentGeneration != generation {
 		return domain.ErrConflict
 	}
+	if err := removeMissingOptionalQuotaWindows(ctx, tx, accountID, orderedSignals); err != nil {
+		return err
+	}
 	for _, signal := range orderedSignals {
 		_, err = tx.Exec(ctx, `INSERT INTO account_quota_snapshots(account_id,window_type,window_start,reset_at,used_micros,updated_at) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(account_id,window_type) DO UPDATE SET window_start=EXCLUDED.window_start,reset_at=EXCLUDED.reset_at,used_micros=EXCLUDED.used_micros,updated_at=EXCLUDED.updated_at`, accountID, signal.WindowType, signal.WindowStart, signal.ResetAt, signal.AccountUsedMicros, now)
 		if err != nil {
@@ -391,6 +400,29 @@ func (s *Store) RecordQuotaResetSignals(ctx context.Context, planID, accountID s
 		}
 	}
 	return tx.Commit(ctx)
+}
+
+// A valid weekly-only response is the complete current quota state. Remove a
+// previously recorded optional 5h window so stale exhaustion and attribution
+// state cannot survive a refresh or an external quota reset.
+func removeMissingOptionalQuotaWindows(ctx context.Context, tx pgx.Tx, accountID string, signals []domain.QuotaSignal) error {
+	has5H, has7D := false, false
+	for _, signal := range signals {
+		switch signal.WindowType {
+		case domain.Window5H:
+			has5H = true
+		case domain.Window7D:
+			has7D = true
+		}
+	}
+	if !has7D || has5H {
+		return nil
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM plan_account_quota_baselines WHERE account_id=$1 AND window_type='5h'`, accountID); err != nil {
+		return err
+	}
+	_, err := tx.Exec(ctx, `DELETE FROM account_quota_snapshots WHERE account_id=$1 AND window_type='5h'`, accountID)
+	return err
 }
 
 func lockAndMergeAccountQuotaSignal(ctx context.Context, tx pgx.Tx, accountID string, signal domain.QuotaSignal) (domain.QuotaSignal, error) {

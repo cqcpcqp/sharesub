@@ -18,7 +18,7 @@ func TestSameQuotaWindowAllowsResetCountdownDrift(t *testing.T) {
 	}
 }
 
-func TestBindingQuotaSignalsRequireBothUniqueWindows(t *testing.T) {
+func TestBindingQuotaSignalsRequireWeeklyAndAcceptOptionalFiveHourWindow(t *testing.T) {
 	now := time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
 	fiveHour := domain.QuotaSignal{WindowType: domain.Window5H, WindowStart: now, ResetAt: now.Add(5 * time.Hour)}
 	sevenDay := domain.QuotaSignal{WindowType: domain.Window7D, WindowStart: now, ResetAt: now.Add(7 * 24 * time.Hour)}
@@ -29,13 +29,14 @@ func TestBindingQuotaSignalsRequireBothUniqueWindows(t *testing.T) {
 		want    bool
 	}{
 		{name: "complete", signals: []domain.QuotaSignal{fiveHour, sevenDay}, want: true},
+		{name: "weekly only", signals: []domain.QuotaSignal{sevenDay}, want: true},
 		{name: "missing 7d", signals: []domain.QuotaSignal{fiveHour}},
 		{name: "duplicate 5h", signals: []domain.QuotaSignal{fiveHour, fiveHour}},
 		{name: "unknown window", signals: []domain.QuotaSignal{fiveHour, {WindowType: "30d"}}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if got := hasCompleteBindingQuotaSignals(test.signals); got != test.want {
-				t.Fatalf("hasCompleteBindingQuotaSignals() = %t, want %t", got, test.want)
+			if got := hasRequiredBindingQuotaSignals(test.signals); got != test.want {
+				t.Fatalf("hasRequiredBindingQuotaSignals() = %t, want %t", got, test.want)
 			}
 		})
 	}
@@ -55,7 +56,7 @@ func TestOrderedBindingQuotaSignalsUsesStableWindowOrder(t *testing.T) {
 	}
 }
 
-func TestRecordResetQuotaSignalsRejectsIncompleteWindowsBeforeDatabaseAccess(t *testing.T) {
+func TestRecordResetQuotaSignalsRejectsMissingWeeklyWindowBeforeDatabaseAccess(t *testing.T) {
 	store := &Store{}
 	err := store.RecordQuotaResetSignals(context.Background(), "plan", "account", 1, []domain.QuotaSignal{{
 		WindowType: domain.Window5H,

@@ -538,12 +538,12 @@ func TestRecordResetQuotaSignalsUsesOwnerAccountAndForcedResetStorePath(t *testi
 	now := time.Date(2026, 8, 6, 11, 30, 0, 0, time.UTC)
 	store := &quotaProbeStore{}
 	service := &Service{store: store, now: func() time.Time { return now }}
-	signals := completeQuotaSignals(now)
+	signals := completeQuotaSignals(now)[1:]
 	probe := PlanQuotaProbe{PlanID: "plan", AccountID: "account", AccountBindingGeneration: 2}
 	if err := service.RecordResetQuotaSignals(context.Background(), probe, signals); err != nil {
 		t.Fatal(err)
 	}
-	if store.resetPlanID != "plan" || store.resetAccountID != "account" || store.resetGeneration != 2 || len(store.resetSignals) != 2 || !store.resetRecordedAt.Equal(now) {
+	if store.resetPlanID != "plan" || store.resetAccountID != "account" || store.resetGeneration != 2 || len(store.resetSignals) != 1 || !store.resetRecordedAt.Equal(now) {
 		t.Fatalf("reset recording = account %q signals %+v at %v", store.resetAccountID, store.resetSignals, store.resetRecordedAt)
 	}
 }
@@ -656,7 +656,7 @@ func TestQuotaSignalRecordingUsesPreparedBindingTuple(t *testing.T) {
 	}
 }
 
-func TestProbeAccountQuotaRequiresBothUniqueWindows(t *testing.T) {
+func TestProbeAccountQuotaRequiresWeeklyAndAcceptsOptionalFiveHourWindow(t *testing.T) {
 	now := time.Date(2026, 8, 6, 11, 30, 0, 0, time.UTC)
 	manager := testSecurityManager(t)
 	account := domain.Account{
@@ -670,6 +670,7 @@ func TestProbeAccountQuotaRequiresBothUniqueWindows(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "complete", signals: completeQuotaSignals(now)},
+		{name: "weekly only", signals: completeQuotaSignals(now)[1:]},
 		{name: "missing 7d", signals: completeQuotaSignals(now)[:1], wantErr: true},
 		{name: "duplicate 5h", signals: []domain.QuotaSignal{completeQuotaSignals(now)[0], completeQuotaSignals(now)[0]}, wantErr: true},
 		{name: "unknown", signals: []domain.QuotaSignal{{WindowType: "30d"}, completeQuotaSignals(now)[1]}, wantErr: true},
