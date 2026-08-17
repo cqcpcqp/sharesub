@@ -183,6 +183,11 @@ export interface Member {
   created_at: string
 }
 
+export interface MemberShareAllocation {
+  member_id: string
+  share_basis_points: number
+}
+
 export interface Invite {
   id: string
   plan_id: string

@@ -46,7 +46,7 @@ func newEmailVerificationHTTPServer(t *testing.T, store application.Store) *Serv
 func TestRegisterReturnsPendingVerificationContract(t *testing.T) {
 	store := &emailVerificationHTTPStore{}
 	server := newEmailVerificationHTTPServer(t, store)
-	body := `{"username":"member","email":"member@example.com","password":"strong-password","agreement":{"accepted":true,"terms_version":"2026-08-05","privacy_policy_version":"2026-08-17","acceptable_use_version":"2026-08-05"}}`
+	body := `{"username":"member","email":"member@example.com","password":"strong-password","agreement":{"accepted":true,"terms_version":"2026-08-17","privacy_policy_version":"2026-08-17","acceptable_use_version":"2026-08-05"}}`
 	request := httptest.NewRequest(http.MethodPost, "/api/auth/register", strings.NewReader(body))
 	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, request)

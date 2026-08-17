@@ -219,6 +219,11 @@ type Plan struct {
 	AccountBoundAt           *time.Time `json:"-"`
 }
 
+type MemberShareAllocation struct {
+	MemberID         string `json:"member_id"`
+	ShareBasisPoints int    `json:"share_basis_points"`
+}
+
 type Member struct {
 	ID               string    `json:"id"`
 	PlanID           string    `json:"plan_id"`

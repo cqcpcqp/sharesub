@@ -3,6 +3,7 @@ import { api } from '../api'
 import { allocationShareBasisPoints, formatShareBasisPoints, maxPlanShareBasisPoints, planApprovedPublicMemberCount, planAvailablePublicSlotCount, planPublicationShareBasisPoints, planReservedShareBasisPoints } from '../planAllocation'
 import type { Account, Member, PerformancePeriod, Plan, PlanAllocationMode, PlanDetail, User } from '../types'
 import { createPlanManagementAPI } from './planManagementAPI'
+import { usePlanConversion } from './usePlanConversion'
 import { formatPlanAuditDate, formatPlanAuditMetadata, planAuditActionLabels, planAuditMetadataLabels, planRequestErrorMessage } from './planViewPresentation'
 import { createPlanViewState } from './planViewState'
 
@@ -96,6 +97,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
   const actionLabels = planAuditActionLabels
   const metadataLabels = planAuditMetadataLabels
   const managementAPI = createPlanManagementAPI(props.adminMode)
+  const conversion = usePlanConversion(detail, isShared, actionLoading, managementAPI, loadPlan, () => emit('changed'), notifySuccess, notifyError)
 
   let planRequestSequence = 0
   let performanceRequestSequence = 0
@@ -692,5 +694,6 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
     saveShare, removeMember, leavePlan, review, renamePlan, updatePlanDescription, updatePlanStatus,
     transferOwnership, rebindAccount, handleConnectedAccount, continueDelete, closeDeleteDialogs, deletePlan, copyInvite,
     formatDate, formatMetadata,
+    ...conversion,
   }
 }

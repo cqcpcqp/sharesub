@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -372,4 +373,99 @@ func (s *Store) UpdateMemberShare(ctx context.Context, planID, ownerID, memberID
 		}
 	}
 	return m, tx.Commit(ctx)
+}
+
+func (s *Store) ConvertPlanToFixed(ctx context.Context, planID, ownerID string, allocations []domain.MemberShareAllocation, event domain.AuditEvent) (domain.Plan, error) {
+	allocationByMember := make(map[string]int, len(allocations))
+	total := 0
+	for _, allocation := range allocations {
+		if allocation.MemberID == "" || allocation.ShareBasisPoints < 0 || allocation.ShareBasisPoints > domain.MaxShareBPS {
+			return domain.Plan{}, domain.ErrInvalidInput
+		}
+		if _, exists := allocationByMember[allocation.MemberID]; exists {
+			return domain.Plan{}, domain.ErrInvalidInput
+		}
+		allocationByMember[allocation.MemberID] = allocation.ShareBasisPoints
+		total += allocation.ShareBasisPoints
+		if total > domain.MaxShareBPS {
+			return domain.Plan{}, domain.ErrShareExceeded
+		}
+	}
+
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	if err != nil {
+		return domain.Plan{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	var actualOwner, allocationMode string
+	if err = tx.QueryRow(ctx, `SELECT owner_user_id,allocation_mode FROM shared_plans WHERE id=$1 FOR UPDATE`, planID).Scan(&actualOwner, &allocationMode); err != nil {
+		return domain.Plan{}, mapError(err)
+	}
+	if actualOwner != ownerID {
+		return domain.Plan{}, domain.ErrForbidden
+	}
+	if allocationMode != domain.AllocationShared {
+		return domain.Plan{}, domain.ErrConflict
+	}
+
+	rows, err := tx.Query(ctx, `SELECT id,user_id FROM plan_members WHERE plan_id=$1 AND status='active' FOR UPDATE`, planID)
+	if err != nil {
+		return domain.Plan{}, err
+	}
+	activeMembers := make(map[string]string)
+	for rows.Next() {
+		var memberID, userID string
+		if err := rows.Scan(&memberID, &userID); err != nil {
+			rows.Close()
+			return domain.Plan{}, err
+		}
+		activeMembers[memberID] = userID
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return domain.Plan{}, err
+	}
+	rows.Close()
+	for memberID := range allocationByMember {
+		if _, exists := activeMembers[memberID]; !exists {
+			return domain.Plan{}, domain.ErrInvalidInput
+		}
+	}
+
+	if _, err = tx.Exec(ctx, `UPDATE plan_members SET share_basis_points=0,updated_at=$2 WHERE plan_id=$1 AND status='active'`, planID, event.CreatedAt); err != nil {
+		return domain.Plan{}, err
+	}
+	for memberID, share := range allocationByMember {
+		if _, err = tx.Exec(ctx, `UPDATE plan_members SET share_basis_points=$3,updated_at=$4 WHERE plan_id=$1 AND id=$2 AND status='active'`, planID, memberID, share, event.CreatedAt); err != nil {
+			return domain.Plan{}, err
+		}
+	}
+	if _, err = tx.Exec(ctx, `UPDATE plan_invites SET share_basis_points=0 WHERE plan_id=$1 AND status='pending'`, planID); err != nil {
+		return domain.Plan{}, err
+	}
+
+	plan, err := scanPlan(tx.QueryRow(ctx, `
+		UPDATE shared_plans
+		SET allocation_mode=$3,public_share_basis_points=0,updated_at=$4
+		WHERE id=$1 AND owner_user_id=$2
+		RETURNING id,owner_user_id,account_id,name,description,status,visibility,public_slots,public_share_basis_points,allocation_mode,created_at,archived_at`,
+		planID, ownerID, domain.AllocationFixed, event.CreatedAt))
+	if err != nil {
+		return domain.Plan{}, mapError(err)
+	}
+	if err := insertAuditEvent(ctx, tx, event); err != nil {
+		return domain.Plan{}, err
+	}
+	for memberID, userID := range activeMembers {
+		if userID == ownerID {
+			continue
+		}
+		share := allocationByMember[memberID]
+		message := fmt.Sprintf("Plan 已改为固定分配，你当前的额度份额为 %.2f%%", float64(share)/100)
+		if err := insertNotification(ctx, tx, event.ID+":member:"+memberID, userID, "plan_allocation_mode_changed", "Plan 已改为固定分配", message, "plan", planID, event.CreatedAt); err != nil {
+			return domain.Plan{}, err
+		}
+	}
+	return plan, tx.Commit(ctx)
 }

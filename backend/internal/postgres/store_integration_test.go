@@ -1021,6 +1021,32 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if exhausted, err := store.MemberQuotaExhausted(ctx, "shared-member", sharedPlan.ID, sharedPlan.AccountID, 1, 10000, now.Add(time.Minute)); err != nil || exhausted {
 		t.Fatalf("member quota after official reset exhausted = %v, %v", exhausted, err)
 	}
+	if _, err := store.ConvertPlanToFixed(ctx, sharedPlan.ID, "owner", []domain.MemberShareAllocation{{MemberID: "missing-member", ShareBasisPoints: 1000}}, audit("invalid-convert-shared", "owner", sharedPlan.ID)); !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("invalid conversion member error = %v, want invalid input", err)
+	}
+	converted, err := store.ConvertPlanToFixed(ctx, sharedPlan.ID, "owner", []domain.MemberShareAllocation{
+		{MemberID: "shared-owner-member", ShareBasisPoints: 3000},
+		{MemberID: "shared-member", ShareBasisPoints: 4000},
+	}, audit("convert-shared", "owner", sharedPlan.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if converted.AllocationMode != domain.AllocationFixed || converted.PublicShareBasisPoints != 0 {
+		t.Fatalf("converted Plan = %+v", converted)
+	}
+	var ownerShare, memberShare int
+	if err := pool.QueryRow(ctx, `SELECT share_basis_points FROM plan_members WHERE id='shared-owner-member'`).Scan(&ownerShare); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT share_basis_points FROM plan_members WHERE id='shared-member'`).Scan(&memberShare); err != nil {
+		t.Fatal(err)
+	}
+	if ownerShare != 3000 || memberShare != 4000 {
+		t.Fatalf("converted shares = owner %d, member %d", ownerShare, memberShare)
+	}
+	if _, err := store.ConvertPlanToFixed(ctx, sharedPlan.ID, "owner", nil, audit("duplicate-convert-shared", "owner", sharedPlan.ID)); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("duplicate conversion error = %v, want conflict", err)
+	}
 
 	transferred, err := store.TransferPlanOwnership(ctx, sharedPlan.ID, "owner", "shared-member", audit("transfer-shared", "owner", sharedPlan.ID))
 	if err != nil {

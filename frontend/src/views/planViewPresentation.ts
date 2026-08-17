@@ -6,6 +6,7 @@ export const planAuditActionLabels: Record<string, string> = {
   'plan.renamed': '更新了 Plan 名称',
   'plan.description_updated': '更新了 Plan 描述',
   'plan.publication_updated': '更新了大厅发布设置',
+  'plan.allocation_mode_changed': '将额度方式改为固定分配',
   'plan.archived': '归档了 Plan',
   'plan.restored': '恢复了 Plan',
   'plan.deleted': '删除了 Plan',
@@ -36,6 +37,7 @@ export const planAuditMetadataLabels: Record<string, string> = {
   public_slots: '公开招募名额',
   public_share_basis_points: '每人份额',
   share_basis_points: '成员份额',
+  allocation_mode: '额度方式',
 }
 
 const dateFormatter = new Intl.DateTimeFormat('zh-CN', {
@@ -54,6 +56,7 @@ export function formatPlanAuditDate(value: string) {
 export function formatPlanAuditMetadata(key: string | number, value: string | number) {
   if (key === 'share_basis_points' || key === 'public_share_basis_points') return formatShareBasisPoints(Number(value))
   if (key === 'visibility') return value === 'public' ? '公开' : '私密'
+  if (key === 'allocation_mode') return value === 'fixed' ? '固定分配' : '共享使用'
   return String(value)
 }
 
@@ -61,6 +64,7 @@ export function planRequestErrorMessage(value: unknown) {
   if (value instanceof APIRequestError) {
     if (value.code === 'account_already_bound') return '这个 OpenAI 账号已绑定其他 Plan，请先删除或更换其中一个 Plan'
     if (value.code === 'share_exceeded') return '分配份额已超过 100%，请刷新 Plan 后减少成员、邀请或公开招募预留额度'
+    if (value.code === 'conflict') return 'Plan 状态已发生变化，请刷新后重试'
     return value.message
   }
   return value instanceof Error ? value.message : String(value)

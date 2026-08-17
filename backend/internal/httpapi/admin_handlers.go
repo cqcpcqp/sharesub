@@ -134,13 +134,26 @@ func (s *Server) adminListPlanAuditEvents(w http.ResponseWriter, r *http.Request
 
 func (s *Server) adminUpdatePlan(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Name        *string `json:"name"`
-		Description *string `json:"description"`
+		Name              *string                        `json:"name"`
+		Description       *string                        `json:"description"`
+		AllocationMode    *string                        `json:"allocation_mode"`
+		MemberAllocations []domain.MemberShareAllocation `json:"member_allocations"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	if (input.Name == nil) == (input.Description == nil) {
+	operationCount := 0
+	if input.Name != nil {
+		operationCount++
+	}
+	if input.Description != nil {
+		operationCount++
+	}
+	if input.AllocationMode != nil {
+		operationCount++
+	}
+	invalidAllocationPayload := (input.AllocationMode == nil) != (input.MemberAllocations == nil)
+	if operationCount != 1 || invalidAllocationPayload {
 		writeError(w, domain.ErrInvalidInput)
 		return
 	}
@@ -150,8 +163,12 @@ func (s *Server) adminUpdatePlan(w http.ResponseWriter, r *http.Request) {
 	)
 	if input.Name != nil {
 		v, err = s.app.AdminRenamePlan(r.Context(), currentUser(r), r.PathValue("planID"), *input.Name)
-	} else {
+	} else if input.Description != nil {
 		v, err = s.app.AdminUpdatePlanDescription(r.Context(), currentUser(r), r.PathValue("planID"), *input.Description)
+	} else if *input.AllocationMode == domain.AllocationFixed {
+		v, err = s.app.AdminConvertPlanToFixed(r.Context(), currentUser(r), r.PathValue("planID"), input.MemberAllocations)
+	} else {
+		err = domain.ErrInvalidInput
 	}
 	writeResult(w, v, err)
 }

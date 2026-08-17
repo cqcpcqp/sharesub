@@ -61,6 +61,38 @@ func (s *Service) ListPlans(ctx context.Context, userID string) ([]domain.Plan, 
 	return s.store.ListPlans(ctx, userID)
 }
 
+func validateMemberShareAllocations(allocations []domain.MemberShareAllocation) error {
+	seen := make(map[string]struct{}, len(allocations))
+	total := 0
+	for _, allocation := range allocations {
+		if allocation.MemberID == "" || allocation.ShareBasisPoints < 0 || allocation.ShareBasisPoints > domain.MaxShareBPS {
+			return domain.ErrInvalidInput
+		}
+		if _, exists := seen[allocation.MemberID]; exists {
+			return domain.ErrInvalidInput
+		}
+		seen[allocation.MemberID] = struct{}{}
+		total += allocation.ShareBasisPoints
+		if total > domain.MaxShareBPS {
+			return domain.ErrShareExceeded
+		}
+	}
+	return nil
+}
+
+func (s *Service) ConvertPlanToFixed(ctx context.Context, ownerID, planID string, allocations []domain.MemberShareAllocation) (domain.Plan, error) {
+	if err := validateMemberShareAllocations(allocations); err != nil {
+		return domain.Plan{}, err
+	}
+	event, err := s.newAuditEvent(ownerID, "plan.allocation_mode_changed", "plan", planID, map[string]any{
+		"allocation_mode": domain.AllocationFixed,
+	})
+	if err != nil {
+		return domain.Plan{}, err
+	}
+	return s.store.ConvertPlanToFixed(ctx, planID, ownerID, allocations, event)
+}
+
 func (s *Service) PlanDetail(ctx context.Context, userID, planID, timezone string) (domain.PlanDetail, error) {
 	if timezone == "" {
 		timezone = "UTC"

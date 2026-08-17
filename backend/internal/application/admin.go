@@ -231,6 +231,23 @@ func (s *Service) AdminUpdatePlanDescription(ctx context.Context, admin domain.U
 	return s.store.UpdatePlanDescription(ctx, planID, plan.OwnerUserID, description, event)
 }
 
+func (s *Service) AdminConvertPlanToFixed(ctx context.Context, admin domain.User, planID string, allocations []domain.MemberShareAllocation) (domain.Plan, error) {
+	if err := validateMemberShareAllocations(allocations); err != nil {
+		return domain.Plan{}, err
+	}
+	plan, err := s.adminPlan(ctx, admin, planID)
+	if err != nil {
+		return domain.Plan{}, err
+	}
+	event, err := s.newAuditEvent(admin.ID, "plan.allocation_mode_changed", "plan", planID, map[string]any{
+		"allocation_mode": domain.AllocationFixed,
+	})
+	if err != nil {
+		return domain.Plan{}, err
+	}
+	return s.store.ConvertPlanToFixed(ctx, planID, plan.OwnerUserID, allocations, event)
+}
+
 func (s *Service) AdminUpdatePlanStatus(ctx context.Context, admin domain.User, planID, status string) (domain.Plan, error) {
 	if status != domain.StatusActive && status != domain.StatusArchived {
 		return domain.Plan{}, domain.ErrInvalidInput

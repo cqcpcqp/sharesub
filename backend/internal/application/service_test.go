@@ -96,6 +96,22 @@ type planMetadataStore struct {
 	event       domain.AuditEvent
 }
 
+type convertPlanStore struct {
+	Store
+	planID      string
+	ownerID     string
+	allocations []domain.MemberShareAllocation
+	event       domain.AuditEvent
+}
+
+func (s *convertPlanStore) ConvertPlanToFixed(_ context.Context, planID, ownerID string, allocations []domain.MemberShareAllocation, event domain.AuditEvent) (domain.Plan, error) {
+	s.planID = planID
+	s.ownerID = ownerID
+	s.allocations = allocations
+	s.event = event
+	return domain.Plan{ID: planID, OwnerUserID: ownerID, AllocationMode: domain.AllocationFixed}, nil
+}
+
 func (s *planMetadataStore) UpdatePlanDescription(_ context.Context, _, _ string, description string, event domain.AuditEvent) (domain.Plan, error) {
 	s.description = description
 	s.event = event
@@ -973,6 +989,53 @@ func TestUpdatePlanDescriptionRejectsMoreThanTwoThousandCharacters(t *testing.T)
 	}
 	if store.description != "" {
 		t.Fatal("invalid description was persisted")
+	}
+}
+
+func TestConvertPlanToFixedValidatesAndPersistsAllocations(t *testing.T) {
+	store := &convertPlanStore{}
+	service := &Service{store: store, now: func() time.Time { return time.Unix(0, 0) }}
+	allocations := []domain.MemberShareAllocation{
+		{MemberID: "owner-member", ShareBasisPoints: 4000},
+		{MemberID: "member", ShareBasisPoints: 2500},
+	}
+
+	plan, err := service.ConvertPlanToFixed(context.Background(), "owner-id", "plan-id", allocations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.AllocationMode != domain.AllocationFixed || store.planID != "plan-id" || store.ownerID != "owner-id" {
+		t.Fatalf("plan = %+v, stored plan = %q, owner = %q", plan, store.planID, store.ownerID)
+	}
+	if len(store.allocations) != 2 || store.allocations[1].ShareBasisPoints != 2500 {
+		t.Fatalf("allocations = %+v", store.allocations)
+	}
+	if store.event.Action != "plan.allocation_mode_changed" || store.event.ResourceID != "plan-id" {
+		t.Fatalf("event = %+v", store.event)
+	}
+}
+
+func TestConvertPlanToFixedRejectsInvalidAllocations(t *testing.T) {
+	tests := []struct {
+		name        string
+		allocations []domain.MemberShareAllocation
+		want        error
+	}{
+		{name: "missing member", allocations: []domain.MemberShareAllocation{{ShareBasisPoints: 100}}, want: domain.ErrInvalidInput},
+		{name: "duplicate member", allocations: []domain.MemberShareAllocation{{MemberID: "member", ShareBasisPoints: 100}, {MemberID: "member", ShareBasisPoints: 200}}, want: domain.ErrInvalidInput},
+		{name: "share exceeded", allocations: []domain.MemberShareAllocation{{MemberID: "one", ShareBasisPoints: 6000}, {MemberID: "two", ShareBasisPoints: 5000}}, want: domain.ErrShareExceeded},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := &convertPlanStore{}
+			service := &Service{store: store, now: time.Now}
+			if _, err := service.ConvertPlanToFixed(context.Background(), "owner", "plan", test.allocations); !errors.Is(err, test.want) {
+				t.Fatalf("ConvertPlanToFixed() error = %v, want %v", err, test.want)
+			}
+			if store.planID != "" {
+				t.Fatal("invalid conversion was persisted")
+			}
+		})
 	}
 }
 

@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	CurrentTermsVersion          = "2026-08-05"
+	CurrentTermsVersion          = "2026-08-17"
 	CurrentPrivacyPolicyVersion  = "2026-08-17"
 	CurrentAcceptableUseVersion  = "2026-08-05"
 	emailVerificationPrefix      = "ss_verify_"

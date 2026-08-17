@@ -215,6 +215,42 @@ describe('form interactions', () => {
     expect(wrapper.text()).toContain('绑定 OpenAI 账号')
   })
 
+  it('converts a shared Plan to fixed member allocations', async () => {
+    const sharedDetail: PlanDetail = {
+      ...memberDetail,
+      plan: { ...memberDetail.plan, id: 'plan-convert', account_id: '', allocation_mode: 'shared' },
+      account: null,
+      members: memberDetail.members.map(item => ({ ...item, plan_id: 'plan-convert', share_basis_points: 0 })),
+    }
+    const fixedDetail: PlanDetail = {
+      ...sharedDetail,
+      plan: { ...sharedDetail.plan, allocation_mode: 'fixed' },
+      members: sharedDetail.members.map((item, index) => ({ ...item, share_basis_points: index === 0 ? 6000 : 2500 })),
+    }
+    vi.spyOn(api, 'plan').mockResolvedValueOnce(sharedDetail).mockResolvedValueOnce(fixedDetail)
+    const convert = vi.spyOn(api, 'convertPlanToFixed').mockResolvedValue(fixedDetail.plan)
+    const scope = effectScope()
+    const view = scope.run(() => usePlansView(reactive({ accounts: [], plans: [sharedDetail.plan], user: owner, initialPlanId: '', invitePlanId: '' }), vi.fn()))!
+
+    await flushPromises()
+    view.openConvertToFixed()
+    view.updateConversionShare(sharedDetail.members[0].id, 60)
+    view.updateConversionShare(sharedDetail.members[1].id, 25)
+
+    expect(view.conversionAllocatedBasisPoints.value).toBe(8500)
+    expect(view.maxConversionSharePercent(sharedDetail.members[1].id)).toBe(40)
+    expect(view.canConvertToFixed.value).toBe(true)
+    await view.convertPlanToFixed()
+
+    expect(convert).toHaveBeenCalledWith(sharedDetail.plan.id, [
+      { member_id: sharedDetail.members[0].id, share_basis_points: 6000 },
+      { member_id: sharedDetail.members[1].id, share_basis_points: 2500 },
+    ])
+    expect(view.detail.value?.plan.allocation_mode).toBe('fixed')
+    expect(view.showConvertToFixed.value).toBe(false)
+    scope.stop()
+  })
+
   it('does not refresh quota before the Plan has an account', async () => {
     vi.spyOn(api, 'plan').mockResolvedValue(unboundDetail)
     const refreshQuota = vi.spyOn(api, 'refreshPlanQuota')

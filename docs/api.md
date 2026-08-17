@@ -100,7 +100,7 @@ OAuth 开始接口返回 `authorization_url` 和 `flow_id`。完成授权后，�
 | `GET` | `/api/plans/{planID}` | 登录 Token | 无 | 获取当前成员可见的方案详情 |
 | `GET` | `/api/plans/{planID}/performance` | 登录 Token | `period`, `timezone` | 获取当前成员可见的性能、模型分布、Token 趋势及最近使用汇总；`period` 固定为 `today`、`30m`、`6h`、`12h` 或 `24h`；本日边界按 IANA 时区计算 |
 | `GET` | `/api/plans/{planID}/errors` | 登录 Token | `period`, `timezone`, `page`, `page_size` | 分页获取与成功率同口径的非 2xx 请求明细；`page_size` 为 `1..100` |
-| `PATCH` | `/api/plans/{planID}` | 登录 Token | `name` 或 `description`（只传一个） | 房主修改 Plan 名称或描述 |
+| `PATCH` | `/api/plans/{planID}` | 登录 Token | `name`、`description`，或 `allocation_mode` + `member_allocations`（三种操作只传一种） | 房主修改名称/描述，或将共享 Plan 转为固定分配 |
 | `PATCH` | `/api/plans/{planID}/status` | 登录 Token | `status` | 房主归档或恢复 Plan |
 | `DELETE` | `/api/plans/{planID}` | 登录 Token | 无 | 删除已经归档的 Plan |
 | `PATCH` | `/api/plans/{planID}/owner` | 登录 Token | `member_id` | 将房主身份转让给有效成员 |
@@ -124,7 +124,7 @@ OAuth 开始接口返回 `authorization_url` 和 `flow_id`。完成授权后，�
 
 邀请 Token 以 `ss_invite_` 开头，有效期为 7 天，只能由一个用户领取。创建邀请固定返回 `invite` 和 `invite_url`；链接使用 `/#/invite/<token>` fragment，完整 Token 不作为独立 JSON 字段返回，也不会进入服务端请求路径。邀请不绑定邮箱，拿到链接的用户可使用任意有效账号登录或注册后领取。
 
-`allocation_mode` 为 `fixed` 或 `shared`，创建后不可更改。`fixed` 要求房主、成员、邀请和公开席位份额为 `0..10000`；`shared` 要求这些份额字段严格为 `0`。固定份额为 `0` 的成员可查看 Plan，但不能通过该 Plan 发起请求。
+`allocation_mode` 为 `fixed` 或 `shared`。共享 Plan 可通过 `PATCH /api/plans/{planID}` 单向转换为固定分配：请求固定传 `allocation_mode: "fixed"`，`member_allocations` 为成员 ID 与 `share_basis_points` 的数组；未列出成员按 `0` 处理，重复、非当前有效成员或总份额超过 `10000` 的输入会被拒绝。转换在同一事务中把待接受邀请和公开席位份额保持为 `0`，且不会重置当前 5 小时或 7 天窗口中的历史成员用量。固定 Plan 不能改回共享模式。`fixed` 要求房主、成员、邀请和公开席位份额为 `0..10000`；`shared` 要求这些份额字段严格为 `0`。固定份额为 `0` 的成员可查看 Plan，但不能通过该 Plan 发起请求。
 
 Plan 响应固定包含 `description` 字符串。描述允许为空，最多 2000 个字符；修改名称或描述时只能提交对应的一个字段。`visibility` 为 `private` 或 `public`。公开时席位数为 `1..100`；固定分配模式的每席份额为 `0..10000`，共享模式为 `0`。取消公开时席位数和份额都传 `0`。`decision` 为 `approve` 或 `reject`。批准会按 Plan 的额度方式立即创建成员。
 
@@ -196,7 +196,7 @@ Plan 详情的 `insights.window_usage` 按当前 OpenAI 账号实际返回的 5h
 | `GET` | `/api/admin/plans/{planID}/performance` | 管理员 Token | `period`, `timezone` | 获取任意 Plan 的性能与用量汇总 |
 | `GET` | `/api/admin/plans/{planID}/errors` | 管理员 Token | `period`, `timezone`, `page`, `page_size` | 获取任意 Plan 的非 2xx 请求明细 |
 | `GET` | `/api/admin/plans/{planID}/audit-events` | 管理员 Token | 无 | 获取任意 Plan 的活动记录 |
-| `PATCH` | `/api/admin/plans/{planID}` | 管理员 Token | `name` 或 `description`（只传一个） | 修改任意 Plan 的名称或描述 |
+| `PATCH` | `/api/admin/plans/{planID}` | 管理员 Token | `name`、`description`，或 `allocation_mode` + `member_allocations`（三种操作只传一种） | 修改名称/描述，或将任意共享 Plan 转为固定分配 |
 | `PATCH` | `/api/admin/plans/{planID}/status` | 管理员 Token | `status` | 归档或恢复任意 Plan |
 | `DELETE` | `/api/admin/plans/{planID}` | 管理员 Token | 无 | 永久删除任意已归档 Plan |
 | `PATCH` | `/api/admin/plans/{planID}/owner` | 管理员 Token | `member_id` | 将任意 Plan 的房主身份转让给有效成员 |

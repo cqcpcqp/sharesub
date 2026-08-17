@@ -17,5 +17,7 @@ describe('modal layout', () => {
 
     expect(source).toContain('aria-modal="true"')
     expect(source).not.toContain(':trap-focus="false"')
+    expect(source).toContain('<div class="modal"')
+    expect(source).not.toContain('<section class="modal"')
   })
 })

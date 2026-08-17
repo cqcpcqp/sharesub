@@ -73,6 +73,7 @@ type PlanManagementStore interface {
 	CreatePlan(context.Context, domain.Plan, domain.Member, []domain.QuotaSignal, time.Time, domain.AuditEvent) error
 	RenamePlan(context.Context, string, string, string, domain.AuditEvent) (domain.Plan, error)
 	UpdatePlanDescription(context.Context, string, string, string, domain.AuditEvent) (domain.Plan, error)
+	ConvertPlanToFixed(context.Context, string, string, []domain.MemberShareAllocation, domain.AuditEvent) (domain.Plan, error)
 	UpdatePlanStatus(context.Context, string, string, string, domain.AuditEvent) (domain.Plan, error)
 	DeletePlan(context.Context, string, string, domain.AuditEvent) error
 	TransferPlanOwnership(context.Context, string, string, string, domain.AuditEvent) (domain.Plan, error)

@@ -221,6 +221,27 @@
   justify-self: end;
 }
 
+.allocation-conversion-action {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.allocation-conversion-action > div {
+  display: grid;
+  gap: 4px;
+}
+
+.allocation-conversion-action strong {
+  color: var(--ink-strong);
+  font-size: 11px;
+}
+
+.allocation-conversion-action small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 .setting-fields {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 128px;
@@ -318,6 +339,89 @@
 .invite-composer {
   display: grid;
   gap: 18px;
+}
+
+.conversion-dialog {
+  display: grid;
+  gap: 18px;
+}
+
+.conversion-member-list {
+  max-height: min(430px, 52vh);
+  overflow-y: auto;
+  border-top: 1px solid var(--line-soft);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.conversion-member-row {
+  min-width: 0;
+  min-height: 64px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 104px;
+  align-items: center;
+  gap: 18px;
+  padding: 12px 2px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.conversion-member-row:last-child {
+  border-bottom: 0;
+}
+
+.conversion-member-identity {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.conversion-member-identity > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.conversion-member-identity strong {
+  overflow: hidden;
+  color: var(--ink-strong);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversion-member-identity small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.conversion-summary {
+  display: grid;
+  gap: 6px;
+  padding: 12px 13px;
+  border: 1px solid var(--info-border);
+  border-radius: 7px;
+  background: var(--info-surface);
+}
+
+.conversion-summary > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.conversion-summary span,
+.conversion-summary small {
+  color: var(--info-ink);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.conversion-summary strong {
+  color: var(--teal);
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
 }
 
 .invite-composer > label {
@@ -545,12 +649,14 @@
   }
 
   .setting-action-inline,
-  .setting-fields {
+  .setting-fields,
+  .allocation-conversion-action {
     grid-template-columns: 1fr;
   }
 
   .setting-action-inline > .n-button,
-  .setting-submit {
+  .setting-submit,
+  .allocation-conversion-action > .n-button {
     width: 100%;
   }
 }

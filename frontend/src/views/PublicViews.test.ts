@@ -2,6 +2,7 @@
 
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
+import { agreementVersions } from '../agreements'
 import LegalDocumentView from './LegalDocumentView.vue'
 import PublicHomeView from './PublicHomeView.vue'
 
@@ -24,7 +25,8 @@ describe('public pages', () => {
   ] as const)('renders the public %s document', (page, title) => {
     const wrapper = mount(LegalDocumentView, { props: { page } })
     expect(wrapper.text()).toContain(title)
-    expect(wrapper.text()).toContain(page === 'privacy' ? '2026-08-17' : '2026-08-05')
+    const version = page === 'terms' ? agreementVersions.terms : page === 'privacy' ? agreementVersions.privacy : agreementVersions.acceptableUse
+    expect(wrapper.text()).toContain(version)
     expect(wrapper.findAll('h1')).toHaveLength(1)
     expect(wrapper.find('aside h2').text()).toBe(title)
   })

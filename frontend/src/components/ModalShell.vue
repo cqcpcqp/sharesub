@@ -1,10 +1,10 @@
 <template>
   <NModal :show="true" :mask-closable="closable" :close-on-esc="closable" @update:show="handleShowChange">
-    <section class="modal" :class="{ wide, 'extra-wide': extraWide }" role="dialog" aria-modal="true" :aria-labelledby="titleID">
+    <div class="modal" :class="{ wide, 'extra-wide': extraWide }" role="dialog" aria-modal="true" :aria-labelledby="titleID">
       <header><div><h2 :id="titleID">{{ title }}</h2><p v-if="subtitle">{{ subtitle }}</p></div><NButton v-if="closable" quaternary class="icon-button" title="关闭" aria-label="关闭" @click="$emit('close')"><template #icon><X :size="19" /></template></NButton></header>
       <slot />
       <footer v-if="$slots.footer"><slot name="footer" /></footer>
-    </section>
+    </div>
   </NModal>
 </template>
 

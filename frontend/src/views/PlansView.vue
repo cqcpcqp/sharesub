@@ -290,6 +290,17 @@
                     <p>以下操作会影响 Plan 的归属或请求路由。</p>
                   </header>
 
+                  <div v-if="isShared" class="setting-row">
+                    <div class="setting-identity">
+                      <span class="setting-icon setting-icon-amber"><SlidersHorizontal :size="18" /></span>
+                      <div><h4>转换为固定分配</h4><p>为部分成员设置个人份额，未分配成员将保留查看权限但停止使用额度</p></div>
+                    </div>
+                    <div class="setting-action allocation-conversion-action">
+                      <div><strong>当前为共享使用</strong><small>转换后不可改回共享使用；当前额度窗口中的历史用量会继续计入成员额度。</small></div>
+                      <NButton secondary type="warning" @click="openConvertToFixed">配置并转换</NButton>
+                    </div>
+                  </div>
+
                   <div class="setting-row">
                     <div class="setting-identity">
                       <span class="setting-icon"><Replace :size="18" /></span>
@@ -370,7 +381,7 @@
     </main>
   </section>
 
-  <ModalShell v-if="showCreate && !adminMode" title="创建共享 Plan" subtitle="账号可稍后绑定；额度方式创建后不可更改" @close="showCreate = false">
+  <ModalShell v-if="showCreate && !adminMode" title="创建共享 Plan" subtitle="共享使用可稍后转换为固定分配，转换后不可撤销" @close="showCreate = false">
     <label>Plan 名称<AppInput :value="createForm.name" clearable :maxlength="100" placeholder="给这个共享空间起个名字" @update:value="updateCreateName" /></label>
     <label>OpenAI 账号 <span class="optional-field">可选</span><NSelect :value="createForm.accountID || null" :options="accountOptions" clearable to="body" placeholder="暂不绑定，创建后再设置" @update:value="updateCreateAccount" /></label>
     <label>额度方式
@@ -389,6 +400,39 @@
       <NButton type="primary" :disabled="!createForm.name.trim()" :loading="actionLoading === 'create-plan'" @click="createPlan">
         <template #icon><Check :size="17" /></template>
         创建
+      </NButton>
+    </template>
+  </ModalShell>
+
+  <ModalShell v-if="showConvertToFixed && detail" title="转换为固定分配" :subtitle="`${detail.plan.name} · 为现有成员设置额度份额`" wide @close="showConvertToFixed = false">
+    <div class="conversion-dialog">
+      <NAlert type="warning" :show-icon="true">
+        转换会立即生效且不能改回共享使用。成员在当前 5 小时和 7 天窗口中的历史用量将继续计入新份额。
+      </NAlert>
+      <div class="conversion-member-list">
+        <div v-for="member in detail.members" :key="member.id" class="conversion-member-row">
+          <div class="conversion-member-identity">
+            <UserAvatar :size="34" :username="member.username" :src="member.avatar_url" />
+            <div><strong>{{ member.username }}</strong><small>{{ member.role === 'owner' ? '房主' : '成员' }} · 设为 0% 时仅可查看</small></div>
+          </div>
+          <SharePicker
+            :model-value="conversionShareDrafts[member.id]"
+            :max="maxConversionSharePercent(member.id)"
+            compact
+            :aria-label="`${member.username} 的转换份额`"
+            @update:model-value="updateConversionShare(member.id, $event)"
+          />
+        </div>
+      </div>
+      <div class="conversion-summary" aria-live="polite">
+        <div><span>已分配</span><strong>{{ formatShareBasisPoints(conversionAllocatedBasisPoints) }}</strong></div>
+        <small>剩余 {{ formatShareBasisPoints(10000 - conversionAllocatedBasisPoints) }} 可在转换后继续分配；待领取邀请和公开席位保持 0%。</small>
+      </div>
+    </div>
+    <template #footer>
+      <NButton @click="showConvertToFixed = false">取消</NButton>
+      <NButton type="warning" :disabled="!canConvertToFixed" :loading="actionLoading === 'convert-fixed'" @click="convertPlanToFixed">
+        确认转换
       </NButton>
     </template>
   </ModalShell>
@@ -506,6 +550,7 @@ import OpenAIAccountConnectDialog from '../components/OpenAIAccountConnectDialog
 import PlanInsights from '../components/PlanInsights.vue'
 import SharePicker from '../components/SharePicker.vue'
 import StatusBadge from '../components/StatusBadge.vue'
+import UserAvatar from '../components/UserAvatar.vue'
 import PlanMembersTab from './PlanMembersTab.vue'
 import { usePlansView } from './usePlansView'
 import type { PlansViewComponentEmits, PlansViewComponentProps } from './plansViewContract'
@@ -521,17 +566,17 @@ const {
   detail, planLoading, quotaRefreshing, quotaResetCredits, quotaResetCreditsLoading, quotaResetting,
   performanceLoading, performancePeriod, actionLoading, activeTab, auditEvents, auditLoading,
   loadPlan, loadAudit, loadPerformance,
-  showCreate, showConnectAccount, showInviteComposer, inviteSecret, showDeleteConfirmOne, showDeleteConfirmTwo,
+  showCreate, showConnectAccount, showInviteComposer, showConvertToFixed, inviteSecret, showDeleteConfirmOne, showDeleteConfirmTwo,
   deleteNameDraft, renameDraft, descriptionDraft, transferMemberID, rebindAccountID, createForm, inviteForm,
-  publication, shareDrafts, accountOptions, planOptions, isActualOwner, canManage, isShared, isArchived, isAccountBound, owner, currentMember,
+  publication, shareDrafts, conversionShareDrafts, accountOptions, planOptions, isActualOwner, canManage, isShared, isArchived, isAccountBound, owner, currentMember,
   allocatedShare, reservedShares, remainingInviteSharePercent, canCreateInvite, approvedPublicMembers, availablePublicSlots, publicationAvailablePublicSlots,
   publicationReservedShares, maxPublicSeatSharePercent, publicationCapacityExceeded,
-  canRename, canUpdateDescription, canSavePublication,
+  canRename, canUpdateDescription, canSavePublication, conversionAllocatedBasisPoints, canConvertToFixed,
   canConfirmDelete, transferMemberOptions, rebindAccountOptions, actionLabels, metadataLabels,
   setPublicationVisibility, updateRenameDraft, updateDescriptionDraft, updateDeleteNameDraft, updatePublicationSlots,
   updatePublicationShare, updateRebindAccount, updateTransferMember, updateCreateName,
-  updateCreateAccount, updateCreateAllocationMode, updateCreateShare, updateInviteShare,
-  handleTabChange, openCreate, createPlan, refreshQuota, queryQuotaResetCredits, resetQuota, sendInvite, revokeInvite, savePublication,
+  updateCreateAccount, updateCreateAllocationMode, updateCreateShare, updateInviteShare, updateConversionShare, maxConversionSharePercent,
+  handleTabChange, openCreate, createPlan, openConvertToFixed, convertPlanToFixed, refreshQuota, queryQuotaResetCredits, resetQuota, sendInvite, revokeInvite, savePublication,
   saveShare, removeMember, leavePlan, review, renamePlan, updatePlanDescription, updatePlanStatus,
   transferOwnership, rebindAccount, handleConnectedAccount, continueDelete, closeDeleteDialogs, deletePlan, copyInvite,
   formatDate, formatMetadata,

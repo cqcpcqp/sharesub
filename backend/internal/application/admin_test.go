@@ -22,6 +22,7 @@ type adminStore struct {
 	planEvent           domain.AuditEvent
 	planQueryUserID     string
 	planMemberID        string
+	planAllocations     []domain.MemberShareAllocation
 	reviewPlanID        string
 	reviewApplicationID string
 	updatedUserID       string
@@ -113,6 +114,10 @@ func (s *adminStore) TransferPlanOwnership(_ context.Context, planID, ownerID, m
 func (s *adminStore) UpdateMemberShare(_ context.Context, planID, ownerID, memberID string, share int, event domain.AuditEvent) (domain.Member, error) {
 	s.planOwnerID, s.planMemberID, s.planEvent = ownerID, memberID, event
 	return domain.Member{ID: memberID, PlanID: planID, ShareBasisPoints: share}, nil
+}
+func (s *adminStore) ConvertPlanToFixed(_ context.Context, planID, ownerID string, allocations []domain.MemberShareAllocation, event domain.AuditEvent) (domain.Plan, error) {
+	s.planOwnerID, s.planAllocations, s.planEvent = ownerID, allocations, event
+	return domain.Plan{ID: planID, OwnerUserID: ownerID, AllocationMode: domain.AllocationFixed}, nil
 }
 func (s *adminStore) ReviewJoinApplication(_ context.Context, ownerID, expectedPlanID, applicationID string, approve bool, _ string, _ time.Time, event domain.AuditEvent) (domain.JoinApplication, error) {
 	s.planOwnerID, s.reviewPlanID, s.reviewApplicationID, s.planEvent = ownerID, expectedPlanID, applicationID, event
@@ -221,6 +226,10 @@ func TestAdminPlanAccessKeepsOwnerScopeAndAdminAuditActor(t *testing.T) {
 	member, err := service.AdminUpdateMemberShare(context.Background(), admin, "plan", "member", 2500)
 	if err != nil || member.ShareBasisPoints != 2500 || store.planOwnerID != "owner" || store.planEvent.ActorUserID != admin.ID {
 		t.Fatalf("member = %+v, owner = %q, event = %+v, error = %v", member, store.planOwnerID, store.planEvent, err)
+	}
+	converted, err := service.AdminConvertPlanToFixed(context.Background(), admin, "plan", []domain.MemberShareAllocation{{MemberID: "member", ShareBasisPoints: 2500}})
+	if err != nil || converted.AllocationMode != domain.AllocationFixed || store.planOwnerID != "owner" || len(store.planAllocations) != 1 || store.planEvent.ActorUserID != admin.ID {
+		t.Fatalf("converted = %+v, owner = %q, allocations = %+v, event = %+v, error = %v", converted, store.planOwnerID, store.planAllocations, store.planEvent, err)
 	}
 	application, err := service.AdminReviewJoinApplication(context.Background(), admin, "plan", "application", true)
 	if err != nil || application.PlanID != "plan" || store.reviewPlanID != "plan" || store.reviewApplicationID != "application" || store.planOwnerID != "owner" || store.planEvent.ActorUserID != admin.ID {
