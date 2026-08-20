@@ -44,3 +44,14 @@ func applyCodexOAuthIdentity(headers http.Header, version string) {
 	headers.Set("Version", version)
 	headers.Set("User-Agent", codexDefaultOriginator+"/"+version+" (Ubuntu 22.4.0; x86_64) xterm-256color")
 }
+
+// codexOAuthCredentialIdentity returns the Codex identity used by OAuth token
+// exchange and refresh requests. The credential endpoint expects the client
+// originator and user agent, but not the inference-plane Version header.
+func codexOAuthCredentialIdentity() map[string]string {
+	version := EffectiveCodexVersion()
+	return map[string]string{
+		"Originator": codexDefaultOriginator,
+		"User-Agent": codexDefaultOriginator + "/" + version + " (Ubuntu 22.4.0; x86_64) xterm-256color",
+	}
+}

@@ -2,6 +2,7 @@ package openai
 
 import (
 	"context"
+	"encoding/base64"
 	"io"
 	"net/http"
 	"net/url"
@@ -11,6 +12,62 @@ import (
 
 	"github.com/imroc/req/v3"
 )
+
+func TestOAuthTokenRequestsUseCodexCredentialIdentity(t *testing.T) {
+	claims := base64.RawURLEncoding.EncodeToString([]byte(`{"email":"codex@example.com","https://api.openai.com/auth":{"chatgpt_account_id":"acct_1","chatgpt_plan_type":"pro"}}`))
+	idToken := "header." + claims + ".signature"
+
+	for _, test := range []struct {
+		name      string
+		invoke    func(*OAuthClient) error
+		grantType string
+	}{
+		{
+			name: "exchange",
+			invoke: func(client *OAuthClient) error {
+				_, err := client.Exchange(context.Background(), "code", "verifier", "http://localhost/callback")
+				return err
+			},
+			grantType: "authorization_code",
+		},
+		{
+			name: "refresh",
+			invoke: func(client *OAuthClient) error {
+				_, err := client.Refresh(context.Background(), "refresh-token")
+				return err
+			},
+			grantType: "refresh_token",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := NewOAuthClient("")
+			client.client.GetTransport().WrapRoundTripFunc(func(http.RoundTripper) req.HttpRoundTripFunc {
+				return func(request *http.Request) (*http.Response, error) {
+					if request.Header.Get("Originator") != codexDefaultOriginator || request.Header.Get("User-Agent") != codexProbeUserAgent {
+						t.Fatalf("credential identity = %#v", request.Header)
+					}
+					if request.Header.Get("Version") != "" {
+						t.Fatalf("credential request Version = %q", request.Header.Get("Version"))
+					}
+					if err := request.ParseForm(); err != nil {
+						t.Fatal(err)
+					}
+					if request.Form.Get("grant_type") != test.grantType {
+						t.Fatalf("grant_type = %q", request.Form.Get("grant_type"))
+					}
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Header:     http.Header{"Content-Type": []string{"application/json"}},
+						Body:       io.NopCloser(strings.NewReader(`{"access_token":"access","refresh_token":"refresh","id_token":"` + idToken + `","expires_in":3600}`)),
+					}, nil
+				}
+			})
+			if err := test.invoke(client); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
 
 func TestAuthorizationURL(t *testing.T) {
 	client := NewOAuthClient("")

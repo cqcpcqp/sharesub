@@ -449,6 +449,29 @@ func TestResponsesWebSocketResponseCreateClassificationMatchesUpstreamProtocol(t
 	}
 }
 
+func TestResponsesWebSocketControlReplaySafety(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		messageType websocket.MessageType
+		frame       string
+		want        bool
+	}{
+		{name: "model-only session update", messageType: websocket.MessageText, frame: `{"type":"session.update","session":{"model":"gpt-5.6-sol"}}`, want: true},
+		{name: "session instructions", messageType: websocket.MessageText, frame: `{"type":"session.update","session":{"instructions":"be concise"}}`},
+		{name: "model and tools", messageType: websocket.MessageText, frame: `{"type":"session.update","session":{"model":"gpt-5.6-sol","tools":[]}}`},
+		{name: "cancel", messageType: websocket.MessageText, frame: `{"type":"response.cancel"}`, want: true},
+		{name: "conversation mutation", messageType: websocket.MessageText, frame: `{"type":"conversation.item.create","item":{}}`},
+		{name: "binary control", messageType: websocket.MessageBinary, frame: `{"type":"session.update","session":{"model":"gpt-5.6-sol"}}`},
+		{name: "invalid JSON", messageType: websocket.MessageText, frame: `{`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := responsesWebSocketControlPreservesReplaySafety(test.messageType, []byte(test.frame)); got != test.want {
+				t.Fatalf("replay safety = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestResponsesWebSocketHeaders(t *testing.T) {
 	inbound := make(http.Header)
 	inbound.Set("session_id", "session")
@@ -597,6 +620,521 @@ func TestResponsesWebSocketSessionRetriesFirstRateLimitErrorBeforeDownstream(t *
 	}
 	if len(dialer.dialHeaders()) != 2 || firstUpstream.maxConcurrentReads() != 1 || secondUpstream.maxConcurrentReads() != 1 || client.maxConcurrentReads() != 1 {
 		t.Fatalf("dials=%d read concurrency first=%d second=%d client=%d", len(dialer.dialHeaders()), firstUpstream.maxConcurrentReads(), secondUpstream.maxConcurrentReads(), client.maxConcurrentReads())
+	}
+}
+
+func TestResponsesWebSocketSessionRetriesLaterRateLimitWithRebuiltConversation(t *testing.T) {
+	firstUpstream := newResponsesWebSocketTestConn()
+	secondUpstream := newResponsesWebSocketTestConn()
+	client := newResponsesWebSocketTestConn()
+	dialer := &responsesWebSocketSequenceDialer{conns: []ResponsesWebSocketConn{firstUpstream, secondUpstream}}
+	session := NewResponsesWebSocketSession(ResponsesWebSocketOptions{
+		Dialer: dialer, DialTimeout: time.Second, ReadTimeout: time.Second,
+		WriteTimeout: time.Second, InterTurnIdleTimeout: 20 * time.Millisecond,
+	})
+	var retryRequest ResponsesWebSocketTurnRequest
+	runErr := make(chan error, 1)
+	go func() {
+		runErr <- session.Run(context.Background(), client, []byte(`{"type":"response.create","model":"gpt-5.6-sol","input":"one"}`), ResponsesWebSocketHooks{
+			BeforeTurn: func(_ context.Context, request ResponsesWebSocketTurnRequest) (ResponsesWebSocketTurnConfig, error) {
+				return ResponsesWebSocketTurnConfig{Frame: request.Frame, Dial: &ResponsesWebSocketDialConfig{
+					AccessToken: "token-a", ChatGPTAccountID: "account-a", APIKeyID: "key",
+				}}, nil
+			},
+			OnUpstreamError: func(_ context.Context, request ResponsesWebSocketTurnRequest, _ ResponsesWebSocketTurnResult, _ *ResponsesWebSocketUpstreamEventError) (ResponsesWebSocketTurnConfig, error) {
+				retryRequest = request
+				return ResponsesWebSocketTurnConfig{Frame: request.Frame, Dial: &ResponsesWebSocketDialConfig{
+					AccessToken: "token-b", ChatGPTAccountID: "account-b", APIKeyID: "key",
+				}}, nil
+			},
+		})
+	}()
+	waitForResponsesWebSocketWrites(t, firstUpstream, 1)
+	firstUpstream.send(`{"type":"response.completed","response":{"id":"resp_1","output":[{"id":"call_1","type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"}]}}`)
+	waitForResponsesWebSocketWrites(t, client, 1)
+	client.send(`{"type":"response.create","previous_response_id":"resp_1","input":[{"type":"function_call_output","call_id":"call_1","output":"ok"}]}`)
+	waitForResponsesWebSocketWrites(t, firstUpstream, 2)
+	firstUpstream.send(`{"type":"error","error":{"type":"rate_limit_error","code":"rate_limit_exceeded","message":"rate limit exceeded"}}`)
+	waitForResponsesWebSocketWrites(t, secondUpstream, 1)
+
+	if retryRequest.Turn != 2 || retryRequest.PreviousResponseID != "" {
+		t.Fatalf("retry request = %+v", retryRequest)
+	}
+	var rebuilt map[string]any
+	if err := json.Unmarshal(secondUpstream.written()[0], &rebuilt); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := rebuilt["previous_response_id"]; exists {
+		t.Fatalf("rebuilt request retained previous_response_id: %s", secondUpstream.written()[0])
+	}
+	items, _ := rebuilt["input"].([]any)
+	if len(items) != 3 {
+		t.Fatalf("rebuilt input = %#v", rebuilt["input"])
+	}
+	if item, _ := items[1].(map[string]any); item["type"] != "function_call" || item["call_id"] != "call_1" {
+		t.Fatalf("replayed tool call = %#v", items[1])
+	}
+	if item, _ := items[2].(map[string]any); item["type"] != "function_call_output" || item["call_id"] != "call_1" {
+		t.Fatalf("replayed tool output = %#v", items[2])
+	}
+	if len(client.written()) != 1 {
+		t.Fatalf("rate limit leaked downstream: %q", client.written())
+	}
+	secondUpstream.send(`{"type":"response.completed","response":{"id":"resp_2","output":[]}}`)
+	waitForResponsesWebSocketWrites(t, client, 2)
+	if err := <-runErr; err == nil {
+		t.Fatal("Run() unexpectedly returned nil")
+	}
+}
+
+func TestResponsesWebSocketSessionDoesNotRetryIndependentItemReference(t *testing.T) {
+	upstream := newResponsesWebSocketTestConn()
+	replacement := newResponsesWebSocketTestConn()
+	client := newResponsesWebSocketTestConn()
+	dialer := &responsesWebSocketSequenceDialer{conns: []ResponsesWebSocketConn{upstream, replacement}}
+	session := NewResponsesWebSocketSession(ResponsesWebSocketOptions{
+		Dialer: dialer, DialTimeout: time.Second, ReadTimeout: time.Second,
+		WriteTimeout: time.Second, InterTurnIdleTimeout: 20 * time.Millisecond,
+	})
+	var retryCalls int
+	runErr := make(chan error, 1)
+	go func() {
+		runErr <- session.Run(context.Background(), client, []byte(`{"type":"response.create","model":"gpt-5.6-sol","input":[{"type":"item_reference","id":"call_1"},{"type":"function_call_output","call_id":"call_1","output":"ok"}]}`), ResponsesWebSocketHooks{
+			BeforeTurn: func(_ context.Context, request ResponsesWebSocketTurnRequest) (ResponsesWebSocketTurnConfig, error) {
+				return ResponsesWebSocketTurnConfig{Frame: request.Frame, Dial: &ResponsesWebSocketDialConfig{
+					AccessToken: "token-a", ChatGPTAccountID: "account-a", APIKeyID: "key",
+				}}, nil
+			},
+			OnUpstreamError: func(_ context.Context, request ResponsesWebSocketTurnRequest, _ ResponsesWebSocketTurnResult, _ *ResponsesWebSocketUpstreamEventError) (ResponsesWebSocketTurnConfig, error) {
+				retryCalls++
+				return ResponsesWebSocketTurnConfig{Frame: request.Frame, Dial: &ResponsesWebSocketDialConfig{
+					AccessToken: "token-b", ChatGPTAccountID: "account-b", APIKeyID: "key",
+				}}, nil
+			},
+		})
+	}()
+	waitForResponsesWebSocketWrites(t, upstream, 1)
+	upstream.send(`{"type":"error","error":{"type":"rate_limit_error","code":"rate_limit_exceeded","message":"rate limit exceeded"}}`)
+	waitForResponsesWebSocketWrites(t, client, 1)
+	upstream.send(`{"type":"response.failed","response":{"id":"resp_failed","error":{"type":"rate_limit_error","code":"rate_limit_exceeded","message":"rate limit exceeded"}}}`)
+	waitForResponsesWebSocketWrites(t, client, 2)
+
+	if err := <-runErr; err == nil {
+		t.Fatal("Run() unexpectedly returned nil")
+	}
+	if retryCalls != 0 || len(dialer.dialHeaders()) != 1 || len(replacement.written()) != 0 {
+		t.Fatalf("retry calls=%d dials=%d replacement writes=%d", retryCalls, len(dialer.dialHeaders()), len(replacement.written()))
+	}
+	if !strings.Contains(string(client.written()[0]), `"type":"error"`) {
+		t.Fatalf("rate-limit event was not preserved for the client: %s", client.written()[0])
+	}
+}
+
+func TestResponsesWebSocketSessionDoesNotRetryAfterUnreconstructableSessionUpdate(t *testing.T) {
+	firstUpstream := newResponsesWebSocketTestConn()
+	secondUpstream := newResponsesWebSocketTestConn()
+	client := newResponsesWebSocketTestConn()
+	dialer := &responsesWebSocketSequenceDialer{conns: []ResponsesWebSocketConn{firstUpstream, secondUpstream}}
+	session := NewResponsesWebSocketSession(ResponsesWebSocketOptions{
+		Dialer: dialer, DialTimeout: time.Second, ReadTimeout: time.Second,
+		WriteTimeout: time.Second, InterTurnIdleTimeout: 20 * time.Millisecond,
+	})
+	var retryCalls int
+	runErr := make(chan error, 1)
+	go func() {
+		runErr <- session.Run(context.Background(), client, []byte(`{"type":"response.create","model":"gpt-5.6-sol","input":"one"}`), ResponsesWebSocketHooks{
+			BeforeTurn: func(_ context.Context, request ResponsesWebSocketTurnRequest) (ResponsesWebSocketTurnConfig, error) {
+				return ResponsesWebSocketTurnConfig{Frame: request.Frame, Dial: &ResponsesWebSocketDialConfig{
+					AccessToken: "token-a", ChatGPTAccountID: "account-a", APIKeyID: "key",
+				}}, nil
+			},
+			OnUpstreamError: func(_ context.Context, request ResponsesWebSocketTurnRequest, _ ResponsesWebSocketTurnResult, _ *ResponsesWebSocketUpstreamEventError) (ResponsesWebSocketTurnConfig, error) {
+				retryCalls++
+				return ResponsesWebSocketTurnConfig{Frame: request.Frame, Dial: &ResponsesWebSocketDialConfig{
+					AccessToken: "token-b", ChatGPTAccountID: "account-b", APIKeyID: "key",
+				}}, nil
+			},
+		})
+	}()
+	waitForResponsesWebSocketWrites(t, firstUpstream, 1)
+	firstUpstream.send(`{"type":"response.completed","response":{"id":"resp_1","output":[]}}`)
+	waitForResponsesWebSocketWrites(t, client, 1)
+
+	client.send(`{"type":"session.update","session":{"instructions":"be concise","tools":[]}}`)
+	waitForResponsesWebSocketWrites(t, firstUpstream, 2)
+	client.send(`{"type":"response.create","previous_response_id":"resp_1","input":"two"}`)
+	waitForResponsesWebSocketWrites(t, firstUpstream, 3)
+	firstUpstream.send(`{"type":"error","error":{"type":"rate_limit_error","code":"rate_limit_exceeded","message":"rate limit exceeded"}}`)
+	waitForResponsesWebSocketWrites(t, client, 2)
+	firstUpstream.send(`{"type":"response.failed","response":{"id":"resp_2","error":{"type":"rate_limit_error","code":"rate_limit_exceeded","message":"rate limit exceeded"}}}`)
+	waitForResponsesWebSocketWrites(t, client, 3)
+
+	if err := <-runErr; err == nil {
+		t.Fatal("Run() unexpectedly returned nil")
+	}
+	if retryCalls != 0 || len(dialer.dialHeaders()) != 1 || len(secondUpstream.written()) != 0 {
+		t.Fatalf("retry calls=%d dials=%d replacement writes=%d", retryCalls, len(dialer.dialHeaders()), len(secondUpstream.written()))
+	}
+	if !strings.Contains(string(client.written()[1]), `"type":"error"`) {
+		t.Fatalf("rate-limit event was not preserved for the client: %s", client.written()[1])
+	}
+}
+
+func TestResponsesWebSocketSessionRetriesIndependentLaterTurnWithoutPriorHistory(t *testing.T) {
+	firstUpstream := newResponsesWebSocketTestConn()
+	secondUpstream := newResponsesWebSocketTestConn()
+	thirdUpstream := newResponsesWebSocketTestConn()
+	client := newResponsesWebSocketTestConn()
+	dialer := &responsesWebSocketSequenceDialer{conns: []ResponsesWebSocketConn{firstUpstream, secondUpstream, thirdUpstream}}
+	session := NewResponsesWebSocketSession(ResponsesWebSocketOptions{
+		Dialer: dialer, DialTimeout: time.Second, ReadTimeout: time.Second,
+		WriteTimeout: time.Second, InterTurnIdleTimeout: 20 * time.Millisecond,
+	})
+	activeAccount := "account-a"
+	var retryRequests []ResponsesWebSocketTurnRequest
+	runErr := make(chan error, 1)
+	go func() {
+		runErr <- session.Run(context.Background(), client, []byte(`{"type":"response.create","model":"gpt-5.6-sol","input":"old conversation"}`), ResponsesWebSocketHooks{
+			BeforeTurn: func(_ context.Context, request ResponsesWebSocketTurnRequest) (ResponsesWebSocketTurnConfig, error) {
+				return ResponsesWebSocketTurnConfig{Frame: request.Frame, Dial: &ResponsesWebSocketDialConfig{
+					AccessToken: "token-" + activeAccount, ChatGPTAccountID: activeAccount, APIKeyID: "key",
+				}}, nil
+			},
+			OnUpstreamError: func(_ context.Context, request ResponsesWebSocketTurnRequest, _ ResponsesWebSocketTurnResult, _ *ResponsesWebSocketUpstreamEventError) (ResponsesWebSocketTurnConfig, error) {
+				retryRequests = append(retryRequests, request)
+				activeAccount = "account-b"
+				if len(retryRequests) == 2 {
+					activeAccount = "account-c"
+				}
+				return ResponsesWebSocketTurnConfig{Frame: request.Frame, Dial: &ResponsesWebSocketDialConfig{
+					AccessToken: "token-" + activeAccount, ChatGPTAccountID: activeAccount, APIKeyID: "key",
+				}}, nil
+			},
+		})
+	}()
+	waitForResponsesWebSocketWrites(t, firstUpstream, 1)
+	firstUpstream.send(`{"type":"response.completed","response":{"id":"resp_old","output":[{"id":"msg_old","type":"message","role":"assistant","content":[{"type":"output_text","text":"old answer"}]}]}}`)
+	waitForResponsesWebSocketWrites(t, client, 1)
+
+	client.send(`{"type":"response.create","input":"independent"}`)
+	waitForResponsesWebSocketWrites(t, firstUpstream, 2)
+	firstUpstream.send(`{"type":"error","error":{"type":"rate_limit_error","code":"rate_limit_exceeded","message":"rate limit exceeded"}}`)
+	waitForResponsesWebSocketWrites(t, secondUpstream, 1)
+
+	if len(retryRequests) != 1 || retryRequests[0].Turn != 2 || retryRequests[0].PreviousResponseID != "" {
+		t.Fatalf("retry requests = %+v", retryRequests)
+	}
+	var retried map[string]any
+	if err := json.Unmarshal(secondUpstream.written()[0], &retried); err != nil {
+		t.Fatal(err)
+	}
+	items, _ := retried["input"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("independent retry input = %#v", retried["input"])
+	}
+	message, _ := items[0].(map[string]any)
+	if message["content"] != "independent" || strings.Contains(string(secondUpstream.written()[0]), "old conversation") || strings.Contains(string(secondUpstream.written()[0]), "old answer") {
+		t.Fatalf("independent retry retained prior history: %s", secondUpstream.written()[0])
+	}
+	secondUpstream.send(`{"type":"response.completed","response":{"id":"resp_independent","output":[]}}`)
+	waitForResponsesWebSocketWrites(t, client, 2)
+
+	client.send(`{"type":"response.create","previous_response_id":"resp_independent","input":"follow-up"}`)
+	waitForResponsesWebSocketWrites(t, secondUpstream, 2)
+	secondUpstream.send(`{"type":"error","error":{"type":"rate_limit_error","code":"rate_limit_exceeded","message":"rate limit exceeded"}}`)
+	waitForResponsesWebSocketWrites(t, thirdUpstream, 1)
+	var rebuilt map[string]any
+	if err := json.Unmarshal(thirdUpstream.written()[0], &rebuilt); err != nil {
+		t.Fatal(err)
+	}
+	rebuiltItems, _ := rebuilt["input"].([]any)
+	if len(rebuiltItems) != 2 || strings.Contains(string(thirdUpstream.written()[0]), "old conversation") || strings.Contains(string(thirdUpstream.written()[0]), "old answer") {
+		t.Fatalf("independent turn did not reset replay history: %s", thirdUpstream.written()[0])
+	}
+	thirdUpstream.send(`{"type":"response.completed","response":{"id":"resp_follow_up","output":[]}}`)
+	waitForResponsesWebSocketWrites(t, client, 3)
+	if err := <-runErr; err == nil {
+		t.Fatal("Run() unexpectedly returned nil")
+	}
+	if len(retryRequests) != 2 || retryRequests[1].Turn != 3 || retryRequests[1].PreviousResponseID != "" {
+		t.Fatalf("retry requests = %+v", retryRequests)
+	}
+}
+
+func TestResponsesWebSocketSessionDoesNotReplayBranchedPreviousResponse(t *testing.T) {
+	upstream := newResponsesWebSocketTestConn()
+	client := newResponsesWebSocketTestConn()
+	dialer := &responsesWebSocketSequenceDialer{conns: []ResponsesWebSocketConn{upstream}}
+	session := NewResponsesWebSocketSession(ResponsesWebSocketOptions{
+		Dialer: dialer, DialTimeout: time.Second, ReadTimeout: time.Second,
+		WriteTimeout: time.Second, InterTurnIdleTimeout: 20 * time.Millisecond,
+	})
+	var hookCalls int
+	runErr := make(chan error, 1)
+	go func() {
+		runErr <- session.Run(context.Background(), client, []byte(`{"type":"response.create","model":"gpt-5.6-sol","input":"one"}`), ResponsesWebSocketHooks{
+			BeforeTurn: func(_ context.Context, request ResponsesWebSocketTurnRequest) (ResponsesWebSocketTurnConfig, error) {
+				return ResponsesWebSocketTurnConfig{Frame: request.Frame, Dial: &ResponsesWebSocketDialConfig{AccessToken: "token", ChatGPTAccountID: "account", APIKeyID: "key"}}, nil
+			},
+			OnUpstreamError: func(_ context.Context, _ ResponsesWebSocketTurnRequest, _ ResponsesWebSocketTurnResult, _ *ResponsesWebSocketUpstreamEventError) (ResponsesWebSocketTurnConfig, error) {
+				hookCalls++
+				return ResponsesWebSocketTurnConfig{}, errors.New("branched turn must not be retried")
+			},
+		})
+	}()
+	waitForResponsesWebSocketWrites(t, upstream, 1)
+	upstream.send(`{"type":"response.completed","response":{"id":"resp_1","output":[]}}`)
+	waitForResponsesWebSocketWrites(t, client, 1)
+	client.send(`{"type":"response.create","previous_response_id":"resp_1","input":"two"}`)
+	waitForResponsesWebSocketWrites(t, upstream, 2)
+	upstream.send(`{"type":"response.completed","response":{"id":"resp_2","output":[]}}`)
+	waitForResponsesWebSocketWrites(t, client, 2)
+
+	client.send(`{"type":"response.create","previous_response_id":"resp_1","input":"branch"}`)
+	waitForResponsesWebSocketWrites(t, upstream, 3)
+	upstream.send(`{"type":"error","error":{"type":"rate_limit_error","code":"rate_limit_exceeded","message":"rate limit exceeded"}}`)
+	upstream.send(`{"type":"response.failed","response":{"id":"resp_branch"}}`)
+	waitForResponsesWebSocketWrites(t, client, 4)
+	if err := <-runErr; err == nil {
+		t.Fatal("Run() unexpectedly returned nil")
+	}
+	if hookCalls != 0 || len(dialer.dialHeaders()) != 1 {
+		t.Fatalf("branched turn retried: hookCalls=%d dials=%d", hookCalls, len(dialer.dialHeaders()))
+	}
+}
+
+func TestResponsesWebSocketSessionDoesNotReplayAfterFailedTerminal(t *testing.T) {
+	upstream := newResponsesWebSocketTestConn()
+	client := newResponsesWebSocketTestConn()
+	dialer := &responsesWebSocketSequenceDialer{conns: []ResponsesWebSocketConn{upstream}}
+	session := NewResponsesWebSocketSession(ResponsesWebSocketOptions{
+		Dialer: dialer, DialTimeout: time.Second, ReadTimeout: time.Second,
+		WriteTimeout: time.Second, InterTurnIdleTimeout: 20 * time.Millisecond,
+	})
+	var hookCalls int
+	runErr := make(chan error, 1)
+	go func() {
+		runErr <- session.Run(context.Background(), client, []byte(`{"type":"response.create","model":"gpt-5.6-sol","input":"one"}`), ResponsesWebSocketHooks{
+			BeforeTurn: func(_ context.Context, request ResponsesWebSocketTurnRequest) (ResponsesWebSocketTurnConfig, error) {
+				return ResponsesWebSocketTurnConfig{Frame: request.Frame, Dial: &ResponsesWebSocketDialConfig{AccessToken: "token", ChatGPTAccountID: "account", APIKeyID: "key"}}, nil
+			},
+			OnUpstreamError: func(_ context.Context, _ ResponsesWebSocketTurnRequest, _ ResponsesWebSocketTurnResult, _ *ResponsesWebSocketUpstreamEventError) (ResponsesWebSocketTurnConfig, error) {
+				hookCalls++
+				return ResponsesWebSocketTurnConfig{}, errors.New("failed response chain must not be retried")
+			},
+		})
+	}()
+	waitForResponsesWebSocketWrites(t, upstream, 1)
+	upstream.send(`{"type":"response.failed","response":{"id":"resp_failed","output":[]}}`)
+	waitForResponsesWebSocketWrites(t, client, 1)
+
+	client.send(`{"type":"response.create","previous_response_id":"resp_failed","input":"continue"}`)
+	waitForResponsesWebSocketWrites(t, upstream, 2)
+	upstream.send(`{"type":"error","error":{"type":"rate_limit_error","code":"rate_limit_exceeded","message":"rate limit exceeded"}}`)
+	upstream.send(`{"type":"response.failed","response":{"id":"resp_failed_again"}}`)
+	waitForResponsesWebSocketWrites(t, client, 3)
+	if err := <-runErr; err == nil {
+		t.Fatal("Run() unexpectedly returned nil")
+	}
+	if hookCalls != 0 || len(dialer.dialHeaders()) != 1 {
+		t.Fatalf("failed response chain retried: hookCalls=%d dials=%d", hookCalls, len(dialer.dialHeaders()))
+	}
+}
+
+func TestResponsesWebSocketSessionDoesNotReplayHistoryOverItemLimit(t *testing.T) {
+	upstream := newResponsesWebSocketTestConn()
+	client := newResponsesWebSocketTestConn()
+	dialer := &responsesWebSocketSequenceDialer{conns: []ResponsesWebSocketConn{upstream}}
+	session := NewResponsesWebSocketSession(ResponsesWebSocketOptions{
+		Dialer: dialer, DialTimeout: time.Second, ReadTimeout: time.Second,
+		WriteTimeout: time.Second, InterTurnIdleTimeout: 20 * time.Millisecond,
+	})
+	items := make([]json.RawMessage, responsesWebSocketReplayHistoryMaxItems+1)
+	for index := range items {
+		items[index] = json.RawMessage(fmt.Sprintf(`{"type":"message","role":"user","content":"%d"}`, index))
+	}
+	initialFrame, err := json.Marshal(map[string]any{"type": "response.create", "model": "gpt-5.6-sol", "input": items})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hookCalls int
+	runErr := make(chan error, 1)
+	go func() {
+		runErr <- session.Run(context.Background(), client, initialFrame, ResponsesWebSocketHooks{
+			BeforeTurn: func(_ context.Context, request ResponsesWebSocketTurnRequest) (ResponsesWebSocketTurnConfig, error) {
+				return ResponsesWebSocketTurnConfig{Frame: request.Frame, Dial: &ResponsesWebSocketDialConfig{AccessToken: "token", ChatGPTAccountID: "account", APIKeyID: "key"}}, nil
+			},
+			OnUpstreamError: func(_ context.Context, _ ResponsesWebSocketTurnRequest, _ ResponsesWebSocketTurnResult, _ *ResponsesWebSocketUpstreamEventError) (ResponsesWebSocketTurnConfig, error) {
+				hookCalls++
+				return ResponsesWebSocketTurnConfig{}, errors.New("oversized history must not be retried")
+			},
+		})
+	}()
+	waitForResponsesWebSocketWrites(t, upstream, 1)
+	upstream.send(`{"type":"response.completed","response":{"id":"resp_large","output":[]}}`)
+	waitForResponsesWebSocketWrites(t, client, 1)
+	client.send(`{"type":"response.create","previous_response_id":"resp_large","input":"next"}`)
+	waitForResponsesWebSocketWrites(t, upstream, 2)
+	upstream.send(`{"type":"error","error":{"type":"rate_limit_error","code":"rate_limit_exceeded","message":"rate limit exceeded"}}`)
+	upstream.send(`{"type":"response.failed","response":{"id":"resp_large_failed"}}`)
+	waitForResponsesWebSocketWrites(t, client, 3)
+	if err := <-runErr; err == nil {
+		t.Fatal("Run() unexpectedly returned nil")
+	}
+	if hookCalls != 0 || len(dialer.dialHeaders()) != 1 {
+		t.Fatalf("oversized history retried: hookCalls=%d dials=%d", hookCalls, len(dialer.dialHeaders()))
+	}
+}
+
+func TestResponsesWebSocketReplayCollectorStopsAtLimits(t *testing.T) {
+	t.Run("items", func(t *testing.T) {
+		var collector responsesWebSocketReplayCollector
+		for index := 0; index <= responsesWebSocketReplayHistoryMaxItems; index++ {
+			collector.addItem(json.RawMessage(fmt.Sprintf(`{"id":"msg_%d","type":"message"}`, index)))
+		}
+		if !collector.exceedsLimit || collector.items != nil || collector.seen != nil || collector.bytes != 0 {
+			t.Fatalf("collector did not stop at item limit: %+v", collector)
+		}
+	})
+
+	t.Run("bytes", func(t *testing.T) {
+		var collector responsesWebSocketReplayCollector
+		item := json.RawMessage(`{"id":"msg_large","type":"message","content":"` + strings.Repeat("x", responsesWebSocketReplayHistoryMaxBytes) + `"}`)
+		collector.addItem(item)
+		if !collector.exceedsLimit || collector.items != nil || collector.seen != nil || collector.bytes != 0 {
+			t.Fatalf("collector did not stop at byte limit")
+		}
+	})
+}
+
+func TestResponsesWebSocketRawPrefixCanonicalizesJSONObjectOrder(t *testing.T) {
+	items := []json.RawMessage{json.RawMessage(`{"type":"message","role":"user","content":"hello"}`)}
+	prefix := []json.RawMessage{json.RawMessage(`{"content":"hello","role":"user","type":"message"}`)}
+	if !responsesWebSocketRawPrefix(items, prefix) {
+		t.Fatal("semantically equal JSON objects were not recognized as a prefix")
+	}
+}
+
+func TestBuildResponsesWebSocketRetryFrameRejectsOrphanToolOutput(t *testing.T) {
+	frame := []byte(`{"type":"response.create","model":"gpt-5.6-sol","previous_response_id":"resp_1"}`)
+	input := []json.RawMessage{json.RawMessage(`{"type":"function_call_output","call_id":"missing","output":"ok"}`)}
+	rebuilt, safe, err := buildResponsesWebSocketRetryFrame(frame, input)
+	if err != nil || safe || rebuilt != nil {
+		t.Fatalf("rebuilt=%s safe=%v err=%v", rebuilt, safe, err)
+	}
+}
+
+func TestResponsesWebSocketReplayPlanRejectsAccountScopedIndependentInput(t *testing.T) {
+	tests := []struct {
+		name  string
+		input []json.RawMessage
+	}{
+		{
+			name:  "unresolved item reference",
+			input: []json.RawMessage{json.RawMessage(`{"type":"item_reference","id":"msg_missing"}`)},
+		},
+		{
+			name:  "orphan tool output",
+			input: []json.RawMessage{json.RawMessage(`{"type":"function_call_output","call_id":"call_missing","output":"ok"}`)},
+		},
+		{
+			name:  "orphan local shell output",
+			input: []json.RawMessage{json.RawMessage(`{"type":"local_shell_call_output","call_id":"call_missing","output":"ok"}`)},
+		},
+		{
+			name:  "unsupported call output",
+			input: []json.RawMessage{json.RawMessage(`{"type":"computer_call_output","call_id":"call_missing","output":"ok"}`)},
+		},
+		{
+			name: "item reference cannot establish tool context",
+			input: []json.RawMessage{
+				json.RawMessage(`{"type":"item_reference","id":"call_missing"}`),
+				json.RawMessage(`{"type":"function_call_output","call_id":"call_missing","output":"ok"}`),
+			},
+		},
+		{
+			name: "concrete sibling cannot make item reference portable",
+			input: []json.RawMessage{
+				json.RawMessage(`{"id":"fc_1","type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"}`),
+				json.RawMessage(`{"type":"item_reference","id":"call_1"}`),
+				json.RawMessage(`{"type":"function_call_output","call_id":"call_1","output":"ok"}`),
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var history responsesWebSocketReplayHistory
+			_, retrySafe, commitSafe := history.plan("", test.input, true, true)
+			if retrySafe || commitSafe {
+				t.Fatalf("retrySafe=%v commitSafe=%v", retrySafe, commitSafe)
+			}
+		})
+	}
+}
+
+func TestBuildResponsesWebSocketRetryFrameRejectsAccountScopedItemReference(t *testing.T) {
+	frame := []byte(`{"type":"response.create","model":"gpt-5.6-sol","previous_response_id":"resp_1"}`)
+	tests := []struct {
+		name  string
+		input []json.RawMessage
+	}{
+		{
+			name:  "reference only",
+			input: []json.RawMessage{json.RawMessage(`{"type":"item_reference","id":"call_1"}`)},
+		},
+		{
+			name: "reference and matching output",
+			input: []json.RawMessage{
+				json.RawMessage(`{"type":"item_reference","id":"call_1"}`),
+				json.RawMessage(`{"type":"function_call_output","call_id":"call_1","output":"ok"}`),
+			},
+		},
+		{
+			name: "reference with concrete sibling",
+			input: []json.RawMessage{
+				json.RawMessage(`{"id":"fc_1","type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"}`),
+				json.RawMessage(`{"type":"item_reference","id":"call_1"}`),
+				json.RawMessage(`{"type":"function_call_output","call_id":"call_1","output":"ok"}`),
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if rebuilt, safe, err := buildResponsesWebSocketRetryFrame(frame, test.input); err != nil || safe || rebuilt != nil {
+				t.Fatalf("rebuilt=%s safe=%v err=%v", rebuilt, safe, err)
+			}
+		})
+	}
+}
+
+func TestBuildResponsesWebSocketRetryFrameAllowsConcreteToolContext(t *testing.T) {
+	frame := []byte(`{"type":"response.create","model":"gpt-5.6-sol","previous_response_id":"resp_1"}`)
+	tests := []struct {
+		name  string
+		input []json.RawMessage
+	}{
+		{
+			name: "function call",
+			input: []json.RawMessage{
+				json.RawMessage(`{"id":"fc_1","type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"}`),
+				json.RawMessage(`{"type":"function_call_output","call_id":"call_1","output":"ok"}`),
+			},
+		},
+		{
+			name: "local shell call",
+			input: []json.RawMessage{
+				json.RawMessage(`{"id":"fc_2","type":"local_shell_call","call_id":"call_2","action":{"command":["pwd"]}}`),
+				json.RawMessage(`{"type":"local_shell_call_output","call_id":"call_2","output":"/workspace"}`),
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			rebuilt, safe, err := buildResponsesWebSocketRetryFrame(frame, test.input)
+			if err != nil || !safe || len(rebuilt) == 0 {
+				t.Fatalf("rebuilt=%s safe=%v err=%v", rebuilt, safe, err)
+			}
+		})
 	}
 }
 
@@ -1306,7 +1844,7 @@ func TestResponsesWebSocketRelayPassesThroughUnobservableUpstreamFrames(t *testi
 
 			result, err := session.relayTurn(
 				context.Background(), client, newResponsesWebSocketTestConn(), clientReads, upstreamReads,
-				ResponsesWebSocketTurnResult{StartedAt: time.Now()}, newResponsesWebSocketTurnLifecycle(true), nil, false, nil,
+				ResponsesWebSocketTurnResult{StartedAt: time.Now()}, newResponsesWebSocketTurnLifecycle(true), nil, nil, false, nil,
 			)
 			if err != nil {
 				t.Fatalf("relayTurn() error = %v", err)
@@ -1769,7 +2307,7 @@ func TestResponsesWebSocketTerminalOutcomeMetrics(t *testing.T) {
 			turnLifecycle := newResponsesWebSocketTurnLifecycle(true)
 			result, err := session.relayTurn(
 				context.Background(), newResponsesWebSocketTestConn(), newResponsesWebSocketTestConn(), clientReads, upstreamReads,
-				ResponsesWebSocketTurnResult{StartedAt: time.Now()}, turnLifecycle, nil, false, nil,
+				ResponsesWebSocketTurnResult{StartedAt: time.Now()}, turnLifecycle, nil, nil, false, nil,
 			)
 			if result.RequestID != "resp_terminal" || result.Metrics.InputTokens != 5 {
 				t.Fatalf("relay result = %+v, err=%v", result, err)

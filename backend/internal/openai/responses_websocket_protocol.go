@@ -47,6 +47,40 @@ func updateResponsesWebSocketSessionModel(model *atomic.Pointer[string], message
 	storeResponsesWebSocketSessionModel(model, event.Session.Model)
 }
 
+// responsesWebSocketControlPreservesReplaySafety reports whether a client
+// control frame can be represented completely when a later turn is rebuilt on
+// a fresh upstream connection. Model-only session updates are safe because the
+// proxy injects the tracked session model into every later response.create.
+// Cancellation is turn-local. Any other control may carry upstream session
+// state that the proxy cannot reconstruct, so cross-account replay must stop.
+func responsesWebSocketControlPreservesReplaySafety(messageType websocket.MessageType, frame []byte) bool {
+	if messageType != websocket.MessageText {
+		return false
+	}
+	var event struct {
+		Type    string                     `json:"type"`
+		Session map[string]json.RawMessage `json:"session"`
+	}
+	if json.Unmarshal(frame, &event) != nil {
+		return false
+	}
+	switch strings.TrimSpace(event.Type) {
+	case "response.cancel":
+		return true
+	case "session.update":
+		if len(event.Session) != 1 {
+			return false
+		}
+		var model string
+		if json.Unmarshal(event.Session["model"], &model) != nil {
+			return false
+		}
+		return strings.TrimSpace(model) != ""
+	default:
+		return false
+	}
+}
+
 func storeResponsesWebSocketSessionModel(model *atomic.Pointer[string], value string) {
 	if model == nil {
 		return

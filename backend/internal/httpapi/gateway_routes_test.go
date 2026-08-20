@@ -51,6 +51,7 @@ type gatewayHandlerStore struct {
 	mu              sync.Mutex
 	calls           []string
 	metric          domain.GatewayMetric
+	metrics         []domain.GatewayMetric
 	quotaSignals    []domain.QuotaSignal
 	quotaPlanID     string
 	quotaAccountID  string
@@ -80,6 +81,7 @@ func (s *gatewayHandlerStore) RecordGatewayMetric(_ context.Context, metric doma
 	defer s.mu.Unlock()
 	s.calls = append(s.calls, "metric")
 	s.metric = metric
+	s.metrics = append(s.metrics, metric)
 	return s.metricErr
 }
 
@@ -302,6 +304,9 @@ func TestSuccessfulGatewayResponseRecordsMetricBeforeQuotaWithFrozenTimes(t *tes
 			if strings.Join(calls, ",") != strings.Join(test.wantCalls, ",") {
 				t.Fatalf("store calls = %v, want %v", calls, test.wantCalls)
 			}
+			if metric.RequestID != "upstream-request" {
+				t.Fatalf("metric request id = %q, want upstream request id", metric.RequestID)
+			}
 			if metric.CreatedAt.After(headerAt) {
 				t.Fatalf("metric time = %s, after upstream headers at %s", metric.CreatedAt, headerAt)
 			}
@@ -322,6 +327,73 @@ func TestSuccessfulGatewayResponseRecordsMetricBeforeQuotaWithFrozenTimes(t *tes
 				t.Fatalf("quota reset = %s, want observation-derived %s", quotaSignals[0].ResetAt, wantResetAt)
 			}
 		})
+	}
+}
+
+func TestResponsesRetriesRequestScopedCapacityOnSameAccountWithoutKeyBackoff(t *testing.T) {
+	manager, err := security.New(make([]byte, 32), make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	credential := domain.GatewayCredential{
+		APIKeyID: "key", Member: domain.Member{ID: "member", UserID: "user", ShareBasisPoints: 10_000},
+		Plan:           domain.Plan{ID: "plan", AllocationMode: domain.AllocationFixed},
+		Account:        domain.Account{ID: "account", OwnerUserID: "owner", ChatGPTAccountID: "chatgpt"},
+		TokenExpiresAt: time.Now().Add(time.Hour), AccountBindingGeneration: 1,
+	}
+	credential.AccessTokenCiphertext, err = manager.Encrypt("access", []byte("owner:chatgpt:access"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &gatewayHandlerStore{credential: credential}
+	var calls int
+	client := &http.Client{Transport: gatewayTestRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		calls++
+		headers := http.Header{"Content-Type": []string{"text/event-stream"}, "Retry-After": []string{"5"}}
+		if calls <= maxRequestScopedCapacityRetries {
+			body := `data: {"type":"response.failed","response":{"id":"resp_capacity","error":{"code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."}}}` + "\n\n"
+			return &http.Response{StatusCode: http.StatusOK, Header: headers, Body: io.NopCloser(strings.NewReader(body))}, nil
+		}
+		body := `data: {"type":"response.completed","response":{"id":"resp_ok","model":"gpt-5.4","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":2,"output_tokens":1}}}` + "\n\n"
+		return &http.Response{StatusCode: http.StatusOK, Header: headers, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}
+	service := application.NewService(store, manager, nil, 0, "", "")
+	server := New(service, openai.NewGateway(client), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server.requestScopedRetryDelay = func(int) time.Duration { return 0 }
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.4","input":"hi","stream":false}`))
+	request.Header.Set("Authorization", "Bearer sk-sharesub-test")
+	request.Header.Set("X-Request-Id", "gateway-request")
+	recorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK || calls != maxRequestScopedCapacityRetries+1 || !strings.Contains(recorder.Body.String(), `"id":"resp_ok"`) {
+		t.Fatalf("status=%d calls=%d body=%s", recorder.Code, calls, recorder.Body.String())
+	}
+	server.protections.mu.Lock()
+	_, backedOff := server.protections.keyBackoffs[credential.APIKeyID]
+	server.protections.mu.Unlock()
+	if backedOff {
+		t.Fatal("request-scoped capacity failure backed off the API key")
+	}
+	store.mu.Lock()
+	metrics := append([]domain.GatewayMetric(nil), store.metrics...)
+	store.mu.Unlock()
+	if len(metrics) != maxRequestScopedCapacityRetries+1 {
+		t.Fatalf("metric count = %d, want %d", len(metrics), maxRequestScopedCapacityRetries+1)
+	}
+	requestIDs := make(map[string]struct{}, len(metrics))
+	for index, metric := range metrics {
+		if _, duplicate := requestIDs[metric.RequestID]; duplicate {
+			t.Fatalf("metric %d reused request id %q: %+v", index, metric.RequestID, metrics)
+		}
+		requestIDs[metric.RequestID] = struct{}{}
+	}
+	if metrics[0].RequestID != "gateway-request" {
+		t.Fatalf("first metric request id = %q", metrics[0].RequestID)
+	}
+	finalMetric := metrics[len(metrics)-1]
+	if finalMetric.StatusCode != http.StatusOK || finalMetric.TokenUsage.InputTokens != 2 || finalMetric.TokenUsage.OutputTokens != 1 {
+		t.Fatalf("final success metric = %+v", finalMetric)
 	}
 }
 

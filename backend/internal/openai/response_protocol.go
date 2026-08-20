@@ -171,6 +171,19 @@ func isCapacityShedErrorCode(code string) bool {
 	}
 }
 
+func requestScopedCapacityFailure(response terminalResponse) bool {
+	if response.Error == nil {
+		return false
+	}
+	if isCapacityShedErrorCode(response.Error.Code) {
+		return true
+	}
+	message := strings.ToLower(strings.TrimSpace(response.Error.Message))
+	return strings.Contains(message, "server is overloaded") ||
+		strings.Contains(message, "servers are overloaded") ||
+		strings.Contains(message, "servers are currently overloaded")
+}
+
 func sanitizeCapacityShedSSEForClient(body []byte) []byte {
 	lines := bytes.SplitAfter(body, []byte("\n"))
 	for index, line := range lines {

@@ -26,3 +26,13 @@ func TestApplyCodexOAuthIdentity(t *testing.T) {
 		t.Fatalf("explicit-version identity = %#v", header)
 	}
 }
+
+func TestCodexOAuthCredentialIdentity(t *testing.T) {
+	headers := codexOAuthCredentialIdentity()
+	if headers["Originator"] != codexDefaultOriginator || headers["User-Agent"] != codexProbeUserAgent {
+		t.Fatalf("credential identity = %#v", headers)
+	}
+	if _, exists := headers["Version"]; exists {
+		t.Fatalf("credential identity must not include Version: %#v", headers)
+	}
+}

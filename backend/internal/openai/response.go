@@ -34,9 +34,10 @@ type ProxyMetrics struct {
 }
 
 type StreamFailoverError struct {
-	StatusCode int
-	StreamBody []byte
-	Response   json.RawMessage
+	StatusCode             int
+	StreamBody             []byte
+	Response               json.RawMessage
+	RequestScopedTransient bool
 }
 
 func (e *StreamFailoverError) Error() string {
@@ -230,7 +231,7 @@ func copySSEWithPendingLimitAndTimeout(dst http.ResponseWriter, src *http.Respon
 				if eventType == "response.failed" && !clientOutputStarted {
 					pending = append(pending, line...)
 					if status, retryable := retryableTerminalFailure(terminal); retryable {
-						return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, clientDisconnected), &StreamFailoverError{StatusCode: status, StreamBody: append([]byte(nil), pending...)}
+						return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, clientDisconnected), &StreamFailoverError{StatusCode: status, StreamBody: append([]byte(nil), pending...), RequestScopedTransient: requestScopedCapacityFailure(terminal)}
 					}
 					startClientOutput()
 					continue
@@ -255,7 +256,7 @@ func copySSEWithPendingLimitAndTimeout(dst http.ResponseWriter, src *http.Respon
 					if topLevelError != nil {
 						if !clientOutputStarted {
 							if status, retryable := retryableTerminalFailure(terminal); retryable {
-								return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, clientDisconnected), &StreamFailoverError{StatusCode: status, StreamBody: append([]byte(nil), pending...)}
+								return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, clientDisconnected), &StreamFailoverError{StatusCode: status, StreamBody: append([]byte(nil), pending...), RequestScopedTransient: requestScopedCapacityFailure(terminal)}
 							}
 							startClientOutput()
 						}
@@ -278,7 +279,7 @@ func copySSEWithPendingLimitAndTimeout(dst http.ResponseWriter, src *http.Respon
 				if topLevelError != nil {
 					if !clientOutputStarted {
 						if status, retryable := retryableTerminalFailure(terminal); retryable {
-							return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, clientDisconnected), &StreamFailoverError{StatusCode: status, StreamBody: append([]byte(nil), pending...)}
+							return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, clientDisconnected), &StreamFailoverError{StatusCode: status, StreamBody: append([]byte(nil), pending...), RequestScopedTransient: requestScopedCapacityFailure(terminal)}
 						}
 						startClientOutput()
 					}
@@ -373,7 +374,7 @@ func copySSEAsJSON(dst http.ResponseWriter, src *http.Response, startedAt time.T
 			}
 			status, retryable := retryableTerminalFailure(terminal)
 			if retryable {
-				return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), &StreamFailoverError{StatusCode: status, Response: errorEnvelope}
+				return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), &StreamFailoverError{StatusCode: status, Response: errorEnvelope, RequestScopedTransient: requestScopedCapacityFailure(terminal)}
 			}
 			copyResponseHeaders(dst.Header(), src.Header)
 			dst.Header().Set("Content-Type", "application/json")
@@ -387,7 +388,7 @@ func copySSEAsJSON(dst http.ResponseWriter, src *http.Response, startedAt time.T
 	if terminalType == "response.failed" {
 		status, retryable := retryableTerminalFailure(terminal)
 		if retryable {
-			return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), &StreamFailoverError{StatusCode: status, Response: append(json.RawMessage(nil), finalResponse...)}
+			return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), &StreamFailoverError{StatusCode: status, Response: append(json.RawMessage(nil), finalResponse...), RequestScopedTransient: requestScopedCapacityFailure(terminal)}
 		}
 		copyResponseHeaders(dst.Header(), src.Header)
 		dst.Header().Set("Content-Type", "application/json")

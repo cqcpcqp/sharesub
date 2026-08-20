@@ -31,6 +31,8 @@ func (s *ResponsesWebSocketSession) Run(ctx context.Context, client ResponsesWeb
 	var upstreamReaderDone chan struct{}
 	var pinnedDial ResponsesWebSocketDialConfig
 	var pendingFirstDownstreamControls responsesWebSocketPendingClientFrames
+	var replayHistory responsesWebSocketReplayHistory
+	sessionReplaySafe := true
 	// sessionModel follows the model negotiated by the client. Responses WS v2
 	// permits session.update to change session.model between turns, and a later
 	// response.create may omit model. A response.create model applies only to
@@ -66,6 +68,31 @@ func (s *ResponsesWebSocketSession) Run(ctx context.Context, client ResponsesWeb
 		}
 		turnRequest := ResponsesWebSocketTurnRequest{
 			Turn: turn, Frame: requestFrame, Billing: billing, PreviousResponseID: previousResponseID,
+		}
+		currentInput, currentInputExists, currentInputReplayable, inputErr := responsesWebSocketInputItems(requestFrame)
+		if inputErr != nil {
+			return NewResponsesWebSocketCloseError(websocket.StatusPolicyViolation, "invalid response.create input", inputErr)
+		}
+		replayPlan, retrySafe, replayCommitSafe := replayHistory.plan(previousResponseID, currentInput, currentInputExists, currentInputReplayable)
+		retrySafe = retrySafe && sessionReplaySafe
+		retryTurnRequest := turnRequest
+		retryTurnRequestPrepared := strings.TrimSpace(previousResponseID) == ""
+		prepareRetryTurnRequest := func() error {
+			if retryTurnRequestPrepared {
+				return nil
+			}
+			fullReplayInput := replayPlan.input(replayHistory.items, currentInput)
+			rebuilt, safe, rebuildErr := buildResponsesWebSocketRetryFrame(requestFrame, fullReplayInput)
+			if rebuildErr != nil {
+				return NewResponsesWebSocketCloseError(websocket.StatusInternalError, "failed to rebuild Responses WebSocket conversation", rebuildErr)
+			}
+			if !safe {
+				return NewResponsesWebSocketCloseError(websocket.StatusInternalError, "Responses WebSocket conversation is not safe to replay", nil)
+			}
+			retryTurnRequest.Frame = rebuilt
+			retryTurnRequest.PreviousResponseID = ""
+			retryTurnRequestPrepared = true
+			return nil
 		}
 		turnConfig := ResponsesWebSocketTurnConfig{Frame: requestFrame}
 		turnStarted := false
@@ -128,13 +155,23 @@ func (s *ResponsesWebSocketSession) Run(ctx context.Context, client ResponsesWeb
 					}
 
 					dialErr := normalizeResponsesWebSocketDialError(err, dialStatus, handshakeHeaders)
-					if turn == 1 && (dialErr.StatusCode == http.StatusTooManyRequests || dialErr.StatusCode == http.StatusUnauthorized) && hooks.OnFirstDialError != nil {
-						nextConfig, retryErr := hooks.OnFirstDialError(ctx, turnRequest, result, dialErr)
+					dialHook := hooks.OnDialError
+					if dialHook == nil && turn == 1 {
+						dialHook = hooks.OnFirstDialError
+					}
+					if retrySafe && (dialErr.StatusCode == http.StatusTooManyRequests || dialErr.StatusCode == http.StatusUnauthorized) && dialHook != nil {
+						if prepareErr := prepareRetryTurnRequest(); prepareErr != nil {
+							if turnStarted {
+								callResponsesWebSocketAfterTurn(ctx, hooks, turn, result, prepareErr)
+							}
+							return prepareErr
+						}
+						nextConfig, retryErr := dialHook(ctx, retryTurnRequest, result, dialErr)
 						if retryErr != nil {
 							return normalizeResponsesWebSocketHookError(retryErr)
 						}
 						if len(nextConfig.Frame) == 0 {
-							nextConfig.Frame = requestFrame
+							nextConfig.Frame = retryTurnRequest.Frame
 						}
 						nextNormalized, nextBilling, _, prepareErr := prepareResponsesWebSocketFrame(nextConfig.Frame, turn, "")
 						if prepareErr != nil {
@@ -205,21 +242,31 @@ func (s *ResponsesWebSocketSession) Run(ctx context.Context, client ResponsesWeb
 				return err
 			}
 
-			allowFirstUpstreamErrorRetry := turn == 1 && hooks.OnFirstUpstreamError != nil
+			upstreamErrorHook := hooks.OnUpstreamError
+			if upstreamErrorHook == nil && turn == 1 {
+				upstreamErrorHook = hooks.OnFirstUpstreamError
+			}
+			allowUpstreamErrorRetry := retrySafe && upstreamErrorHook != nil
 			result, err = s.relayTurn(
 				ctx, client, upstream, clientReads, upstreamReads, result, turnLifecycle, &sessionModel,
-				allowFirstUpstreamErrorRetry, &pendingFirstDownstreamControls,
+				&sessionReplaySafe, allowUpstreamErrorRetry, &pendingFirstDownstreamControls,
 			)
 			var firstUpstreamErr *responsesWebSocketFirstUpstreamError
-			if errors.As(err, &firstUpstreamErr) && firstUpstreamErr != nil && hooks.OnFirstUpstreamError != nil {
+			if errors.As(err, &firstUpstreamErr) && firstUpstreamErr != nil && upstreamErrorHook != nil {
 				closeUpstream()
-				nextConfig, retryErr := hooks.OnFirstUpstreamError(ctx, turnRequest, firstUpstreamErr.result, firstUpstreamErr.upstream)
+				if prepareErr := prepareRetryTurnRequest(); prepareErr != nil {
+					if turnStarted {
+						callResponsesWebSocketAfterTurn(ctx, hooks, turn, firstUpstreamErr.result, prepareErr)
+					}
+					return prepareErr
+				}
+				nextConfig, retryErr := upstreamErrorHook(ctx, retryTurnRequest, firstUpstreamErr.result, firstUpstreamErr.upstream)
 				if retryErr != nil {
 					return normalizeResponsesWebSocketHookError(retryErr)
 				}
 				retryResult := ResponsesWebSocketTurnResult{StartedAt: time.Now(), Billing: turnRequest.Billing}
 				if len(nextConfig.Frame) == 0 {
-					nextConfig.Frame = requestFrame
+					nextConfig.Frame = retryTurnRequest.Frame
 				}
 				nextNormalized, nextBilling, _, prepareErr := prepareResponsesWebSocketFrame(nextConfig.Frame, turn, "")
 				if prepareErr != nil {
@@ -248,6 +295,13 @@ func (s *ResponsesWebSocketSession) Run(ctx context.Context, client ResponsesWeb
 				result = retryResult
 				inheritedModel = nextBilling.Model
 				continue
+			}
+			if result.TerminalEvent != "" {
+				if err == nil && isSuccessfulResponsesWebSocketTerminalEvent(result.TerminalEvent) {
+					replayHistory.commit(result.RequestID, replayPlan, currentInput, result.replayOutput, replayCommitSafe && !result.replayOutputExceedsLimit)
+				} else {
+					replayHistory.invalidate()
+				}
 			}
 			if turnStarted {
 				callResponsesWebSocketAfterTurn(ctx, hooks, turn, result, err)
@@ -278,6 +332,9 @@ func (s *ResponsesWebSocketSession) Run(ctx context.Context, client ResponsesWeb
 					break
 				}
 				updateResponsesWebSocketSessionModel(&sessionModel, read.messageType, read.frame)
+				if !responsesWebSocketControlPreservesReplaySafety(read.messageType, read.frame) {
+					sessionReplaySafe = false
+				}
 				if err := s.writeUpstreamFrame(ctx, upstream, read.messageType, read.frame); err != nil {
 					stopResponsesWebSocketTimer(idleTimer)
 					return NewResponsesWebSocketCloseError(websocket.StatusInternalError, "upstream Responses WebSocket control write failed", err)
@@ -309,13 +366,15 @@ func (s *ResponsesWebSocketSession) relayTurn(
 	result ResponsesWebSocketTurnResult,
 	turnLifecycle *responsesWebSocketTurnLifecycle,
 	sessionModel *atomic.Pointer[string],
-	allowFirstUpstreamErrorRetry bool,
+	sessionReplaySafe *bool,
+	allowUpstreamErrorRetry bool,
 	pendingFirstDownstreamControls *responsesWebSocketPendingClientFrames,
 ) (ResponsesWebSocketTurnResult, error) {
 	activeClientReads := clientReads
 	var firstTokenAt time.Time
 	var terminal terminalResponse
 	var pendingError *responseError
+	var replayCollector responsesWebSocketReplayCollector
 	var drainTimer *time.Timer
 	var drainTimeout <-chan time.Time
 	clientDisconnected := false
@@ -367,12 +426,15 @@ func (s *ResponsesWebSocketSession) relayTurn(
 				return result, NewResponsesWebSocketCloseError(websocket.StatusPolicyViolation, "overlapping response.create is not supported", nil)
 			}
 			updateResponsesWebSocketSessionModel(sessionModel, read.messageType, read.frame)
-			if allowFirstUpstreamErrorRetry && !wroteDownstream {
+			if sessionReplaySafe != nil && !responsesWebSocketControlPreservesReplaySafety(read.messageType, read.frame) {
+				*sessionReplaySafe = false
+			}
+			if allowUpstreamErrorRetry && !wroteDownstream {
 				if isResponsesWebSocketResponseCancel(read.messageType, read.frame) {
 					// Cancellation targets the current execution and cannot follow a
 					// replay to another account. Commit this attempt, preserve FIFO
 					// for earlier controls, and deliver the cancel immediately.
-					allowFirstUpstreamErrorRetry = false
+					allowUpstreamErrorRetry = false
 					if err := pendingFirstDownstreamControls.flush(ctx, upstream, s.writeTimeout); err != nil {
 						finishMetrics()
 						return result, NewResponsesWebSocketCloseError(websocket.StatusInternalError, "upstream Responses WebSocket queued control write failed", err)
@@ -411,6 +473,7 @@ func (s *ResponsesWebSocketSession) relayTurn(
 				var responseID string
 				var parsedTerminal *terminalResponse
 				eventType, responseID, parsedTerminal = observeResponsesWebSocketEvent(read.frame)
+				replayCollector.addEvent(eventType, read.frame)
 				if result.RequestID == "" && responseID != "" {
 					result.RequestID = responseID
 				}
@@ -425,7 +488,7 @@ func (s *ResponsesWebSocketSession) relayTurn(
 						pendingError = &responseError{
 							Type: upstreamEventErr.Type, Code: upstreamEventErr.Code, Message: upstreamEventErr.Message,
 						}
-						if allowFirstUpstreamErrorRetry && !wroteDownstream && !clientDisconnected && isResponsesWebSocketRateLimitError(upstreamEventErr) {
+						if allowUpstreamErrorRetry && !wroteDownstream && !clientDisconnected && isResponsesWebSocketRateLimitError(upstreamEventErr) {
 							finishMetrics()
 							result.Metrics.ErrorStatusCode = http.StatusTooManyRequests
 							return result, &responsesWebSocketFirstUpstreamError{result: result, upstream: upstreamEventErr}
@@ -455,6 +518,8 @@ func (s *ResponsesWebSocketSession) relayTurn(
 				}
 			}
 			if terminalEvent {
+				result.replayOutput = replayCollector.items
+				result.replayOutputExceedsLimit = replayCollector.exceedsLimit
 				result.TerminalEvent = normalizeResponsesWebSocketTerminalEvent(eventType)
 				applyPendingError()
 				applyResponsesWebSocketTerminalFailure(eventType, &terminal)

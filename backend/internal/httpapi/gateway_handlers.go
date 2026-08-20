@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -122,6 +123,7 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 
 	excludedAccountIDs := make([]string, 0, maxUpstreamAccountSwitches)
 	authRefreshed := make(map[string]bool)
+	requestScopedRetries := make(map[string]int)
 	clientWantsStream := billingMetadata.Stream && !compact
 	for switches := 0; ; {
 		if s.protections.modelBlocked(access.Credential.Account.ID, billingMetadata.Model) {
@@ -135,6 +137,7 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 			access = next
 			continue
 		}
+		attemptRequestID := requestScopedAttemptRequestID(gatewayRequestID, requestScopedRetries[access.Credential.Account.ID])
 		attemptStartedAt := time.Now()
 		policyBody, policyMetadata := forwardBody, billingMetadata
 		var policyErr error
@@ -143,11 +146,11 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		}
 		if policyErr != nil {
 			if blocked, ok := policyErr.(*openai.FastPolicyBlockedError); ok {
-				s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, billingMetadata.Model, billingMetadata, http.StatusForbidden, domain.GatewayErrorSourceRequest, "permission_error", blocked.Message, time.Since(attemptStartedAt)), attemptStartedAt)
+				s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(attemptRequestID, r.URL.Path, billingMetadata.Model, billingMetadata, http.StatusForbidden, domain.GatewayErrorSourceRequest, "permission_error", blocked.Message, time.Since(attemptStartedAt)), attemptStartedAt)
 				writeGatewayErrorStatus(w, http.StatusForbidden, "permission_error", blocked.Message)
 				return
 			}
-			s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, billingMetadata.Model, billingMetadata, http.StatusInternalServerError, domain.GatewayErrorSourceGateway, "policy_error", policyErr.Error(), time.Since(attemptStartedAt)), attemptStartedAt)
+			s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(attemptRequestID, r.URL.Path, billingMetadata.Model, billingMetadata, http.StatusInternalServerError, domain.GatewayErrorSourceGateway, "policy_error", policyErr.Error(), time.Since(attemptStartedAt)), attemptStartedAt)
 			writeGatewayErrorStatus(w, http.StatusInternalServerError, "policy_error", policyErr.Error())
 			return
 		}
@@ -159,15 +162,15 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 			cancelAttempt()
 			var fingerprintErr *openai.CodexFingerprintRequestError
 			if errors.As(err, &fingerprintErr) {
-				s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, billingMetadata.Model, policyMetadata, http.StatusBadRequest, domain.GatewayErrorSourceRequest, "invalid_request_error", err.Error(), time.Since(attemptStartedAt)), attemptStartedAt)
+				s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(attemptRequestID, r.URL.Path, billingMetadata.Model, policyMetadata, http.StatusBadRequest, domain.GatewayErrorSourceRequest, "invalid_request_error", err.Error(), time.Since(attemptStartedAt)), attemptStartedAt)
 				writeGatewayErrorStatus(w, http.StatusBadRequest, "invalid_request_error", err.Error())
 				return
 			}
 			if r.Context().Err() != nil {
-				s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, billingMetadata.Model, policyMetadata, clientClosedRequestStatus, domain.GatewayErrorSourceRequest, "client_disconnected", "client disconnected before response completed", time.Since(attemptStartedAt)), attemptStartedAt)
+				s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(attemptRequestID, r.URL.Path, billingMetadata.Model, policyMetadata, clientClosedRequestStatus, domain.GatewayErrorSourceRequest, "client_disconnected", "client disconnected before response completed", time.Since(attemptStartedAt)), attemptStartedAt)
 				return
 			}
-			s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, billingMetadata.Model, policyMetadata, http.StatusBadGateway, domain.GatewayErrorSourceUpstream, "upstream_unavailable", err.Error(), time.Since(attemptStartedAt)), attemptStartedAt)
+			s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(attemptRequestID, r.URL.Path, billingMetadata.Model, policyMetadata, http.StatusBadGateway, domain.GatewayErrorSourceUpstream, "upstream_unavailable", err.Error(), time.Since(attemptStartedAt)), attemptStartedAt)
 			if switches < maxUpstreamAccountSwitches {
 				excludedAccountIDs = append(excludedAccountIDs, access.Credential.Account.ID)
 				releaseGatewayAccess(&access)
@@ -184,11 +187,11 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		if !acceptUpstream() {
 			_ = upstream.Body.Close()
 			cancelAttempt()
-			s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, billingMetadata.Model, policyMetadata, clientClosedRequestStatus, domain.GatewayErrorSourceRequest, "client_disconnected", "client disconnected before response completed", time.Since(attemptStartedAt)), attemptStartedAt)
+			s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(attemptRequestID, r.URL.Path, billingMetadata.Model, policyMetadata, clientClosedRequestStatus, domain.GatewayErrorSourceRequest, "client_disconnected", "client disconnected before response completed", time.Since(attemptStartedAt)), attemptStartedAt)
 			return
 		}
 
-		requestID := upstreamRequestID(upstream, gatewayRequestID)
+		requestID := upstreamRequestID(upstream, attemptRequestID)
 		quotaObservedAt := time.Now()
 		if shouldSwitchUpstreamAccount(upstream.StatusCode) || upstream.StatusCode == http.StatusBadRequest {
 			metrics, rejectedBody, drainErr := openai.DrainResponse(upstream, attemptStartedAt)
@@ -269,8 +272,18 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 			s.recordGatewayUsage(r.Context(), access, upstream.Header, requestID, quotaObservedAt)
 		}
 
+		if errors.As(copyErr, &failoverErr) && failoverErr.RequestScopedTransient && r.Context().Err() == nil {
+			accountID := access.Credential.Account.ID
+			if requestScopedRetries[accountID] < maxRequestScopedCapacityRetries {
+				requestScopedRetries[accountID]++
+				if !waitForRequestScopedRetry(r.Context(), s.requestScopedRetryDelay(requestScopedRetries[accountID])) {
+					return
+				}
+				continue
+			}
+		}
 		if errors.As(copyErr, &failoverErr) && switches < maxUpstreamAccountSwitches && r.Context().Err() == nil {
-			if isTransientUpstreamStatus(failoverErr.StatusCode) {
+			if !failoverErr.RequestScopedTransient && isTransientUpstreamStatus(failoverErr.StatusCode) {
 				s.protections.backoffAPIKey(access.Credential.APIKeyID, upstream.Header)
 			}
 			excludedAccountIDs = append(excludedAccountIDs, access.Credential.Account.ID)
@@ -292,6 +305,31 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 			s.logger.Warn("copy upstream response", "request_id", requestID, "error", copyErr)
 		}
 		return
+	}
+}
+
+func requestScopedCapacityDelay(retry int) time.Duration {
+	if retry <= 1 {
+		return 500 * time.Millisecond
+	}
+	delay := 500 * time.Millisecond
+	for current := 1; current < retry; current++ {
+		delay *= 2
+	}
+	return delay
+}
+
+func waitForRequestScopedRetry(ctx context.Context, delay time.Duration) bool {
+	if delay <= 0 {
+		return ctx.Err() == nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
 	}
 }
 
@@ -509,6 +547,13 @@ func upstreamRequestID(upstream *http.Response, fallback string) string {
 		requestID = fallback
 	}
 	return requestID
+}
+
+func requestScopedAttemptRequestID(gatewayRequestID string, completedRetries int) string {
+	if completedRetries <= 0 {
+		return gatewayRequestID
+	}
+	return gatewayRequestID + "-request-scoped-attempt-" + strconv.Itoa(completedRetries+1)
 }
 
 func gatewayRequestID(r *http.Request) string {

@@ -946,7 +946,7 @@ func TestCopyResponseCapacityErrorFrameBeforeFailedStillFailsOver(t *testing.T) 
 	recorder := httptest.NewRecorder()
 	metrics, err := CopyResponse(recorder, source, time.Now())
 	var failure *StreamFailoverError
-	if !errors.As(err, &failure) || failure.StatusCode != http.StatusServiceUnavailable {
+	if !errors.As(err, &failure) || failure.StatusCode != http.StatusServiceUnavailable || !failure.RequestScopedTransient {
 		t.Fatalf("error = %#v", err)
 	}
 	if recorder.Body.Len() != 0 {
@@ -1171,6 +1171,17 @@ func TestCopyResponseTreatsStandaloneRetryableErrorAsTerminal(t *testing.T) {
 	}
 	if metrics.ErrorCode != "rate_limit_exceeded" || metrics.ErrorStatusCode != http.StatusTooManyRequests {
 		t.Fatalf("metrics = %+v", metrics)
+	}
+}
+
+func TestCopyResponseMarksStandaloneCapacityErrorRequestScoped(t *testing.T) {
+	body := "data: {\"type\":\"error\",\"error\":{\"type\":\"service_unavailable_error\",\"code\":\"slow_down\",\"message\":\"overloaded\"}}\n\n"
+	source := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}
+	recorder := httptest.NewRecorder()
+	_, err := CopyResponse(recorder, source, time.Now())
+	var failure *StreamFailoverError
+	if !errors.As(err, &failure) || !failure.RequestScopedTransient {
+		t.Fatalf("error = %#v", err)
 	}
 }
 

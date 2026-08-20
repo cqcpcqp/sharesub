@@ -154,12 +154,14 @@ func (s *Server) responsesWebSocketHandler(w http.ResponseWriter, r *http.Reques
 
 	var pinned application.GatewayAccess
 	var turnAccess application.GatewayAccess
+	defer func() { releaseGatewayAccess(&turnAccess) }()
 	connectionRequestID := gatewayRequestID(r)
 	firstTurn := true
-	var firstQuotaRecorded bool
 	failedFirstAccountIDs := make([]string, 0, maxUpstreamAccountSwitches)
 	firstAccountSwitches := 0
+	turnAttempt := 0
 	authRefreshed := make(map[string]bool)
+	replacePinnedAfterTurn := false
 	setTurnAccess := func(access application.GatewayAccess, request openai.ResponsesWebSocketTurnRequest) (openai.ResponsesWebSocketTurnConfig, error) {
 		turnAccess = access
 		policyStartedAt := time.Now()
@@ -220,7 +222,7 @@ func (s *Server) responsesWebSocketHandler(w http.ResponseWriter, r *http.Reques
 		if recordedAt.IsZero() {
 			recordedAt = time.Now()
 		}
-		requestID := connectionRequestID + "-ws-" + strconv.Itoa(request.Turn) + "-attempt-" + strconv.Itoa(firstAccountSwitches+1)
+		requestID := connectionRequestID + "-ws-" + strconv.Itoa(request.Turn) + "-attempt-" + strconv.Itoa(turnAttempt)
 		metric := gatewayErrorMetric(requestID, r.URL.Path, request.Billing.Model, result.Billing, http.StatusTooManyRequests, domain.GatewayErrorSourceUpstream, metricCode, metricMessage, time.Since(recordedAt))
 		metric.IsStream = true
 		s.recordGatewayMetric(ctx, failedAccess, metric, recordedAt)
@@ -237,10 +239,14 @@ func (s *Server) responsesWebSocketHandler(w http.ResponseWriter, r *http.Reques
 		if resolveErr != nil {
 			return openai.ResponsesWebSocketTurnConfig{}, openai.NewResponsesWebSocketCloseError(websocket.StatusTryAgainLater, "upstream rate limit exceeded, please retry later", resolveErr)
 		}
+		turnAttempt++
+		replacePinnedAfterTurn = true
 		return setTurnAccess(nextAccess, request)
 	}
 	hooks := openai.ResponsesWebSocketHooks{
 		BeforeTurn: func(ctx context.Context, request openai.ResponsesWebSocketTurnRequest) (openai.ResponsesWebSocketTurnConfig, error) {
+			replacePinnedAfterTurn = false
+			turnAttempt = 1
 			if request.Turn > 1 {
 				if allowed, _ := s.protections.admitAPIKey(apiKeyID); !allowed {
 					return openai.ResponsesWebSocketTurnConfig{}, openai.NewResponsesWebSocketCloseError(websocket.StatusTryAgainLater, "API key request rate limit reached", nil)
@@ -260,7 +266,7 @@ func (s *Server) responsesWebSocketHandler(w http.ResponseWriter, r *http.Reques
 			}
 			return setTurnAccess(access, request)
 		},
-		OnFirstDialError: func(ctx context.Context, request openai.ResponsesWebSocketTurnRequest, result openai.ResponsesWebSocketTurnResult, dialErr *openai.ResponsesWebSocketDialError) (openai.ResponsesWebSocketTurnConfig, error) {
+		OnDialError: func(ctx context.Context, request openai.ResponsesWebSocketTurnRequest, result openai.ResponsesWebSocketTurnResult, dialErr *openai.ResponsesWebSocketDialError) (openai.ResponsesWebSocketTurnConfig, error) {
 			if dialErr != nil && dialErr.StatusCode == http.StatusUnauthorized && turnAccess.Credential.APIKeyID != "" {
 				if s.refreshRejectedGatewayAccess(ctx, &turnAccess, dialErr.StatusCode, nil, authRefreshed) {
 					return setTurnAccess(turnAccess, request)
@@ -269,7 +275,7 @@ func (s *Server) responsesWebSocketHandler(w http.ResponseWriter, r *http.Reques
 				if recordedAt.IsZero() {
 					recordedAt = time.Now()
 				}
-				requestID := connectionRequestID + "-ws-" + strconv.Itoa(request.Turn) + "-attempt-1"
+				requestID := connectionRequestID + "-ws-" + strconv.Itoa(request.Turn) + "-attempt-" + strconv.Itoa(turnAttempt)
 				metric := gatewayErrorMetric(requestID, r.URL.Path, request.Billing.Model, result.Billing, http.StatusUnauthorized, domain.GatewayErrorSourceUpstream, "websocket_handshake_error", dialErr.Error(), time.Since(recordedAt))
 				metric.IsStream = true
 				s.recordGatewayMetric(ctx, turnAccess, metric, recordedAt)
@@ -280,7 +286,7 @@ func (s *Server) responsesWebSocketHandler(w http.ResponseWriter, r *http.Reques
 			}
 			return retryFirstAccount(ctx, request, result, dialErr.ResponseHeaders, "rate_limit_error", dialErr.Error(), dialErr)
 		},
-		OnFirstUpstreamError: func(ctx context.Context, request openai.ResponsesWebSocketTurnRequest, result openai.ResponsesWebSocketTurnResult, upstreamErr *openai.ResponsesWebSocketUpstreamEventError) (openai.ResponsesWebSocketTurnConfig, error) {
+		OnUpstreamError: func(ctx context.Context, request openai.ResponsesWebSocketTurnRequest, result openai.ResponsesWebSocketTurnResult, upstreamErr *openai.ResponsesWebSocketUpstreamEventError) (openai.ResponsesWebSocketTurnConfig, error) {
 			if upstreamErr == nil {
 				return openai.ResponsesWebSocketTurnConfig{}, openai.NewResponsesWebSocketCloseError(websocket.StatusInternalError, "upstream Responses WebSocket error is unavailable", nil)
 			}
@@ -290,11 +296,12 @@ func (s *Server) responsesWebSocketHandler(w http.ResponseWriter, r *http.Reques
 			access := turnAccess
 			var shutdownCause responsesWebSocketShutdownCause
 			serverShuttingDown := errors.As(context.Cause(sessionCtx), &shutdownCause)
-			if turn == 1 && firstTurn && result.HandshakeSucceeded {
+			if result.HandshakeSucceeded && ((turn == 1 && firstTurn) || (replacePinnedAfterTurn && result.TerminalEvent != "")) {
 				pinned = access
 				pinned.Release = nil
 				firstTurn = false
 			}
+			replacePinnedAfterTurn = false
 			releaseGatewayAccess(&turnAccess)
 			if access.Credential.APIKeyID == "" {
 				return
@@ -346,8 +353,7 @@ func (s *Server) responsesWebSocketHandler(w http.ResponseWriter, r *http.Reques
 				}
 				metric.ErrorMessage = turnErr.Error()
 			}
-			if s.recordGatewayMetric(ctx, access, metric, recordedAt) == nil && turn == 1 && result.TerminalEvent != "" && !firstQuotaRecorded {
-				firstQuotaRecorded = true
+			if s.recordGatewayMetric(ctx, access, metric, recordedAt) == nil && result.HandshakeSucceeded && result.TerminalEvent != "" {
 				s.recordGatewayUsage(ctx, access, result.ResponseHeaders, requestID, time.Now())
 			}
 		},

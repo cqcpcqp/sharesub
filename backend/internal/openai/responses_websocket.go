@@ -2,6 +2,7 @@ package openai
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -74,17 +75,21 @@ type ResponsesWebSocketTurnConfig struct {
 }
 
 type ResponsesWebSocketTurnResult struct {
-	RequestID          string
-	TerminalEvent      string
-	StartedAt          time.Time
-	Billing            RequestBilling
-	Metrics            ProxyMetrics
-	HandshakeSucceeded bool
-	ResponseHeaders    http.Header
+	RequestID                string
+	TerminalEvent            string
+	StartedAt                time.Time
+	Billing                  RequestBilling
+	Metrics                  ProxyMetrics
+	HandshakeSucceeded       bool
+	ResponseHeaders          http.Header
+	replayOutput             []json.RawMessage
+	replayOutputExceedsLimit bool
 }
 
 type ResponsesWebSocketHooks struct {
 	BeforeTurn           func(context.Context, ResponsesWebSocketTurnRequest) (ResponsesWebSocketTurnConfig, error)
+	OnDialError          func(context.Context, ResponsesWebSocketTurnRequest, ResponsesWebSocketTurnResult, *ResponsesWebSocketDialError) (ResponsesWebSocketTurnConfig, error)
+	OnUpstreamError      func(context.Context, ResponsesWebSocketTurnRequest, ResponsesWebSocketTurnResult, *ResponsesWebSocketUpstreamEventError) (ResponsesWebSocketTurnConfig, error)
 	OnFirstDialError     func(context.Context, ResponsesWebSocketTurnRequest, ResponsesWebSocketTurnResult, *ResponsesWebSocketDialError) (ResponsesWebSocketTurnConfig, error)
 	OnFirstUpstreamError func(context.Context, ResponsesWebSocketTurnRequest, ResponsesWebSocketTurnResult, *ResponsesWebSocketUpstreamEventError) (ResponsesWebSocketTurnConfig, error)
 	AfterTurn            func(context.Context, int, ResponsesWebSocketTurnResult, error)

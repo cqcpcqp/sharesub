@@ -371,6 +371,20 @@ func waitResponsesWebSocketHTTPMetrics(t *testing.T, store *responsesWebSocketHT
 	return nil
 }
 
+func waitResponsesWebSocketHTTPQuotas(t *testing.T, store *responsesWebSocketHTTPStore, count int) []responsesWebSocketHTTPQuotaRecord {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		quotas := store.recordedQuotas()
+		if len(quotas) >= count {
+			return quotas
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %d quota records; got %d", count, len(store.recordedQuotas()))
+	return nil
+}
+
 func discardTestLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
@@ -683,6 +697,233 @@ func TestResponsesWebSocketHTTPFirstUpstreamRateLimitErrorSwitchesBeforeDownstre
 
 	if _, err := service.ResolveGatewayAccess(context.Background(), responsesWebSocketHTTPAPIKey, second.Account.ID); !errors.Is(err, domain.ErrAccountRateLimited) {
 		t.Fatalf("failed account RPM was not consumed: %v", err)
+	}
+}
+
+func TestResponsesWebSocketHTTPLaterRateLimitRebuildsConversationAndPinsReplacement(t *testing.T) {
+	config := responsesWebSocketHTTPConfig()
+	httpServer, _, store, firstUpstream, dialer := newResponsesWebSocketHTTPServer(t, config)
+	defer httpServer.Close()
+	first := addResponsesWebSocketHTTPCredential(t, store, "account-a")
+	second := addResponsesWebSocketHTTPCredential(t, store, "account-b")
+	store.credentials[1] = second
+	secondUpstream := newResponsesWebSocketHTTPUpstream()
+	dialer.attempts = []responsesWebSocketHTTPDialAttempt{
+		{conn: firstUpstream, status: http.StatusSwitchingProtocols},
+		{conn: secondUpstream, status: http.StatusSwitchingProtocols},
+	}
+
+	client, _, err := dialResponsesWebSocketHTTP(t, httpServer.URL)
+	if err != nil {
+		t.Fatalf("dial Responses WebSocket: %v", err)
+	}
+	defer client.CloseNow()
+	writeResponsesWebSocketHTTP(t, client, `{"type":"response.create","model":"gpt-5.6-sol","input":"one"}`)
+	waitResponsesWebSocketHTTPWrite(t, firstUpstream)
+	firstUpstream.send(`{"type":"response.completed","response":{"id":"resp_1","output":[{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"output_text","text":"answer one"}]}]}}`)
+	readResponsesWebSocketHTTP(t, client)
+
+	writeResponsesWebSocketHTTP(t, client, `{"type":"response.create","previous_response_id":"resp_1","input":"two"}`)
+	waitResponsesWebSocketHTTPWrite(t, firstUpstream)
+	firstUpstream.send(`{"type":"error","error":{"type":"rate_limit_error","code":"rate_limit_exceeded","message":"rate limit exceeded"}}`)
+	rebuilt := waitResponsesWebSocketHTTPWrite(t, secondUpstream)
+	var payload map[string]any
+	if err := json.Unmarshal(rebuilt, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := payload["previous_response_id"]; exists {
+		t.Fatalf("replacement request retained previous_response_id: %s", rebuilt)
+	}
+	items, _ := payload["input"].([]any)
+	if len(items) != 3 {
+		t.Fatalf("replacement input = %#v", payload["input"])
+	}
+	if got := dialer.dialHeaders()[1].Get("ChatGPT-Account-ID"); got != second.Account.ChatGPTAccountID {
+		t.Fatalf("replacement dial account = %q, want %q", got, second.Account.ChatGPTAccountID)
+	}
+	secondUpstream.send(`{"type":"response.completed","response":{"id":"resp_2","output":[]}}`)
+	readResponsesWebSocketHTTP(t, client)
+
+	writeResponsesWebSocketHTTP(t, client, `{"type":"response.create","previous_response_id":"resp_2","input":"three"}`)
+	third := waitResponsesWebSocketHTTPWrite(t, secondUpstream)
+	if !strings.Contains(string(third), `"previous_response_id":"resp_2"`) || !strings.Contains(string(third), `"content":"three"`) {
+		t.Fatalf("pinned replacement third request = %s", third)
+	}
+	if dialer.dialCount() != 2 {
+		t.Fatalf("future turn redialed after replacement: %d", dialer.dialCount())
+	}
+	secondUpstream.send(`{"type":"response.completed","response":{"id":"resp_3","output":[]}}`)
+	readResponsesWebSocketHTTP(t, client)
+
+	metrics := waitResponsesWebSocketHTTPMetrics(t, store, 4)
+	if metrics[1].AccountID != first.Account.ID || metrics[1].StatusCode != http.StatusTooManyRequests ||
+		metrics[2].AccountID != second.Account.ID || metrics[2].StatusCode != http.StatusOK ||
+		metrics[3].AccountID != second.Account.ID || metrics[3].StatusCode != http.StatusOK {
+		t.Fatalf("later failover metrics = %+v", metrics)
+	}
+}
+
+func TestResponsesWebSocketHTTPLaterFailoverPinsReplacementAfterTerminalFailure(t *testing.T) {
+	for _, terminalType := range []string{"response.failed", "response.incomplete", "response.cancelled"} {
+		t.Run(terminalType, func(t *testing.T) {
+			config := responsesWebSocketHTTPConfig()
+			httpServer, _, store, firstUpstream, dialer := newResponsesWebSocketHTTPServer(t, config)
+			defer httpServer.Close()
+			addResponsesWebSocketHTTPCredential(t, store, "account-a")
+			second := addResponsesWebSocketHTTPCredential(t, store, "account-b")
+			secondUpstream := newResponsesWebSocketHTTPUpstream()
+			dialer.attempts = []responsesWebSocketHTTPDialAttempt{
+				{conn: firstUpstream, status: http.StatusSwitchingProtocols},
+				{conn: secondUpstream, status: http.StatusSwitchingProtocols},
+			}
+
+			client, _, err := dialResponsesWebSocketHTTP(t, httpServer.URL)
+			if err != nil {
+				t.Fatalf("dial Responses WebSocket: %v", err)
+			}
+			defer client.CloseNow()
+			writeResponsesWebSocketHTTP(t, client, `{"type":"response.create","model":"gpt-5.6-sol","input":"one"}`)
+			waitResponsesWebSocketHTTPWrite(t, firstUpstream)
+			firstUpstream.send(`{"type":"response.completed","response":{"id":"resp_1","output":[{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"output_text","text":"answer one"}]}]}}`)
+			readResponsesWebSocketHTTP(t, client)
+
+			writeResponsesWebSocketHTTP(t, client, `{"type":"response.create","previous_response_id":"resp_1","input":"two"}`)
+			waitResponsesWebSocketHTTPWrite(t, firstUpstream)
+			firstUpstream.send(`{"type":"error","error":{"type":"rate_limit_error","code":"rate_limit_exceeded","message":"rate limit exceeded"}}`)
+			waitResponsesWebSocketHTTPWrite(t, secondUpstream)
+			secondUpstream.send(`{"type":"` + terminalType + `","response":{"id":"resp_2","error":{"type":"server_error","code":"terminal_failure","message":"terminal failure"}}}`)
+			if terminal := readResponsesWebSocketHTTP(t, client); !strings.Contains(string(terminal), `"type":"`+terminalType+`"`) {
+				t.Fatalf("replacement terminal frame = %s", terminal)
+			}
+
+			writeResponsesWebSocketHTTP(t, client, `{"type":"response.create","previous_response_id":"resp_2","input":"three"}`)
+			third := waitResponsesWebSocketHTTPWrite(t, secondUpstream)
+			if !strings.Contains(string(third), `"previous_response_id":"resp_2"`) || !strings.Contains(string(third), `"content":"three"`) {
+				t.Fatalf("replacement account next request = %s", third)
+			}
+			if got := dialer.dialHeaders()[1].Get("ChatGPT-Account-ID"); got != second.Account.ChatGPTAccountID {
+				t.Fatalf("replacement dial account = %q, want %q", got, second.Account.ChatGPTAccountID)
+			}
+			if dialer.dialCount() != 2 {
+				t.Fatalf("next turn redialed after replacement terminal: %d", dialer.dialCount())
+			}
+			secondUpstream.send(`{"type":"response.completed","response":{"id":"resp_3","output":[]}}`)
+			readResponsesWebSocketHTTP(t, client)
+		})
+	}
+}
+
+func TestResponsesWebSocketHTTPLaterReplacementRecordsQuotaOnce(t *testing.T) {
+	config := responsesWebSocketHTTPConfig()
+	httpServer, _, store, firstUpstream, dialer := newResponsesWebSocketHTTPServer(t, config)
+	defer httpServer.Close()
+	addResponsesWebSocketHTTPCredential(t, store, "account-a")
+	second := addResponsesWebSocketHTTPCredential(t, store, "account-b")
+	secondUpstream := newResponsesWebSocketHTTPUpstream()
+	quotaHeaders := http.Header{
+		"X-Codex-Primary-Used-Percent":          []string{"35"},
+		"X-Codex-Primary-Reset-After-Seconds":   []string{"3600"},
+		"X-Codex-Primary-Window-Minutes":        []string{"300"},
+		"X-Codex-Secondary-Used-Percent":        []string{"15"},
+		"X-Codex-Secondary-Reset-After-Seconds": []string{"7200"},
+		"X-Codex-Secondary-Window-Minutes":      []string{"10080"},
+	}
+	dialer.attempts = []responsesWebSocketHTTPDialAttempt{
+		{conn: firstUpstream, status: http.StatusSwitchingProtocols},
+		{conn: secondUpstream, status: http.StatusSwitchingProtocols, responseHeaders: quotaHeaders},
+	}
+
+	client, _, err := dialResponsesWebSocketHTTP(t, httpServer.URL)
+	if err != nil {
+		t.Fatalf("dial Responses WebSocket: %v", err)
+	}
+	defer client.CloseNow()
+	writeResponsesWebSocketHTTP(t, client, `{"type":"response.create","model":"gpt-5.6-sol","input":"one"}`)
+	waitResponsesWebSocketHTTPWrite(t, firstUpstream)
+	firstUpstream.send(`{"type":"response.completed","response":{"id":"resp_1","output":[]}}`)
+	readResponsesWebSocketHTTP(t, client)
+	waitResponsesWebSocketHTTPMetrics(t, store, 1)
+
+	writeResponsesWebSocketHTTP(t, client, `{"type":"response.create","previous_response_id":"resp_1","input":"two"}`)
+	waitResponsesWebSocketHTTPWrite(t, firstUpstream)
+	firstUpstream.send(`{"type":"error","error":{"type":"rate_limit_error","code":"rate_limit_exceeded","message":"rate limit exceeded"}}`)
+	waitResponsesWebSocketHTTPWrite(t, secondUpstream)
+	secondUpstream.send(`{"type":"response.completed","response":{"id":"resp_2","output":[]}}`)
+	readResponsesWebSocketHTTP(t, client)
+	waitResponsesWebSocketHTTPMetrics(t, store, 3)
+
+	quotas := waitResponsesWebSocketHTTPQuotas(t, store, 1)
+	if len(quotas) != 1 || quotas[0].accountID != second.Account.ID || quotas[0].planID != second.Plan.ID || len(quotas[0].signals) != 2 {
+		t.Fatalf("replacement quota records = %+v", quotas)
+	}
+
+	writeResponsesWebSocketHTTP(t, client, `{"type":"response.create","previous_response_id":"resp_2","input":"three"}`)
+	waitResponsesWebSocketHTTPWrite(t, secondUpstream)
+	secondUpstream.send(`{"type":"response.completed","response":{"id":"resp_3","output":[]}}`)
+	readResponsesWebSocketHTTP(t, client)
+	waitResponsesWebSocketHTTPMetrics(t, store, 4)
+	if quotas = store.recordedQuotas(); len(quotas) != 1 {
+		t.Fatalf("replacement handshake quota was recorded more than once: %+v", quotas)
+	}
+}
+
+func TestResponsesWebSocketHTTPLaterReplacementUnauthorizedReleasesAccountSlot(t *testing.T) {
+	config := responsesWebSocketHTTPConfig()
+	requestDone := make(chan struct{}, 1)
+	httpServer, service, store, firstUpstream, dialer := newResponsesWebSocketHTTPServerWithRequestDone(t, config, requestDone)
+	defer httpServer.Close()
+	first := addResponsesWebSocketHTTPCredential(t, store, "account-a")
+	second := addResponsesWebSocketHTTPCredential(t, store, "account-b")
+	dialer.attempts = []responsesWebSocketHTTPDialAttempt{
+		{conn: firstUpstream, status: http.StatusSwitchingProtocols},
+		{status: http.StatusUnauthorized, err: errors.New("replacement unauthorized")},
+	}
+
+	client, _, err := dialResponsesWebSocketHTTP(t, httpServer.URL)
+	if err != nil {
+		t.Fatalf("dial Responses WebSocket: %v", err)
+	}
+	defer client.CloseNow()
+	writeResponsesWebSocketHTTP(t, client, `{"type":"response.create","model":"gpt-5.6-sol","input":"one"}`)
+	waitResponsesWebSocketHTTPWrite(t, firstUpstream)
+	firstUpstream.send(`{"type":"response.completed","response":{"id":"resp_1","output":[]}}`)
+	readResponsesWebSocketHTTP(t, client)
+	waitResponsesWebSocketHTTPMetrics(t, store, 1)
+
+	writeResponsesWebSocketHTTP(t, client, `{"type":"response.create","previous_response_id":"resp_1","input":"two"}`)
+	waitResponsesWebSocketHTTPWrite(t, firstUpstream)
+	firstUpstream.send(`{"type":"error","error":{"type":"rate_limit_error","code":"rate_limit_exceeded","message":"rate limit exceeded"}}`)
+	closeErr := readResponsesWebSocketHTTPClose(t, client)
+	if closeErr.Code != websocket.StatusPolicyViolation || closeErr.Reason != "upstream Responses WebSocket authentication failed" {
+		t.Fatalf("close = %+v", closeErr)
+	}
+	select {
+	case <-requestDone:
+	case <-time.After(time.Second):
+		t.Fatal("unauthorized replacement handler did not finish")
+	}
+	if dialer.dialCount() != 2 {
+		t.Fatalf("upstream dial count = %d, want 2", dialer.dialCount())
+	}
+	metrics := store.recordedMetrics()
+	if len(metrics) != 3 || metrics[2].AccountID != second.Account.ID || metrics[2].StatusCode != http.StatusUnauthorized {
+		t.Fatalf("replacement unauthorized metrics = %+v", metrics)
+	}
+	if metrics[1].RequestID == metrics[2].RequestID ||
+		!strings.HasSuffix(metrics[1].RequestID, "-ws-2-attempt-1") ||
+		!strings.HasSuffix(metrics[2].RequestID, "-ws-2-attempt-2") {
+		t.Fatalf("replacement attempt request IDs = %q / %q", metrics[1].RequestID, metrics[2].RequestID)
+	}
+
+	probe, err := service.ResolveGatewayAccess(context.Background(), responsesWebSocketHTTPAPIKey, first.Account.ID)
+	if err != nil {
+		t.Fatalf("replacement account slot remained occupied after 401: %v", err)
+	}
+	if probe.Credential.Account.ID != second.Account.ID {
+		t.Fatalf("probe account = %q, want %q", probe.Credential.Account.ID, second.Account.ID)
+	}
+	if probe.Release != nil {
+		probe.Release()
 	}
 }
 

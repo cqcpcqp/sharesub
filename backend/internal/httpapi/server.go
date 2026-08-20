@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/sharesub/sharesub/backend/internal/application"
 	"github.com/sharesub/sharesub/backend/internal/buildinfo"
@@ -16,21 +17,23 @@ const maxGatewayBody = 256 << 20
 const maxTextGatewayBody = 32 << 20
 const maxAvatarBody = application.MaxAvatarBytes + 64<<10
 const maxUpstreamAccountSwitches = 3
+const maxRequestScopedCapacityRetries = 3
 
 const gatewayBodyTooLargeMessage = "request body exceeds 256 MiB"
 const textGatewayBodyTooLargeMessage = "request body exceeds 32 MiB"
 
 type Server struct {
-	app                *application.Service
-	gateway            *openai.Gateway
-	responsesWebSocket *openai.ResponsesWebSocketSession
-	webSocketConfig    ResponsesWebSocketConfig
-	webSocketIngress   *responsesWebSocketIngressLimiter
-	webSocketSessions  *responsesWebSocketSessionRegistry
-	protections        *gatewayProtectionState
-	logger             *slog.Logger
-	mux                *http.ServeMux
-	closeOnce          sync.Once
+	app                     *application.Service
+	gateway                 *openai.Gateway
+	responsesWebSocket      *openai.ResponsesWebSocketSession
+	webSocketConfig         ResponsesWebSocketConfig
+	webSocketIngress        *responsesWebSocketIngressLimiter
+	webSocketSessions       *responsesWebSocketSessionRegistry
+	protections             *gatewayProtectionState
+	logger                  *slog.Logger
+	mux                     *http.ServeMux
+	closeOnce               sync.Once
+	requestScopedRetryDelay func(int) time.Duration
 }
 
 type userContextKey struct{}
@@ -43,10 +46,11 @@ func New(app *application.Service, gateway *openai.Gateway, logger *slog.Logger,
 	}
 	s := &Server{
 		app: app, gateway: gateway, logger: logger, mux: http.NewServeMux(),
-		webSocketConfig:   config,
-		webSocketIngress:  newResponsesWebSocketIngressLimiter(config.MaxConnectionsPerAPIKey),
-		webSocketSessions: newResponsesWebSocketSessionRegistry(),
-		protections:       newGatewayProtectionState(config.MaxRequestsPerMinutePerAPIKey),
+		webSocketConfig:         config,
+		webSocketIngress:        newResponsesWebSocketIngressLimiter(config.MaxConnectionsPerAPIKey),
+		webSocketSessions:       newResponsesWebSocketSessionRegistry(),
+		protections:             newGatewayProtectionState(config.MaxRequestsPerMinutePerAPIKey),
+		requestScopedRetryDelay: requestScopedCapacityDelay,
 	}
 	s.responsesWebSocket = openai.NewResponsesWebSocketSession(openai.ResponsesWebSocketOptions{
 		OutboundProxyURL: config.OutboundProxyURL,

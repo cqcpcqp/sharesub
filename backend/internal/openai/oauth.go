@@ -147,7 +147,7 @@ func (c *OAuthClient) requestToken(ctx context.Context, form url.Values) (applic
 	resp, err := c.client.R().
 		SetContext(ctx).
 		SetHeader("Accept", "application/json").
-		SetHeader("User-Agent", "codex-cli/0.91.0").
+		SetHeaders(codexOAuthCredentialIdentity()).
 		SetFormDataFromValues(form).
 		SetSuccessResult(&token).
 		Post(c.tokenURL)
