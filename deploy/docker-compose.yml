@@ -12,7 +12,7 @@ services:
     restart: unless-stopped
     environment:
       SHARESUB_HTTP_ADDR: 0.0.0.0:8080
-      SHARESUB_DATABASE_URL: postgres://sharesub:sharesub@postgres:5432/sharesub?sslmode=disable&pool_max_conns=10&pool_min_conns=1&pool_max_conn_idle_time=5m
+      SHARESUB_DATABASE_URL: postgres://sharesub:sharesub@postgres:5432/sharesub?sslmode=disable&pool_max_conns=15&pool_min_conns=1&pool_max_conn_idle_time=5m
       SHARESUB_PUBLIC_URL: ${SHARESUB_DOCKER_PUBLIC_URL:-http://127.0.0.1:8081}
       SHARESUB_OAUTH_REDIRECT_URI: ${SHARESUB_OAUTH_REDIRECT_URI:-http://localhost:1455/auth/callback}
       SHARESUB_OUTBOUND_PROXY: ${SHARESUB_OUTBOUND_PROXY:-}
