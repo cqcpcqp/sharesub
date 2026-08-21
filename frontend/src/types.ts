@@ -67,6 +67,7 @@ export interface AdminUser extends User {
   account_count: number
   plan_count: number
   api_key_count: number
+  last_used_at?: string
 }
 
 export interface AdminAccount extends Account {
@@ -82,6 +83,7 @@ export interface AdminPlan extends Plan {
   member_count: number
   requests_24h: number
   total_tokens_24h: number
+  last_used_at?: string
 }
 
 export interface AdminAPIKey {

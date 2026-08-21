@@ -878,9 +878,21 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if err != nil || adminOverview.UserCount != 5 || adminOverview.Requests24H != 2 || adminOverview.Tokens24H != 11500 {
 		t.Fatalf("admin overview = %+v, error = %v", adminOverview, err)
 	}
+	if err := store.TouchAPIKey(ctx, "legacy-key", now); err != nil {
+		t.Fatal(err)
+	}
 	adminUsers, err := store.AdminListUsers(ctx)
 	if err != nil || len(adminUsers) != 5 {
 		t.Fatalf("admin users = %+v, error = %v", adminUsers, err)
+	}
+	var ownerLastUsedAt *time.Time
+	for _, item := range adminUsers {
+		if item.ID == "owner" {
+			ownerLastUsedAt = item.LastUsedAt
+		}
+	}
+	if ownerLastUsedAt == nil || !ownerLastUsedAt.Equal(now) {
+		t.Fatalf("admin owner last used at = %v, want %v", ownerLastUsedAt, now)
 	}
 	adminAccounts, err := store.AdminListAccounts(ctx)
 	if err != nil || len(adminAccounts) != 3 {
@@ -888,12 +900,14 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	}
 	adminPlans, err := store.AdminListPlans(ctx, now.Add(-24*time.Hour))
 	var adminPlanTokens int64
+	var adminPlanLastUsedAt *time.Time
 	for _, item := range adminPlans {
 		if item.ID == "plan" {
 			adminPlanTokens = item.TotalTokens24H
+			adminPlanLastUsedAt = item.LastUsedAt
 		}
 	}
-	if err != nil || len(adminPlans) != 3 || adminPlanTokens != 11500 {
+	if err != nil || len(adminPlans) != 3 || adminPlanTokens != 11500 || adminPlanLastUsedAt == nil || !adminPlanLastUsedAt.Equal(now) {
 		t.Fatalf("admin plans = %+v, error = %v", adminPlans, err)
 	}
 	adminKeys, err := store.AdminListAPIKeys(ctx)

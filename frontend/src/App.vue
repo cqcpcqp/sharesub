@@ -157,6 +157,8 @@
             v-model:active-tab="adminListTab"
             v-model:query="adminListQuery"
             v-model:scroll-top="adminListScrollTop"
+            v-model:page="adminListPage"
+            v-model:page-size="adminListPageSize"
             :current-user="user"
             :initial-account-id="adminResource?.type === 'account' ? adminResource.id : ''"
             @open-plan="openAdminPlan"
@@ -260,6 +262,8 @@ const adminResource = ref<{ type: 'plan' | 'account'; id: string } | null>(
 const adminListTab = ref<'users' | 'accounts' | 'plans' | 'keys'>('users')
 const adminListQuery = ref('')
 const adminListScrollTop = ref(0)
+const adminListPage = ref(1)
+const adminListPageSize = ref(20)
 const publicPage = ref<PublicPageID | null>(initialRoute?.kind === 'public' ? initialRoute.page : null)
 const emailVerificationPage = ref(initialRoute?.kind === 'email-verification')
 const emailVerificationToken = ref(parseEmailVerificationToken(window.location.hash))

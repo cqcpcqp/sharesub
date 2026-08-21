@@ -81,7 +81,8 @@ func (s *Store) AdminListUsers(ctx context.Context) ([]domain.AdminUser, error) 
 		SELECT u.id,u.username,u.email,u.password_hash,u.status,u.role,u.must_change_password,u.email_verified_at,u.created_at,u.avatar_updated_at,
 			(SELECT count(*) FROM openai_accounts a WHERE a.owner_user_id=u.id),
 			(SELECT count(*) FROM plan_members m WHERE m.user_id=u.id AND m.status='active'),
-			(SELECT count(*) FROM api_keys k WHERE k.user_id=u.id)
+			(SELECT count(*) FROM api_keys k WHERE k.user_id=u.id),
+			(SELECT max(k.last_used_at) FROM api_keys k WHERE k.user_id=u.id)
 		FROM users u ORDER BY u.created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -91,7 +92,7 @@ func (s *Store) AdminListUsers(ctx context.Context) ([]domain.AdminUser, error) 
 	for rows.Next() {
 		var item domain.AdminUser
 		var avatarUpdatedAt *time.Time
-		if err := rows.Scan(&item.ID, &item.Username, &item.Email, &item.PasswordHash, &item.Status, &item.Role, &item.MustChangePassword, &item.EmailVerifiedAt, &item.CreatedAt, &avatarUpdatedAt, &item.AccountCount, &item.PlanCount, &item.APIKeyCount); err != nil {
+		if err := rows.Scan(&item.ID, &item.Username, &item.Email, &item.PasswordHash, &item.Status, &item.Role, &item.MustChangePassword, &item.EmailVerifiedAt, &item.CreatedAt, &avatarUpdatedAt, &item.AccountCount, &item.PlanCount, &item.APIKeyCount, &item.LastUsedAt); err != nil {
 			return nil, err
 		}
 		item.AvatarURL = userAvatarURL(item.ID, avatarUpdatedAt)
@@ -188,7 +189,11 @@ func (s *Store) AdminListPlans(ctx context.Context, metricsStart time.Time) ([]d
 			u.username,COALESCE(a.email,''),
 			(SELECT count(*) FROM plan_members m WHERE m.plan_id=p.id AND m.status='active'),
 			(SELECT count(*) FROM gateway_request_metrics g WHERE g.plan_id=p.id AND g.created_at>=$1),
-			(SELECT COALESCE(sum(g.input_tokens+g.output_tokens),0) FROM gateway_request_metrics g WHERE g.plan_id=p.id AND g.created_at>=$1)
+			(SELECT COALESCE(sum(g.input_tokens+g.output_tokens),0) FROM gateway_request_metrics g WHERE g.plan_id=p.id AND g.created_at>=$1),
+			COALESCE(
+				(SELECT max(g.created_at) FROM gateway_request_metrics g WHERE g.plan_id=p.id),
+				(SELECT max(r.usage_day)::timestamp AT TIME ZONE 'UTC' FROM gateway_metric_daily_rollups r WHERE r.plan_id=p.id)
+			)
 		FROM shared_plans p JOIN users u ON u.id=p.owner_user_id LEFT JOIN openai_accounts a ON a.id=p.account_id
 		ORDER BY p.created_at DESC`, metricsStart)
 	if err != nil {
@@ -199,7 +204,7 @@ func (s *Store) AdminListPlans(ctx context.Context, metricsStart time.Time) ([]d
 	for rows.Next() {
 		var item domain.AdminPlan
 		var accountID *string
-		if err := rows.Scan(&item.ID, &item.OwnerUserID, &accountID, &item.Name, &item.Description, &item.Status, &item.Visibility, &item.PublicSlots, &item.PublicShareBasisPoints, &item.AllocationMode, &item.CreatedAt, &item.ArchivedAt, &item.OwnerUsername, &item.AccountEmail, &item.MemberCount, &item.Requests24H, &item.TotalTokens24H); err != nil {
+		if err := rows.Scan(&item.ID, &item.OwnerUserID, &accountID, &item.Name, &item.Description, &item.Status, &item.Visibility, &item.PublicSlots, &item.PublicShareBasisPoints, &item.AllocationMode, &item.CreatedAt, &item.ArchivedAt, &item.OwnerUsername, &item.AccountEmail, &item.MemberCount, &item.Requests24H, &item.TotalTokens24H, &item.LastUsedAt); err != nil {
 			return nil, err
 		}
 		if accountID != nil {

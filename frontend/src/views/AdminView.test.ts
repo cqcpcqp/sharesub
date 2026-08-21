@@ -4,7 +4,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from '../api'
 import { adminAPI } from '../api/admin'
-import type { AdminAccount, AdminOverview, AdminPlan, User } from '../types'
+import type { AdminAccount, AdminOverview, AdminPlan, AdminUser, User } from '../types'
 import AdminView from './AdminView.vue'
 
 const admin: User = { id: 'admin', username: '管理员', email: 'admin@example.com', email_verified_at: '2026-08-04T00:00:00Z', avatar_url: '', status: 'active', created_at: '2026-08-04T00:00:00Z', is_admin: true, role: 'admin', must_change_password: false }
@@ -33,6 +33,7 @@ const plan: AdminPlan = {
   id: 'plan', owner_user_id: admin.id, owner_username: admin.username, account_id: '', account_email: '', name: '团队 Plan', description: '',
   status: 'active', visibility: 'private', public_slots: 0, public_share_basis_points: 0, allocation_mode: 'shared', created_at: '2026-08-01T00:00:00Z',
   member_count: 1, requests_24h: 12, total_tokens_24h: 3456,
+  last_used_at: '2026-08-15T03:00:00Z',
 }
 
 afterEach(() => vi.restoreAllMocks())
@@ -161,7 +162,7 @@ describe('AdminView', () => {
     vi.spyOn(api, 'adminPlans').mockResolvedValue([])
     vi.spyOn(api, 'adminKeys').mockResolvedValue([])
     const wrapper = mount(AdminView, {
-      props: { currentUser: admin, activeTab: 'accounts', query: '团队', scrollTop: 18 },
+      props: { currentUser: admin, activeTab: 'accounts', query: '团队', scrollTop: 18, page: 1, pageSize: 10 },
       global: { stubs: { teleport: true } },
     })
     await flushPromises()
@@ -169,5 +170,37 @@ describe('AdminView', () => {
     expect(wrapper.text()).toContain('团队账号')
     expect((wrapper.find('input').element as HTMLInputElement).value).toBe('团队')
     expect((wrapper.find('.admin-table-scroll').element as HTMLElement).scrollTop).toBe(18)
+    expect(wrapper.props('page')).toBe(1)
+    expect(wrapper.props('pageSize')).toBe(10)
+  })
+
+  it('paginates the resource list and sorts users by recent usage', async () => {
+    const users: AdminUser[] = Array.from({ length: 21 }, (_, index) => ({
+      ...admin,
+      id: `user-${index}`,
+      username: `用户-${String(index).padStart(2, '0')}`,
+      email: `user-${index}@example.com`,
+      is_admin: false,
+      role: 'user',
+      account_count: 0,
+      plan_count: 0,
+      api_key_count: 1,
+      last_used_at: new Date(Date.UTC(2026, 7, index + 1)).toISOString(),
+    }))
+    vi.spyOn(api, 'adminOverview').mockResolvedValue(overview)
+    vi.spyOn(api, 'adminUsers').mockResolvedValue(users)
+    vi.spyOn(api, 'adminAccounts').mockResolvedValue([])
+    vi.spyOn(api, 'adminPlans').mockResolvedValue([])
+    vi.spyOn(api, 'adminKeys').mockResolvedValue([])
+    const wrapper = mount(AdminView, { props: { currentUser: admin }, global: { stubs: { teleport: true } } })
+    await flushPromises()
+
+    expect(wrapper.findAll('tbody tr')).toHaveLength(20)
+    expect(wrapper.text()).toContain('第 1–20 条，共 21 条')
+    expect(wrapper.find('tbody tr').text()).toContain('用户-20')
+
+    await wrapper.find('.admin-sort-button').trigger('click')
+    expect(wrapper.find('tbody tr').text()).toContain('用户-00')
+    expect(wrapper.find('.admin-sort-button').attributes('aria-label')).toContain('升序')
   })
 })

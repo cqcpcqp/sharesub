@@ -62,33 +62,37 @@
       <div v-if="loading && !overview" class="admin-loading"><NSpin size="small" /></div>
       <div v-else ref="tableScroll" class="admin-table-scroll" @scroll="rememberScroll">
         <table v-if="activeTab === 'users'" class="admin-table">
-          <thead><tr><th>用户</th><th>状态</th><th>账号</th><th>Plan</th><th>Key</th><th>注册时间</th><th>操作</th></tr></thead>
-          <tbody><tr v-for="item in filteredUsers" :key="item.id">
+          <thead><tr><th>用户</th><th>状态</th><th>账号</th><th>Plan</th><th>Key</th><th><button class="admin-sort-button" type="button" :aria-label="recentUsageSort.users === 'asc' ? '最近使用时间升序，点击切换为降序' : '最近使用时间降序，点击切换为升序'" @click="toggleRecentUsageSort('users')">最近使用<ArrowUp v-if="recentUsageSort.users === 'asc'" :size="13" /><ArrowDown v-else :size="13" /></button></th><th>注册时间</th><th>操作</th></tr></thead>
+          <tbody><tr v-for="item in pagedUsers" :key="item.id">
             <td><div class="admin-primary"><strong>{{ item.username }}<em v-if="item.is_admin">管理员</em></strong><small>{{ item.email }}</small></div></td>
-            <td><StatusBadge :value="item.status" /></td><td>{{ item.account_count }}</td><td>{{ item.plan_count }}</td><td>{{ item.api_key_count }}</td><td>{{ formatDate(item.created_at) }}</td>
+            <td><StatusBadge :value="item.status" /></td><td>{{ item.account_count }}</td><td>{{ item.plan_count }}</td><td>{{ item.api_key_count }}</td><td>{{ formatLastUsed(item.last_used_at) }}</td><td>{{ formatDate(item.created_at) }}</td>
             <td><NPopconfirm :disabled="item.id === currentUser.id" :positive-text="item.status === 'active' ? '禁用用户' : '恢复用户'" negative-text="取消" @positive-click="toggleUser(item)"><template #trigger><NButton size="tiny" secondary :type="item.status === 'active' ? 'error' : 'primary'" :disabled="item.id === currentUser.id" :loading="actionID === item.id">{{ item.id === currentUser.id ? '当前账号' : item.status === 'active' ? '禁用' : '恢复' }}</NButton></template>{{ item.status === 'active' ? '禁用后该用户的所有登录会话将立即失效。' : '恢复后该用户可以重新登录。' }}</NPopconfirm></td>
           </tr></tbody>
         </table>
 
         <table v-else-if="activeTab === 'accounts'" class="admin-table">
           <thead><tr><th>OpenAI 账号</th><th>所有者</th><th>套餐</th><th>状态</th><th>绑定 Plan</th><th>操作</th></tr></thead>
-          <tbody><tr v-for="item in filteredAccounts" :key="item.id">
+          <tbody><tr v-for="item in pagedAccounts" :key="item.id">
             <td><div class="admin-primary"><strong>{{ item.name }}</strong><small>{{ item.email }}</small></div></td><td><div class="admin-primary"><strong>{{ item.owner_username }}</strong><small>{{ item.owner_email }}</small></div></td><td>{{ item.plan_type }}</td><td><StatusBadge :value="item.status" /></td><td>{{ item.plan_name || '未绑定' }}</td>
             <td><div class="admin-row-actions"><NButton size="tiny" secondary :disabled="refreshingAccountID === item.id || reauthorizeStartingID === item.id" @click="openAccountEditor(item)"><template #icon><Pencil :size="13" /></template>编辑</NButton><NButton size="tiny" quaternary :disabled="item.status !== 'active' || actionID === item.id || reauthorizeStartingID === item.id" :loading="refreshingAccountID === item.id" @click="refreshAccountToken(item)"><template #icon><RefreshCw :size="13" /></template>刷新令牌</NButton><NButton size="tiny" quaternary :disabled="refreshingAccountID === item.id || actionID === item.id" :loading="reauthorizeStartingID === item.id" @click="startReauthorize(item)"><template #icon><RotateCw :size="13" /></template>重新授权</NButton><NPopconfirm :positive-text="item.status === 'active' ? '禁用账号' : '启用账号'" negative-text="取消" @positive-click="toggleAccount(item)"><template #trigger><NButton size="tiny" secondary :type="item.status === 'active' ? 'error' : 'primary'" :disabled="refreshingAccountID === item.id || reauthorizeStartingID === item.id" :loading="actionID === item.id">{{ item.status === 'active' ? '禁用' : '启用' }}</NButton></template>{{ item.status === 'active' ? '禁用后网关将停止向该账号调度请求。' : '启用后账号将重新参与网关调度。' }}</NPopconfirm></div></td>
           </tr></tbody>
         </table>
 
         <table v-else-if="activeTab === 'plans'" class="admin-table">
-          <thead><tr><th>Plan</th><th>所有者</th><th>账号</th><th>状态</th><th>成员</th><th>24h 请求</th><th>24h Token</th><th>创建时间</th><th>操作</th></tr></thead>
-          <tbody><tr v-for="item in filteredPlans" :key="item.id"><td><div class="admin-primary"><strong>{{ item.name }}</strong><small>{{ item.allocation_mode === 'shared' ? '共享额度' : '固定份额' }} · {{ item.visibility === 'public' ? '公开' : '私密' }}</small></div></td><td>{{ item.owner_username }}</td><td>{{ item.account_email || '未绑定' }}</td><td><StatusBadge :value="item.status" /></td><td>{{ item.member_count }}</td><td>{{ formatNumber(item.requests_24h) }}</td><td>{{ formatTokens(item.total_tokens_24h) }}</td><td>{{ formatDate(item.created_at) }}</td><td><NButton size="tiny" secondary @click="emit('openPlan', item.id)"><template #icon><ArrowRight :size="13" /></template>查看详情</NButton></td></tr></tbody>
+          <thead><tr><th>Plan</th><th>所有者</th><th>账号</th><th>状态</th><th>成员</th><th>24h 请求</th><th>24h Token</th><th><button class="admin-sort-button" type="button" :aria-label="recentUsageSort.plans === 'asc' ? '最近使用时间升序，点击切换为降序' : '最近使用时间降序，点击切换为升序'" @click="toggleRecentUsageSort('plans')">最近使用<ArrowUp v-if="recentUsageSort.plans === 'asc'" :size="13" /><ArrowDown v-else :size="13" /></button></th><th>创建时间</th><th>操作</th></tr></thead>
+          <tbody><tr v-for="item in pagedPlans" :key="item.id"><td><div class="admin-primary"><strong>{{ item.name }}</strong><small>{{ item.allocation_mode === 'shared' ? '共享额度' : '固定份额' }} · {{ item.visibility === 'public' ? '公开' : '私密' }}</small></div></td><td>{{ item.owner_username }}</td><td>{{ item.account_email || '未绑定' }}</td><td><StatusBadge :value="item.status" /></td><td>{{ item.member_count }}</td><td>{{ formatNumber(item.requests_24h) }}</td><td>{{ formatTokens(item.total_tokens_24h) }}</td><td>{{ formatLastUsed(item.last_used_at) }}</td><td>{{ formatDate(item.created_at) }}</td><td><NButton size="tiny" secondary @click="emit('openPlan', item.id)"><template #icon><ArrowRight :size="13" /></template>查看详情</NButton></td></tr></tbody>
         </table>
 
         <table v-else class="admin-table">
           <thead><tr><th>API Key</th><th>用户</th><th>状态</th><th>策略</th><th>路由</th><th>最近使用</th><th>操作</th></tr></thead>
-          <tbody><tr v-for="item in filteredKeys" :key="item.id"><td><div class="admin-primary"><strong>{{ item.name }}</strong><small><code>{{ item.key_prefix }}...</code></small></div></td><td><div class="admin-primary"><strong>{{ item.username }}</strong><small>{{ item.email }}</small></div></td><td><StatusBadge :value="item.status" /></td><td>{{ item.strategy === 'balanced' ? '额度均衡' : '优先级' }}</td><td>{{ item.route_count }}</td><td>{{ item.last_used_at ? formatDate(item.last_used_at) : '尚未使用' }}</td><td><NPopconfirm positive-text="吊销 Key" negative-text="取消" @positive-click="revokeKey(item)"><template #trigger><NButton size="tiny" secondary type="error" :disabled="item.status !== 'active'" :loading="actionID === item.id">吊销</NButton></template>吊销后无法恢复，使用该 Key 的客户端会立即停止访问。</NPopconfirm></td></tr></tbody>
+          <tbody><tr v-for="item in pagedKeys" :key="item.id"><td><div class="admin-primary"><strong>{{ item.name }}</strong><small><code>{{ item.key_prefix }}...</code></small></div></td><td><div class="admin-primary"><strong>{{ item.username }}</strong><small>{{ item.email }}</small></div></td><td><StatusBadge :value="item.status" /></td><td>{{ item.strategy === 'balanced' ? '额度均衡' : '优先级' }}</td><td>{{ item.route_count }}</td><td>{{ formatLastUsed(item.last_used_at) }}</td><td><NPopconfirm positive-text="吊销 Key" negative-text="取消" @positive-click="revokeKey(item)"><template #trigger><NButton size="tiny" secondary type="error" :disabled="item.status !== 'active'" :loading="actionID === item.id">吊销</NButton></template>吊销后无法恢复，使用该 Key 的客户端会立即停止访问。</NPopconfirm></td></tr></tbody>
         </table>
       </div>
       <NEmpty v-if="!loading && currentCount === 0" description="没有匹配的记录" />
+      <footer v-if="!loading && currentCount > 0" class="admin-pagination">
+        <span>第 {{ pageStart }}–{{ pageEnd }} 条，共 {{ currentCount }} 条</span>
+        <NPagination v-model:page="page" :page-size="pageSize" :item-count="currentCount" :page-slot="5" show-size-picker :page-sizes="pageSizes" @update:page-size="updatePageSize" />
+      </footer>
     </div>
   </section>
 
@@ -145,8 +149,8 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { NAlert, NButton, NEmpty, NInput, NPopconfirm, NSpin, NTab, NTabs } from 'naive-ui'
-import { Activity, ArrowRight, Bot, Coins, ExternalLink, KeyRound, Layers3, Pencil, RefreshCw, RotateCw, Search, UsersRound } from 'lucide-vue-next'
+import { NAlert, NButton, NEmpty, NInput, NPagination, NPopconfirm, NSpin, NTab, NTabs } from 'naive-ui'
+import { Activity, ArrowDown, ArrowRight, ArrowUp, Bot, Coins, ExternalLink, KeyRound, Layers3, Pencil, RefreshCw, RotateCw, Search, UsersRound } from 'lucide-vue-next'
 import { api, parseOAuthCallback } from '../api'
 import { adminAPI } from '../api/admin'
 import type { Account, AccountConfigInput, AdminAPIKey, AdminAccount, AdminOverview, AdminPlan, AdminUser, Member, OAuthStart, RuntimeStatus, User } from '../types'
@@ -161,6 +165,8 @@ const emit = defineEmits<{ message: [type: 'success' | 'error', text: string]; o
 const activeTab = defineModel<'users' | 'accounts' | 'plans' | 'keys'>('activeTab', { default: 'users' })
 const query = defineModel<string>('query', { default: '' })
 const scrollTop = defineModel<number>('scrollTop', { default: 0 })
+const page = defineModel<number>('page', { default: 1 })
+const pageSize = defineModel<number>('pageSize', { default: 20 })
 const overview = ref<AdminOverview | null>(null)
 const users = ref<AdminUser[]>([])
 const accounts = ref<AdminAccount[]>([])
@@ -179,13 +185,29 @@ const reauthorizeStartingID = ref('')
 const refreshingAccountID = ref('')
 const reauthorizeCompleting = ref(false)
 const jobsVisible = ref(false)
+const pageSizes = [10, 20, 50]
+const recentUsageSort = ref<Record<'users' | 'plans', 'asc' | 'desc'>>({ users: 'desc', plans: 'desc' })
 const normalizedQuery = computed(() => query.value.trim().toLowerCase())
 const matches = (...values: string[]) => !normalizedQuery.value || values.some(value => value.toLowerCase().includes(normalizedQuery.value))
-const filteredUsers = computed(() => users.value.filter(item => matches(item.username, item.email, item.id)))
+const compareLastUsed = (left?: string, right?: string, direction: 'asc' | 'desc' = 'desc') => {
+  if (!left && !right) return 0
+  if (!left) return 1
+  if (!right) return -1
+  const difference = new Date(left).getTime() - new Date(right).getTime()
+  return direction === 'asc' ? difference : -difference
+}
+const filteredUsers = computed(() => users.value.filter(item => matches(item.username, item.email, item.id)).sort((left, right) => compareLastUsed(left.last_used_at, right.last_used_at, recentUsageSort.value.users)))
 const filteredAccounts = computed(() => accounts.value.filter(item => matches(item.name, item.email, item.owner_username, item.owner_email, item.plan_name)))
-const filteredPlans = computed(() => plans.value.filter(item => matches(item.name, item.owner_username, item.account_email, item.id)))
+const filteredPlans = computed(() => plans.value.filter(item => matches(item.name, item.owner_username, item.account_email, item.id)).sort((left, right) => compareLastUsed(left.last_used_at, right.last_used_at, recentUsageSort.value.plans)))
 const filteredKeys = computed(() => keys.value.filter(item => matches(item.name, item.key_prefix, item.username, item.email)))
 const currentCount = computed(() => ({ users: filteredUsers.value.length, accounts: filteredAccounts.value.length, plans: filteredPlans.value.length, keys: filteredKeys.value.length })[activeTab.value ?? 'users'])
+const pageStart = computed(() => (page.value - 1) * pageSize.value + 1)
+const pageEnd = computed(() => Math.min(page.value * pageSize.value, currentCount.value))
+const pageSlice = <T,>(items: T[]) => items.slice((page.value - 1) * pageSize.value, page.value * pageSize.value)
+const pagedUsers = computed(() => pageSlice(filteredUsers.value))
+const pagedAccounts = computed(() => pageSlice(filteredAccounts.value))
+const pagedPlans = computed(() => pageSlice(filteredPlans.value))
+const pagedKeys = computed(() => pageSlice(filteredKeys.value))
 const warningJobCount = computed(() => overview.value?.runtime.jobs.filter(job => job.status === 'warning' || job.status === 'critical').length ?? 0)
 const policyUserOptions = computed(() => policyMembers.value.map(member => ({ label: member.email ? `${member.username} · ${member.email}` : member.username, value: member.user_id })))
 const accountDialogSubtitle = computed(() => editingAccount.value ? `${editingAccount.value.email} · 所有者 ${editingAccount.value.owner_username}` : '')
@@ -198,6 +220,7 @@ const runtimeStatusLabels: Record<RuntimeStatus, string> = { healthy: '正常', 
 function formatNumber(value: number) { return numberFormatter.format(value) }
 function formatUSD(value: number) { return usdFormatter.format(value / 1_000_000) }
 function formatDate(value: string) { return dateFormatter.format(new Date(value)) }
+function formatLastUsed(value?: string) { return value ? formatDate(value) : '尚未使用' }
 function formatRuntimeTime(value: string) { return runtimeTimeFormatter.format(new Date(value)) }
 function formatOptionalRuntimeTime(value: string | null) { return value ? dateFormatter.format(new Date(value)) : '尚未运行' }
 function runtimeStatusLabel(status: RuntimeStatus) { return runtimeStatusLabels[status] }
@@ -210,6 +233,8 @@ function formatBytes(value: number) {
   return `${(value / 1024 ** index).toFixed(index >= 3 ? 1 : 0)} ${units[index]}`
 }
 function rememberScroll(event: Event) { scrollTop.value = (event.currentTarget as HTMLElement).scrollTop }
+function updatePageSize(value: number) { pageSize.value = value; page.value = 1 }
+function toggleRecentUsageSort(tab: 'users' | 'plans') { recentUsageSort.value[tab] = recentUsageSort.value[tab] === 'desc' ? 'asc' : 'desc'; page.value = 1 }
 async function loadAll() {
   if (loading.value) return
   loading.value = true
@@ -340,6 +365,11 @@ watch([() => props.initialAccountId, () => accounts.value.map(account => account
   const account = accounts.value.find(candidate => candidate.id === accountID)
   if (account && editingAccount.value?.id !== accountID && reauthorizeAccount.value?.id !== accountID) void openAccountEditor(account)
 }, { immediate: true })
+watch([activeTab, normalizedQuery], () => { page.value = 1 })
+watch(currentCount, count => {
+  const lastPage = Math.max(1, Math.ceil(count / pageSize.value))
+  if (page.value > lastPage) page.value = lastPage
+})
 </script>
 
 <style scoped>
@@ -390,14 +420,19 @@ watch([() => props.initialAccountId, () => accounts.value.map(account => account
 .admin-table th { height: 38px; padding: 0 13px; background: var(--surface-soft); color: var(--muted); font-size: 11px; font-weight: 800; text-align: left; white-space: nowrap; }
 .admin-table td { height: 58px; padding: 9px 13px; border-top: 1px solid var(--line-soft); color: var(--ink); font-size: 11px; white-space: nowrap; }
 .admin-table tbody tr:hover { background: var(--surface-hover); }
+.admin-sort-button { min-height: 36px; display: inline-flex; align-items: center; gap: 5px; margin: 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.admin-sort-button:hover { color: var(--ink-strong); }
+.admin-sort-button:focus-visible { border-radius: 5px; outline: 3px solid color-mix(in srgb, var(--primary) 28%, transparent); outline-offset: 1px; }
 .admin-primary { min-width: 140px; display: grid; gap: 4px; }
 .admin-primary strong { color: var(--ink-strong); font-size: 11px; }
 .admin-primary small { max-width: 240px; overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; }
 .admin-primary em { margin-left: 6px; padding: 2px 5px; border-radius: 4px; background: var(--primary-soft); color: var(--primary); font-size: 11px; font-style: normal; }
 .admin-row-actions { display: flex; gap: 6px; }
 .admin-loading { min-height: 240px; display: grid; place-items: center; }
+.admin-pagination { min-height: 58px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 14px; border-top: 1px solid var(--line-soft); }
+.admin-pagination > span { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 :deep(.n-empty) { padding: 48px 20px; }
 @media (max-width: 1200px) { .admin-overview-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 1200px) { .runtime-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } .runtime-grid > article { border-bottom: 1px solid var(--line-soft); } .runtime-grid > article:nth-child(3n) { border-right: 0; } .runtime-grid > article:nth-last-child(-n+2) { border-bottom: 0; } }
-@media (max-width: 720px) { .admin-overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .admin-resource-toolbar { grid-template-columns: 1fr; } .runtime-heading > small { display: none; } .runtime-grid { grid-template-columns: 1fr; } .runtime-grid > article { min-height: 92px; border-right: 0; border-bottom: 1px solid var(--line-soft); } .runtime-grid > article:nth-last-child(-n+2) { border-bottom: 1px solid var(--line-soft); } .runtime-grid > article:last-child { border-bottom: 0; } .runtime-job-list dl { grid-template-columns: 1fr; } }
+@media (max-width: 720px) { .admin-overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .admin-resource-toolbar { grid-template-columns: 1fr; } .admin-pagination { align-items: flex-start; flex-direction: column; } .runtime-heading > small { display: none; } .runtime-grid { grid-template-columns: 1fr; } .runtime-grid > article { min-height: 92px; border-right: 0; border-bottom: 1px solid var(--line-soft); } .runtime-grid > article:nth-last-child(-n+2) { border-bottom: 1px solid var(--line-soft); } .runtime-grid > article:last-child { border-bottom: 0; } .runtime-job-list dl { grid-template-columns: 1fr; } }
 </style>

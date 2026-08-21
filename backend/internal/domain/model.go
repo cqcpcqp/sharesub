@@ -128,9 +128,10 @@ type AdminRuntimeStatus struct {
 
 type AdminUser struct {
 	User
-	AccountCount int64 `json:"account_count"`
-	PlanCount    int64 `json:"plan_count"`
-	APIKeyCount  int64 `json:"api_key_count"`
+	AccountCount int64      `json:"account_count"`
+	PlanCount    int64      `json:"plan_count"`
+	APIKeyCount  int64      `json:"api_key_count"`
+	LastUsedAt   *time.Time `json:"last_used_at,omitempty"`
 }
 
 type AdminAccount struct {
@@ -143,11 +144,12 @@ type AdminAccount struct {
 
 type AdminPlan struct {
 	Plan
-	OwnerUsername  string `json:"owner_username"`
-	AccountEmail   string `json:"account_email"`
-	MemberCount    int64  `json:"member_count"`
-	Requests24H    int64  `json:"requests_24h"`
-	TotalTokens24H int64  `json:"total_tokens_24h"`
+	OwnerUsername  string     `json:"owner_username"`
+	AccountEmail   string     `json:"account_email"`
+	MemberCount    int64      `json:"member_count"`
+	Requests24H    int64      `json:"requests_24h"`
+	TotalTokens24H int64      `json:"total_tokens_24h"`
+	LastUsedAt     *time.Time `json:"last_used_at,omitempty"`
 }
 
 type AdminAPIKey struct {
