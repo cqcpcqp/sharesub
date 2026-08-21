@@ -29,6 +29,7 @@ type ResponsesWebSocketConfig struct {
 	UpstreamDrainTimeout          time.Duration
 	ClientReadLimitBytes          int64
 	UpstreamReadLimitBytes        int64
+	ReplayMemoryLimitBytes        int64
 	MaxRequestsPerMinutePerAPIKey int
 	FirstOutputTimeout            time.Duration
 }
@@ -41,6 +42,7 @@ func DefaultResponsesWebSocketConfig() ResponsesWebSocketConfig {
 		WriteTimeout: 2 * time.Minute, UpstreamDrainTimeout: 1200 * time.Millisecond,
 		ClientReadLimitBytes:          64 << 20,
 		UpstreamReadLimitBytes:        16 << 20,
+		ReplayMemoryLimitBytes:        64 << 20,
 		MaxRequestsPerMinutePerAPIKey: defaultGatewayAPIKeyRPM,
 		FirstOutputTimeout:            2 * time.Minute,
 	}

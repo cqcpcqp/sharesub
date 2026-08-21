@@ -41,6 +41,7 @@ type Config struct {
 	ResponsesWSUpstreamDrainTimeout      time.Duration
 	ResponsesWSClientReadLimitBytes      int64
 	ResponsesWSUpstreamReadLimitBytes    int64
+	ResponsesWSReplayMemoryLimitBytes    int64
 	GatewayMaxRequestsPerMinutePerAPIKey int
 	GatewayFirstOutputTimeout            time.Duration
 	EmailDeliveryProvider                string
@@ -162,6 +163,10 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	responsesWSReplayMemoryLimitBytes, err := positiveInt64Env("SHARESUB_RESPONSES_WS_REPLAY_MEMORY_LIMIT_BYTES", 64<<20)
+	if err != nil {
+		return Config{}, err
+	}
 	gatewayMaxRequestsPerMinutePerAPIKey, err := positiveIntEnv("SHARESUB_GATEWAY_MAX_REQUESTS_PER_MINUTE_PER_API_KEY", 300)
 	if err != nil {
 		return Config{}, err
@@ -224,6 +229,7 @@ func Load() (Config, error) {
 		ResponsesWSUpstreamDrainTimeout:      responsesWSUpstreamDrainTimeout,
 		ResponsesWSClientReadLimitBytes:      responsesWSClientReadLimitBytes,
 		ResponsesWSUpstreamReadLimitBytes:    responsesWSUpstreamReadLimitBytes,
+		ResponsesWSReplayMemoryLimitBytes:    responsesWSReplayMemoryLimitBytes,
 		GatewayMaxRequestsPerMinutePerAPIKey: gatewayMaxRequestsPerMinutePerAPIKey,
 		GatewayFirstOutputTimeout:            gatewayFirstOutputTimeout,
 		EmailDeliveryProvider:                emailDeliveryProvider,

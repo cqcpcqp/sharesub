@@ -118,6 +118,7 @@ func main() {
 		UpstreamDrainTimeout:          cfg.ResponsesWSUpstreamDrainTimeout,
 		ClientReadLimitBytes:          cfg.ResponsesWSClientReadLimitBytes,
 		UpstreamReadLimitBytes:        cfg.ResponsesWSUpstreamReadLimitBytes,
+		ReplayMemoryLimitBytes:        cfg.ResponsesWSReplayMemoryLimitBytes,
 		MaxRequestsPerMinutePerAPIKey: cfg.GatewayMaxRequestsPerMinutePerAPIKey,
 		FirstOutputTimeout:            cfg.GatewayFirstOutputTimeout,
 	})

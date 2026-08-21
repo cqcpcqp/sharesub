@@ -165,12 +165,15 @@ openssl rand -base64 32
 | `SHARESUB_RESPONSES_WS_UPSTREAM_DRAIN_TIMEOUT` | 客户端断开后继续读取上游终态 usage 的最长时间 | `1.2s` |
 | `SHARESUB_RESPONSES_WS_CLIENT_READ_LIMIT_BYTES` | 客户端 WebSocket 单条消息上限 | `67108864`（64 MiB） |
 | `SHARESUB_RESPONSES_WS_UPSTREAM_READ_LIMIT_BYTES` | 上游 WebSocket 单条消息上限 | `16777216`（16 MiB） |
+| `SHARESUB_RESPONSES_WS_REPLAY_MEMORY_LIMIT_BYTES` | 单 API 进程内所有 Responses WebSocket 会话共享的逻辑 replay payload 预算；不足时继续固定账号转发，但不保留新 history 或跨账号 replay | `67108864`（64 MiB） |
 | `SHARESUB_OAUTH_REDIRECT_URI` | OpenAI OAuth 回调地址 | `http://localhost:1455/auth/callback` |
 | `SHARESUB_OUTBOUND_PROXY` | OpenAI OAuth 和网关出站代理 | 留空，表示直连 |
 | `SHARESUB_TOKEN_PEPPER` | Token 哈希密钥 | 必填，32 字节 Base64 |
 | `SHARESUB_CREDENTIAL_KEY` | OAuth 凭据加密密钥 | 必填，32 字节 Base64 |
 
 生产 Compose 默认将 API、Web、PostgreSQL 的内存限制为 `1 GiB`、`256 MiB`、`1 GiB`，CPU 限制为 `2`、`0.5`、`2`；可通过对应的 `SHARESUB_*_MEMORY_LIMIT` 和 `SHARESUB_*_CPU_LIMIT` 环境变量调整。容器日志单文件最多 20 MiB、保留 5 份。部署脚本将数据库备份限制为最近 14 份且不超过 30 天，并为 API/Web 各保留最近 3 个发布及回滚镜像。
+
+`SHARESUB_RESPONSES_WS_REPLAY_MEMORY_LIMIT_BYTES` 是每个 API 进程共享的逻辑 replay payload 字节预算，不是单连接额度或容器硬内存上限。预算不足时，当前请求仍会在固定账号上正常转发，但不会保留新的 replay history，也不会基于未受预算保护的数据跨账号重放；建议将其设置为不高于 API 容器内存的约 10%，并为 Go 运行时、连接缓冲区和其他服务数据预留空间。
 
 启用注册邮箱验证时，腾讯云 SES 模板变量必须包含 `token`，验证链接应使用 `SHARESUB_PUBLIC_URL` 对应站点的 `/verify-email#token={{token}}`。CAM 子账号只需授予 SES 发信所需权限，不要把腾讯云控制台登录密码写入 `.env`。
 

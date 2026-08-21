@@ -393,7 +393,7 @@ func (s *Store) ListPlanAuditEvents(ctx context.Context, planID, userID string) 
 		SELECT e.id,e.actor_user_id,COALESCE(u.username,''),e.action,e.resource_type,e.resource_id,e.metadata,e.created_at
 		FROM audit_events e
 		LEFT JOIN users u ON u.id=e.actor_user_id
-		WHERE e.resource_type='plan' AND e.resource_id=$1
+		WHERE e.resource_type='plan' AND e.resource_id=$1 AND e.action<>'plan.quota_refreshed'
 		ORDER BY e.created_at DESC,e.id DESC LIMIT 100`, planID)
 	if err != nil {
 		return nil, err

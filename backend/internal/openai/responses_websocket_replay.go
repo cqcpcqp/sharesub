@@ -2,6 +2,7 @@ package openai
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"io"
@@ -57,11 +58,16 @@ const (
 )
 
 type responsesWebSocketReplayHistory struct {
-	responseID string
-	items      []json.RawMessage
-	bytes      int64
-	contexts   map[string]struct{}
-	valid      bool
+	responseID  string
+	items       []json.RawMessage
+	bytes       int64
+	contexts    map[string]struct{}
+	valid       bool
+	reservation responsesWebSocketReplayReservation
+}
+
+func newResponsesWebSocketReplayHistory(budget *responsesWebSocketReplayBudget) responsesWebSocketReplayHistory {
+	return responsesWebSocketReplayHistory{reservation: newResponsesWebSocketReplayReservation(budget)}
 }
 
 type responsesWebSocketReplayPlan struct {
@@ -134,18 +140,28 @@ func (h *responsesWebSocketReplayHistory) commit(
 	plan responsesWebSocketReplayPlan,
 	current, output []json.RawMessage,
 	replayable bool,
+	currentReservation, outputReservation *responsesWebSocketReplayReservation,
 ) {
-	responseID = strings.TrimSpace(responseID)
-	if h == nil || !replayable || responseID == "" {
+	reject := func() {
 		if h != nil {
 			h.invalidate()
 		}
+		if currentReservation != nil {
+			currentReservation.release()
+		}
+		if outputReservation != nil {
+			outputReservation.release()
+		}
+	}
+	responseID = strings.TrimSpace(responseID)
+	if h == nil || !replayable || responseID == "" {
+		reject()
 		return
 	}
 	itemCount := plan.itemCount + len(output)
 	totalBytes := plan.bytes + responsesWebSocketRawMessagesBytes(output)
-	if responsesWebSocketReplayLimitExceeded(itemCount, totalBytes) {
-		h.invalidate()
+	if totalBytes < 0 || responsesWebSocketReplayLimitExceeded(itemCount, totalBytes) {
+		reject()
 		return
 	}
 
@@ -161,7 +177,11 @@ func (h *responsesWebSocketReplayHistory) commit(
 	}
 	addedContexts, complete := responsesWebSocketToolContextDelta(existingContexts, newItems, output)
 	if !complete {
-		h.invalidate()
+		reject()
+		return
+	}
+	if !h.reservation.replaceWith(totalBytes, currentReservation, outputReservation) {
+		reject()
 		return
 	}
 
@@ -195,6 +215,7 @@ func (h *responsesWebSocketReplayHistory) invalidate() {
 	h.bytes = 0
 	h.contexts = nil
 	h.valid = false
+	h.reservation.release()
 }
 
 func responsesWebSocketReplayLimitExceeded(items int, bytes int64) bool {
@@ -320,10 +341,12 @@ type responsesWebSocketReplayCollector struct {
 	seen         map[string]struct{}
 	bytes        int64
 	exceedsLimit bool
+	disabled     bool
+	reservation  *responsesWebSocketReplayReservation
 }
 
 func (c *responsesWebSocketReplayCollector) addEvent(eventType string, frame []byte) {
-	if c == nil || c.exceedsLimit {
+	if c == nil || c.disabled {
 		return
 	}
 	var event map[string]json.RawMessage
@@ -349,27 +372,33 @@ func (c *responsesWebSocketReplayCollector) addEvent(eventType string, frame []b
 }
 
 func (c *responsesWebSocketReplayCollector) addItem(raw json.RawMessage) {
-	if c == nil || c.exceedsLimit {
+	if c == nil || c.disabled {
 		return
 	}
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || trimmed[0] != '{' {
 		return
 	}
-	var item map[string]any
+	var item struct {
+		Type   string `json:"type"`
+		ID     string `json:"id"`
+		CallID string `json:"call_id"`
+	}
 	if json.Unmarshal(trimmed, &item) != nil {
 		return
 	}
-	itemType, _ := item["type"].(string)
-	if strings.TrimSpace(itemType) == "" {
+	if strings.TrimSpace(item.Type) == "" {
 		return
 	}
-	key, _ := item["id"].(string)
+	key := item.ID
 	if strings.TrimSpace(key) == "" {
-		key, _ = item["call_id"].(string)
+		key = item.CallID
 	}
 	if strings.TrimSpace(key) == "" {
-		key = string(trimmed)
+		digest := sha256.Sum256(trimmed)
+		key = "raw:" + string(digest[:])
+	} else {
+		key = "id:" + strings.TrimSpace(key)
 	}
 	if c.seen == nil {
 		c.seen = make(map[string]struct{})
@@ -377,14 +406,44 @@ func (c *responsesWebSocketReplayCollector) addItem(raw json.RawMessage) {
 	if _, exists := c.seen[key]; exists {
 		return
 	}
-	if responsesWebSocketReplayLimitExceeded(len(c.items)+1, c.bytes+int64(len(trimmed))) {
-		c.items = nil
-		c.seen = nil
-		c.bytes = 0
-		c.exceedsLimit = true
+	nextBytes := c.bytes + int64(len(trimmed))
+	if nextBytes < c.bytes || responsesWebSocketReplayLimitExceeded(len(c.items)+1, nextBytes) {
+		c.markExceededLimit()
+		return
+	}
+	if c.reservation != nil && !c.reservation.resize(nextBytes) {
+		c.markExceededLimit()
 		return
 	}
 	c.seen[key] = struct{}{}
 	c.items = append(c.items, append(json.RawMessage(nil), trimmed...))
-	c.bytes += int64(len(trimmed))
+	c.bytes = nextBytes
+}
+
+func (c *responsesWebSocketReplayCollector) markExceededLimit() {
+	if c == nil {
+		return
+	}
+	c.disable()
+	c.exceedsLimit = true
+}
+
+func (c *responsesWebSocketReplayCollector) disable() {
+	if c == nil {
+		return
+	}
+	c.release()
+	c.disabled = true
+}
+
+func (c *responsesWebSocketReplayCollector) release() {
+	if c == nil {
+		return
+	}
+	if c.reservation != nil {
+		c.reservation.release()
+	}
+	c.items = nil
+	c.seen = nil
+	c.bytes = 0
 }

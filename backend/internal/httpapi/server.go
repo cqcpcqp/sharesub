@@ -57,7 +57,7 @@ func New(app *application.Service, gateway *openai.Gateway, logger *slog.Logger,
 		DialTimeout:      config.DialTimeout, ReadTimeout: config.ReadTimeout,
 		WriteTimeout: config.WriteTimeout, InterTurnIdleTimeout: config.InterTurnIdleTimeout,
 		UpstreamDrainTimeout: config.UpstreamDrainTimeout, UpstreamReadLimit: config.UpstreamReadLimitBytes,
-		FirstOutputTimeout: config.FirstOutputTimeout,
+		ReplayMemoryLimitBytes: config.ReplayMemoryLimitBytes, FirstOutputTimeout: config.FirstOutputTimeout,
 	})
 	s.routes()
 	return s

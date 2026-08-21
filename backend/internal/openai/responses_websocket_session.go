@@ -2,6 +2,7 @@ package openai
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -25,13 +26,21 @@ func (s *ResponsesWebSocketSession) Run(ctx context.Context, client ResponsesWeb
 	go readResponsesWebSocketFrames(client, clientReads, sessionDone, turnLifecycle)
 
 	frame := append([]byte(nil), initialFrame...)
+	initialFrame = nil
 	var upstream ResponsesWebSocketConn
 	var upstreamReads chan responsesWebSocketRead
 	var upstreamReaderStop chan struct{}
 	var upstreamReaderDone chan struct{}
 	var pinnedDial ResponsesWebSocketDialConfig
 	var pendingFirstDownstreamControls responsesWebSocketPendingClientFrames
-	var replayHistory responsesWebSocketReplayHistory
+	replayHistory := newResponsesWebSocketReplayHistory(s.replayBudget)
+	currentReplayReservation := newResponsesWebSocketReplayReservation(s.replayBudget)
+	outputReplayReservation := newResponsesWebSocketReplayReservation(s.replayBudget)
+	defer func() {
+		currentReplayReservation.release()
+		outputReplayReservation.release()
+		replayHistory.invalidate()
+	}()
 	sessionReplaySafe := true
 	// sessionModel follows the model negotiated by the client. Responses WS v2
 	// permits session.update to change session.model between turns, and a later
@@ -59,9 +68,15 @@ func (s *ResponsesWebSocketSession) Run(ctx context.Context, client ResponsesWeb
 	defer closeUpstream()
 
 	for turn := 1; ; turn++ {
+		currentReplayReservation.release()
+		outputReplayReservation.release()
 		startedAt := time.Now()
 		inheritedModel := loadResponsesWebSocketSessionModel(&sessionModel)
 		requestFrame, billing, previousResponseID, err := parseResponsesWebSocketFrame(frame, turn, inheritedModel)
+		// parseResponsesWebSocketFrame returns an independent normalized payload.
+		// Drop the client frame immediately so one near the inbound read limit does
+		// not pin its large backing array for the lifetime of the session.
+		frame = nil
 		result := ResponsesWebSocketTurnResult{StartedAt: startedAt, Billing: billing}
 		if err != nil {
 			return err
@@ -69,12 +84,38 @@ func (s *ResponsesWebSocketSession) Run(ctx context.Context, client ResponsesWeb
 		turnRequest := ResponsesWebSocketTurnRequest{
 			Turn: turn, Frame: requestFrame, Billing: billing, PreviousResponseID: previousResponseID,
 		}
-		currentInput, currentInputExists, currentInputReplayable, inputErr := responsesWebSocketInputItems(requestFrame)
-		if inputErr != nil {
-			return NewResponsesWebSocketCloseError(websocket.StatusPolicyViolation, "invalid response.create input", inputErr)
+		if strings.TrimSpace(previousResponseID) == "" {
+			// An independent response replaces the durable replay chain. Releasing
+			// it before reserving the new input prevents obsolete history from
+			// denying a replacement that would fit on its own.
+			replayHistory.invalidate()
 		}
-		replayPlan, retrySafe, replayCommitSafe := replayHistory.plan(previousResponseID, currentInput, currentInputExists, currentInputReplayable)
-		retrySafe = retrySafe && sessionReplaySafe
+		var currentInput []json.RawMessage
+		var replayPlan responsesWebSocketReplayPlan
+		retrySafe := false
+		replayCommitSafe := false
+		requestFrameBytes := int64(len(requestFrame))
+		if sessionReplaySafe && requestFrameBytes <= responsesWebSocketReplayHistoryMaxBytes && currentReplayReservation.resize(requestFrameBytes) {
+			var currentInputExists, currentInputReplayable bool
+			var inputErr error
+			currentInput, currentInputExists, currentInputReplayable, inputErr = responsesWebSocketInputItems(requestFrame)
+			if inputErr != nil {
+				return NewResponsesWebSocketCloseError(websocket.StatusPolicyViolation, "invalid response.create input", inputErr)
+			}
+			currentInputBytes := responsesWebSocketRawMessagesBytes(currentInput)
+			if !responsesWebSocketReplayLimitExceeded(len(currentInput), currentInputBytes) && currentReplayReservation.resize(currentInputBytes) {
+				replayPlan, retrySafe, replayCommitSafe = replayHistory.plan(previousResponseID, currentInput, currentInputExists, currentInputReplayable)
+			}
+		}
+		if !retrySafe && !replayCommitSafe {
+			currentReplayReservation.release()
+			currentInput = nil
+		}
+		if !replayCommitSafe {
+			// Budget denial and non-reconstructable turns fail closed for future
+			// replay while the current request continues on its pinned account.
+			replayHistory.invalidate()
+		}
 		retryTurnRequest := turnRequest
 		retryTurnRequestPrepared := strings.TrimSpace(previousResponseID) == ""
 		prepareRetryTurnRequest := func() error {
@@ -159,19 +200,28 @@ func (s *ResponsesWebSocketSession) Run(ctx context.Context, client ResponsesWeb
 					if dialHook == nil && turn == 1 {
 						dialHook = hooks.OnFirstDialError
 					}
-					if retrySafe && (dialErr.StatusCode == http.StatusTooManyRequests || dialErr.StatusCode == http.StatusUnauthorized) && dialHook != nil {
-						if prepareErr := prepareRetryTurnRequest(); prepareErr != nil {
-							if turnStarted {
-								callResponsesWebSocketAfterTurn(ctx, hooks, turn, result, prepareErr)
-							}
-							return prepareErr
+					retryUnauthorized := dialErr.StatusCode == http.StatusUnauthorized && dialHook != nil
+					retryRateLimit := dialErr.StatusCode == http.StatusTooManyRequests && retrySafe && dialHook != nil
+					if retryUnauthorized || retryRateLimit {
+						hookRequest := turnRequest
+						if retryTurnRequestPrepared {
+							hookRequest = retryTurnRequest
 						}
-						nextConfig, retryErr := dialHook(ctx, retryTurnRequest, result, dialErr)
+						if retryRateLimit {
+							if prepareErr := prepareRetryTurnRequest(); prepareErr != nil {
+								if turnStarted {
+									callResponsesWebSocketAfterTurn(ctx, hooks, turn, result, prepareErr)
+								}
+								return prepareErr
+							}
+							hookRequest = retryTurnRequest
+						}
+						nextConfig, retryErr := dialHook(ctx, hookRequest, result, dialErr)
 						if retryErr != nil {
 							return normalizeResponsesWebSocketHookError(retryErr)
 						}
 						if len(nextConfig.Frame) == 0 {
-							nextConfig.Frame = retryTurnRequest.Frame
+							nextConfig.Frame = hookRequest.Frame
 						}
 						nextNormalized, nextBilling, _, prepareErr := prepareResponsesWebSocketFrame(nextConfig.Frame, turn, "")
 						if prepareErr != nil {
@@ -193,6 +243,15 @@ func (s *ResponsesWebSocketSession) Run(ctx context.Context, client ResponsesWeb
 								callResponsesWebSocketAfterTurn(ctx, hooks, turn, result, retryErr)
 							}
 							return retryErr
+						}
+						if retryUnauthorized {
+							if retryErr = verifyPinnedResponsesWebSocketDial(pinnedDial, *nextConfig.Dial); retryErr != nil {
+								retryErr = NewResponsesWebSocketCloseError(websocket.StatusInternalError, "Responses WebSocket authentication retry changed account binding", retryErr)
+								if turnStarted {
+									callResponsesWebSocketAfterTurn(ctx, hooks, turn, result, retryErr)
+								}
+								return retryErr
+							}
 						}
 						turnConfig = nextConfig
 						normalized = nextNormalized
@@ -247,9 +306,18 @@ func (s *ResponsesWebSocketSession) Run(ctx context.Context, client ResponsesWeb
 				upstreamErrorHook = hooks.OnFirstUpstreamError
 			}
 			allowUpstreamErrorRetry := retrySafe && upstreamErrorHook != nil
+			outputReplayReservation.release()
+			relayReplayState := responsesWebSocketRelayReplayState{
+				history:            &replayHistory,
+				currentInput:       &currentInput,
+				currentReservation: &currentReplayReservation,
+				outputReservation:  &outputReplayReservation,
+				collect:            replayCommitSafe,
+			}
 			result, err = s.relayTurn(
 				ctx, client, upstream, clientReads, upstreamReads, result, turnLifecycle, &sessionModel,
 				&sessionReplaySafe, allowUpstreamErrorRetry, &pendingFirstDownstreamControls,
+				&relayReplayState,
 			)
 			var firstUpstreamErr *responsesWebSocketFirstUpstreamError
 			if errors.As(err, &firstUpstreamErr) && firstUpstreamErr != nil && upstreamErrorHook != nil {
@@ -298,14 +366,29 @@ func (s *ResponsesWebSocketSession) Run(ctx context.Context, client ResponsesWeb
 			}
 			if result.TerminalEvent != "" {
 				if err == nil && isSuccessfulResponsesWebSocketTerminalEvent(result.TerminalEvent) {
-					replayHistory.commit(result.RequestID, replayPlan, currentInput, result.replayOutput, replayCommitSafe && !result.replayOutputExceedsLimit)
+					replayHistory.commit(
+						result.RequestID, replayPlan, currentInput, result.replayOutput,
+						replayCommitSafe && sessionReplaySafe && !result.replayOutputExceedsLimit,
+						&currentReplayReservation, &outputReplayReservation,
+					)
 				} else {
 					replayHistory.invalidate()
+					currentReplayReservation.release()
+					outputReplayReservation.release()
 				}
 			}
+			currentReplayReservation.release()
+			outputReplayReservation.release()
+			currentInput = nil
+			result.replayOutput = nil
 			if turnStarted {
 				callResponsesWebSocketAfterTurn(ctx, hooks, turn, result, err)
 			}
+			requestFrame = nil
+			turnRequest.Frame = nil
+			retryTurnRequest.Frame = nil
+			turnConfig.Frame = nil
+			normalized = nil
 			if err != nil {
 				var terminalErr *ResponsesWebSocketTerminalError
 				if !errors.As(err, &terminalErr) {
@@ -328,12 +411,14 @@ func (s *ResponsesWebSocketSession) Run(ctx context.Context, client ResponsesWeb
 					if read.duringTurn {
 						return NewResponsesWebSocketCloseError(websocket.StatusPolicyViolation, "overlapping response.create is not supported", nil)
 					}
-					frame = append(frame[:0], read.frame...)
+					frame = read.frame
+					read.frame = nil
 					break
 				}
 				updateResponsesWebSocketSessionModel(&sessionModel, read.messageType, read.frame)
 				if !responsesWebSocketControlPreservesReplaySafety(read.messageType, read.frame) {
 					sessionReplaySafe = false
+					replayHistory.invalidate()
 				}
 				if err := s.writeUpstreamFrame(ctx, upstream, read.messageType, read.frame); err != nil {
 					stopResponsesWebSocketTimer(idleTimer)
@@ -354,204 +439,6 @@ func (s *ResponsesWebSocketSession) Run(ctx context.Context, client ResponsesWeb
 				return NewResponsesWebSocketCloseError(websocket.StatusGoingAway, "Responses WebSocket session canceled", context.Cause(ctx))
 			}
 			break
-		}
-	}
-}
-
-func (s *ResponsesWebSocketSession) relayTurn(
-	ctx context.Context,
-	client ResponsesWebSocketConn,
-	upstream ResponsesWebSocketConn,
-	clientReads, upstreamReads <-chan responsesWebSocketRead,
-	result ResponsesWebSocketTurnResult,
-	turnLifecycle *responsesWebSocketTurnLifecycle,
-	sessionModel *atomic.Pointer[string],
-	sessionReplaySafe *bool,
-	allowUpstreamErrorRetry bool,
-	pendingFirstDownstreamControls *responsesWebSocketPendingClientFrames,
-) (ResponsesWebSocketTurnResult, error) {
-	activeClientReads := clientReads
-	var firstTokenAt time.Time
-	var terminal terminalResponse
-	var pendingError *responseError
-	var replayCollector responsesWebSocketReplayCollector
-	var drainTimer *time.Timer
-	var drainTimeout <-chan time.Time
-	clientDisconnected := false
-	wroteDownstream := false
-	var clientErr error
-	firstOutputDeadline := time.Now().Add(s.firstOutputTimeout)
-	readTimer := time.NewTimer(s.firstOutputTimeout)
-	defer func() {
-		stopResponsesWebSocketTimer(readTimer)
-		stopResponsesWebSocketTimer(drainTimer)
-	}()
-
-	applyPendingError := func() {
-		if terminal.Error == nil && pendingError != nil {
-			pendingCopy := *pendingError
-			terminal.Error = &pendingCopy
-		}
-	}
-	finishMetrics := func() {
-		applyPendingError()
-		result.Metrics = proxyMetrics(result.StartedAt, time.Time{}, firstTokenAt, terminal, clientDisconnected)
-		if clientDisconnected {
-			result.Metrics.ErrorStatusCode = 499
-			result.Metrics.ErrorCode = "client_disconnected"
-			result.Metrics.ErrorMessage = "client disconnected before response completed"
-		}
-	}
-	markClientDisconnected := func(err error) {
-		if clientDisconnected {
-			return
-		}
-		clientDisconnected = true
-		clientErr = err
-		clientReads = nil
-		activeClientReads = nil
-		stopResponsesWebSocketTimer(readTimer)
-		drainTimer = time.NewTimer(s.upstreamDrainTimeout)
-		drainTimeout = drainTimer.C
-	}
-	for {
-		select {
-		case read := <-activeClientReads:
-			if read.err != nil {
-				markClientDisconnected(read.err)
-				continue
-			}
-			if isResponsesWebSocketResponseCreate(read.messageType, read.frame) {
-				finishMetrics()
-				return result, NewResponsesWebSocketCloseError(websocket.StatusPolicyViolation, "overlapping response.create is not supported", nil)
-			}
-			updateResponsesWebSocketSessionModel(sessionModel, read.messageType, read.frame)
-			if sessionReplaySafe != nil && !responsesWebSocketControlPreservesReplaySafety(read.messageType, read.frame) {
-				*sessionReplaySafe = false
-			}
-			if allowUpstreamErrorRetry && !wroteDownstream {
-				if isResponsesWebSocketResponseCancel(read.messageType, read.frame) {
-					// Cancellation targets the current execution and cannot follow a
-					// replay to another account. Commit this attempt, preserve FIFO
-					// for earlier controls, and deliver the cancel immediately.
-					allowUpstreamErrorRetry = false
-					if err := pendingFirstDownstreamControls.flush(ctx, upstream, s.writeTimeout); err != nil {
-						finishMetrics()
-						return result, NewResponsesWebSocketCloseError(websocket.StatusInternalError, "upstream Responses WebSocket queued control write failed", err)
-					}
-					if err := s.writeUpstreamFrame(ctx, upstream, read.messageType, read.frame); err != nil {
-						finishMetrics()
-						return result, NewResponsesWebSocketCloseError(websocket.StatusInternalError, "upstream Responses WebSocket cancel write failed", err)
-					}
-					continue
-				}
-				if err := pendingFirstDownstreamControls.append(read); err != nil {
-					finishMetrics()
-					return result, err
-				}
-				continue
-			}
-			if err := s.writeUpstreamFrame(ctx, upstream, read.messageType, read.frame); err != nil {
-				finishMetrics()
-				return result, NewResponsesWebSocketCloseError(websocket.StatusInternalError, "upstream Responses WebSocket control write failed", err)
-			}
-		case read := <-upstreamReads:
-			if read.err != nil {
-				finishMetrics()
-				if clientDisconnected {
-					return result, clientErr
-				}
-				return result, NewResponsesWebSocketCloseError(websocket.StatusInternalError, "upstream Responses WebSocket read failed", read.err)
-			}
-			if read.messageType != websocket.MessageText && read.messageType != websocket.MessageBinary {
-				finishMetrics()
-				return result, NewResponsesWebSocketCloseError(websocket.StatusInternalError, "upstream Responses WebSocket returned an unsupported message type", nil)
-			}
-			eventType := ""
-			terminalEvent := false
-			if read.messageType == websocket.MessageText {
-				var responseID string
-				var parsedTerminal *terminalResponse
-				eventType, responseID, parsedTerminal = observeResponsesWebSocketEvent(read.frame)
-				replayCollector.addEvent(eventType, read.frame)
-				if result.RequestID == "" && responseID != "" {
-					result.RequestID = responseID
-				}
-				if firstTokenAt.IsZero() && isResponsesWebSocketTokenEvent(read.frame, eventType) {
-					firstTokenAt = time.Now()
-				}
-				if parsedTerminal != nil {
-					terminal = *parsedTerminal
-				}
-				if eventType == "error" {
-					if upstreamEventErr := parseResponsesWebSocketErrorEvent(read.frame); upstreamEventErr != nil {
-						pendingError = &responseError{
-							Type: upstreamEventErr.Type, Code: upstreamEventErr.Code, Message: upstreamEventErr.Message,
-						}
-						if allowUpstreamErrorRetry && !wroteDownstream && !clientDisconnected && isResponsesWebSocketRateLimitError(upstreamEventErr) {
-							finishMetrics()
-							result.Metrics.ErrorStatusCode = http.StatusTooManyRequests
-							return result, &responsesWebSocketFirstUpstreamError{result: result, upstream: upstreamEventErr}
-						}
-					}
-				}
-				terminalEvent = isTerminalResponseEvent(eventType)
-			}
-			if !clientDisconnected {
-				if terminalEvent {
-					turnLifecycle.beginTerminalWrite()
-				}
-				writeCtx, cancelWrite := context.WithTimeout(context.Background(), s.writeTimeout)
-				writeErr := client.Write(writeCtx, read.messageType, read.frame)
-				cancelWrite()
-				if terminalEvent {
-					turnLifecycle.finishTerminalWrite(writeErr == nil)
-				}
-				if writeErr != nil {
-					markClientDisconnected(writeErr)
-				} else {
-					wroteDownstream = true
-					if err := pendingFirstDownstreamControls.flush(ctx, upstream, s.writeTimeout); err != nil {
-						finishMetrics()
-						return result, NewResponsesWebSocketCloseError(websocket.StatusInternalError, "upstream Responses WebSocket queued control write failed", err)
-					}
-				}
-			}
-			if terminalEvent {
-				result.replayOutput = replayCollector.items
-				result.replayOutputExceedsLimit = replayCollector.exceedsLimit
-				result.TerminalEvent = normalizeResponsesWebSocketTerminalEvent(eventType)
-				applyPendingError()
-				applyResponsesWebSocketTerminalFailure(eventType, &terminal)
-				finishMetrics()
-				if !clientDisconnected && !isSuccessfulResponsesWebSocketTerminalEvent(eventType) {
-					return result, newResponsesWebSocketTerminalError(eventType, terminal.Error)
-				}
-				return result, clientErr
-			}
-			if !clientDisconnected {
-				readTimeout := time.Until(firstOutputDeadline)
-				if !firstTokenAt.IsZero() {
-					readTimeout = s.readTimeout
-				} else if readTimeout <= 0 {
-					finishMetrics()
-					return result, NewResponsesWebSocketCloseError(websocket.StatusInternalError, "upstream Responses WebSocket read timeout", context.DeadlineExceeded)
-				}
-				resetResponsesWebSocketTimer(readTimer, readTimeout)
-			}
-		case <-readTimer.C:
-			finishMetrics()
-			return result, NewResponsesWebSocketCloseError(websocket.StatusInternalError, "upstream Responses WebSocket read timeout", context.DeadlineExceeded)
-		case <-drainTimeout:
-			drainTimeout = nil
-			finishMetrics()
-			return result, clientErr
-		case <-ctx.Done():
-			finishMetrics()
-			if clientDisconnected {
-				return result, clientErr
-			}
-			return result, NewResponsesWebSocketCloseError(websocket.StatusGoingAway, "Responses WebSocket session canceled", context.Cause(ctx))
 		}
 	}
 }

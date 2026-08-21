@@ -96,16 +96,17 @@ type ResponsesWebSocketHooks struct {
 }
 
 type ResponsesWebSocketOptions struct {
-	TargetURL            string
-	Dialer               ResponsesWebSocketDialer
-	OutboundProxyURL     string
-	DialTimeout          time.Duration
-	ReadTimeout          time.Duration
-	WriteTimeout         time.Duration
-	InterTurnIdleTimeout time.Duration
-	UpstreamDrainTimeout time.Duration
-	UpstreamReadLimit    int64
-	FirstOutputTimeout   time.Duration
+	TargetURL              string
+	Dialer                 ResponsesWebSocketDialer
+	OutboundProxyURL       string
+	DialTimeout            time.Duration
+	ReadTimeout            time.Duration
+	WriteTimeout           time.Duration
+	InterTurnIdleTimeout   time.Duration
+	UpstreamDrainTimeout   time.Duration
+	UpstreamReadLimit      int64
+	ReplayMemoryLimitBytes int64
+	FirstOutputTimeout     time.Duration
 }
 
 type ResponsesWebSocketSession struct {
@@ -117,6 +118,7 @@ type ResponsesWebSocketSession struct {
 	interTurnIdleTimeout time.Duration
 	upstreamDrainTimeout time.Duration
 	firstOutputTimeout   time.Duration
+	replayBudget         *responsesWebSocketReplayBudget
 }
 
 // PrepareResponsesWebSocketFrame is the public frame normalizer used by
@@ -398,6 +400,7 @@ func NewResponsesWebSocketSession(options ResponsesWebSocketOptions) *ResponsesW
 		interTurnIdleTimeout: positiveDuration(options.InterTurnIdleTimeout, defaultWSInterTurnTimeout),
 		upstreamDrainTimeout: positiveDuration(options.UpstreamDrainTimeout, defaultWSDrainTimeout),
 		firstOutputTimeout:   firstOutputTimeout,
+		replayBudget:         newResponsesWebSocketReplayBudget(options.ReplayMemoryLimitBytes),
 	}
 }
 

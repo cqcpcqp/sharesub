@@ -13,7 +13,6 @@ export const planAuditActionLabels: Record<string, string> = {
   'plan.owner_transferred': '转让了所有权',
   'plan.account_rebound': '更换了 OpenAI 账号',
   'plan.account_bound': '绑定了 OpenAI 账号',
-  'plan.quota_refreshed': '刷新了额度',
   'plan.quota_reset': '重置了额度窗口',
   'application.created': '提交了加入申请',
   'application.approved': '批准了加入申请',

@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { APIRequestError } from '../api'
-import { formatPlanAuditMetadata, planRequestErrorMessage } from './planViewPresentation'
+import { formatPlanAuditMetadata, planAuditActionLabels, planRequestErrorMessage } from './planViewPresentation'
 
 describe('Plan view presentation', () => {
+  it('does not present quota refreshes as Plan activity', () => {
+    expect(planAuditActionLabels).not.toHaveProperty('plan.quota_refreshed')
+  })
+
   it('formats fixed audit metadata units', () => {
     expect(formatPlanAuditMetadata('share_basis_points', 2500)).toBe('25%')
     expect(formatPlanAuditMetadata('visibility', 'public')).toBe('公开')

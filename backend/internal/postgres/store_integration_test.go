@@ -1080,12 +1080,22 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	} else if credential.AccountBindingGeneration != 2 {
 		t.Fatalf("member-triggered quota credential generation = %d, want 2", credential.AccountBindingGeneration)
 	}
+	quotaRefreshEvent := audit("quota-refreshed-hidden", "owner", sharedPlan.ID)
+	quotaRefreshEvent.Action = "plan.quota_refreshed"
+	if err := store.RecordAuditEvent(ctx, quotaRefreshEvent); err != nil {
+		t.Fatal(err)
+	}
 	events, err := store.ListPlanAuditEvents(ctx, sharedPlan.ID, "owner")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(events) < 6 {
 		t.Fatalf("Plan audit events = %d, want lifecycle history", len(events))
+	}
+	for _, event := range events {
+		if event.Action == "plan.quota_refreshed" {
+			t.Fatalf("Plan audit events unexpectedly include quota refresh: %+v", event)
+		}
 	}
 	notifications, err := store.ListNotifications(ctx, "second")
 	if err != nil {

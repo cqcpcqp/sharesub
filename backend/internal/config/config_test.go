@@ -48,7 +48,8 @@ func TestLoadResponsesWSDefaults(t *testing.T) {
 		config.ResponsesWSWriteTimeout != 2*time.Minute ||
 		config.ResponsesWSUpstreamDrainTimeout != 1200*time.Millisecond ||
 		config.ResponsesWSClientReadLimitBytes != 64<<20 ||
-		config.ResponsesWSUpstreamReadLimitBytes != 16<<20 {
+		config.ResponsesWSUpstreamReadLimitBytes != 16<<20 ||
+		config.ResponsesWSReplayMemoryLimitBytes != 64<<20 {
 		t.Fatalf("Responses WebSocket defaults = %+v", config)
 	}
 }
@@ -65,6 +66,7 @@ func TestLoadResponsesWSOverrides(t *testing.T) {
 	t.Setenv("SHARESUB_RESPONSES_WS_UPSTREAM_DRAIN_TIMEOUT", "900ms")
 	t.Setenv("SHARESUB_RESPONSES_WS_CLIENT_READ_LIMIT_BYTES", "33554432")
 	t.Setenv("SHARESUB_RESPONSES_WS_UPSTREAM_READ_LIMIT_BYTES", "8388608")
+	t.Setenv("SHARESUB_RESPONSES_WS_REPLAY_MEMORY_LIMIT_BYTES", "25165824")
 
 	config, err := Load()
 	if err != nil {
@@ -79,8 +81,21 @@ func TestLoadResponsesWSOverrides(t *testing.T) {
 		config.ResponsesWSWriteTimeout != 45*time.Second ||
 		config.ResponsesWSUpstreamDrainTimeout != 900*time.Millisecond ||
 		config.ResponsesWSClientReadLimitBytes != 32<<20 ||
-		config.ResponsesWSUpstreamReadLimitBytes != 8<<20 {
+		config.ResponsesWSUpstreamReadLimitBytes != 8<<20 ||
+		config.ResponsesWSReplayMemoryLimitBytes != 24<<20 {
 		t.Fatalf("Responses WebSocket overrides = %+v", config)
+	}
+}
+
+func TestLoadRejectsInvalidResponsesWSReplayMemoryLimit(t *testing.T) {
+	for _, value := range []string{"0", "-1", "not-a-number", "9223372036854775808"} {
+		t.Run(value, func(t *testing.T) {
+			setRequiredEnvironment(t)
+			t.Setenv("SHARESUB_RESPONSES_WS_REPLAY_MEMORY_LIMIT_BYTES", value)
+			if _, err := Load(); err == nil || !strings.Contains(err.Error(), "SHARESUB_RESPONSES_WS_REPLAY_MEMORY_LIMIT_BYTES") {
+				t.Fatalf("Load() error = %v", err)
+			}
+		})
 	}
 }
 
