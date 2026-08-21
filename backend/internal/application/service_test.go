@@ -60,7 +60,9 @@ type dashboardStore struct {
 	userID      string
 	todayStart  time.Time
 	trendStart  time.Time
+	dailyStart  time.Time
 	now         time.Time
+	timezone    string
 	result      domain.Dashboard
 	dashboarded bool
 }
@@ -778,11 +780,13 @@ func TestQuiescePlanBindingMapsCanceledDrainToAccountUnavailable(t *testing.T) {
 	}
 }
 
-func (s *dashboardStore) Dashboard(_ context.Context, userID string, todayStart, trendStart, now time.Time) (domain.Dashboard, error) {
+func (s *dashboardStore) Dashboard(_ context.Context, userID string, todayStart, trendStart, dailyStart, now time.Time, timezone string) (domain.Dashboard, error) {
 	s.userID = userID
 	s.todayStart = todayStart
 	s.trendStart = trendStart
+	s.dailyStart = dailyStart
 	s.now = now
+	s.timezone = timezone
 	s.dashboarded = true
 	return s.result, nil
 }
@@ -805,6 +809,12 @@ func TestDashboardUsesRequestedTimezoneBoundaries(t *testing.T) {
 	}
 	if wantTrendStart := time.Date(2026, 8, 1, 3, 0, 0, 0, time.FixedZone("CST", 8*60*60)); !store.trendStart.Equal(wantTrendStart) {
 		t.Fatalf("trend start = %s, want %s", store.trendStart, wantTrendStart)
+	}
+	if wantDailyStart := time.Date(2025, 8, 3, 0, 0, 0, 0, time.FixedZone("CST", 8*60*60)); !store.dailyStart.Equal(wantDailyStart) {
+		t.Fatalf("daily start = %s, want %s", store.dailyStart, wantDailyStart)
+	}
+	if store.timezone != "Asia/Shanghai" {
+		t.Fatalf("timezone = %q, want Asia/Shanghai", store.timezone)
 	}
 	if !store.now.Equal(now) {
 		t.Fatalf("now = %s, want %s", store.now, now)

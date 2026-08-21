@@ -55,7 +55,7 @@ type AccountStore interface {
 	ListExpiringAccounts(context.Context, time.Time, int) ([]domain.Account, error)
 	TryAcquireAccountRefreshLease(context.Context, string, string, time.Time) (bool, error)
 	ReleaseAccountRefreshLease(context.Context, string, string) error
-	Dashboard(context.Context, string, time.Time, time.Time, time.Time) (domain.Dashboard, error)
+	Dashboard(context.Context, string, time.Time, time.Time, time.Time, time.Time, string) (domain.Dashboard, error)
 }
 
 type PlanQueryStore interface {

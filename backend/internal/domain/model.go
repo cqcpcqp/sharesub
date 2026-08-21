@@ -436,6 +436,12 @@ type DashboardTrendPoint struct {
 	WebSearchCalls      int64     `json:"web_search_calls"`
 }
 
+type DashboardDailyUsage struct {
+	UsageDate    string     `json:"usage_date"`
+	RequestCount int64      `json:"request_count"`
+	TokenUsage   TokenUsage `json:"token_usage"`
+}
+
 type ModelUsage struct {
 	Model               string     `json:"model"`
 	RequestCount        int64      `json:"request_count"`
@@ -464,6 +470,7 @@ type Dashboard struct {
 	TotalWebSearchCalls int64                 `json:"total_web_search_calls"`
 	Performance         DashboardPerformance  `json:"performance"`
 	Trend               []DashboardTrendPoint `json:"trend"`
+	DailyUsage          []DashboardDailyUsage `json:"daily_usage"`
 }
 
 type PlanInsights struct {

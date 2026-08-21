@@ -829,7 +829,7 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if errorItem.RequestID != "owner-request" || errorItem.StatusCode != http.StatusInternalServerError || errorItem.ErrorSource != domain.GatewayErrorSourceUpstream || errorItem.ErrorCode != "server_error" || errorItem.ErrorMessage != "upstream temporarily unavailable" || errorItem.Endpoint != "/v1/responses" || !errorItem.IsStream || errorItem.MemberUsername == "" || errorItem.APIKeyPrefix != "sk-sharesub-old" {
 		t.Fatalf("plan error item = %+v", errorItem)
 	}
-	dashboard, err := store.Dashboard(ctx, "applicant", now.Add(-12*time.Hour), now.Add(-23*time.Hour), now.Add(time.Minute))
+	dashboard, err := store.Dashboard(ctx, "applicant", now.Add(-12*time.Hour), now.Add(-23*time.Hour), now.AddDate(0, 0, -364), now.Add(time.Minute), "UTC")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -844,6 +844,62 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	}
 	if len(dashboard.Trend) != 24 || dashboard.Trend[23].InputTokens != 1200 || dashboard.Trend[23].OutputTokens != 300 {
 		t.Fatalf("dashboard trend = %+v", dashboard.Trend)
+	}
+	if len(dashboard.DailyUsage) != 365 || dashboard.DailyUsage[364].UsageDate != "2026-07-31" || dashboard.DailyUsage[364].RequestCount != 1 || dashboard.DailyUsage[364].TokenUsage.TotalTokens != 1500 {
+		t.Fatalf("dashboard daily usage = %+v", dashboard.DailyUsage)
+	}
+	timezoneBatch := &pgx.Batch{}
+	timezoneBatch.Queue(`INSERT INTO users(id,username,email,password_hash,status,created_at,updated_at)
+		VALUES('timezone-user','timezone-user','timezone-user@example.com','hash','active',$1,$1)`, now)
+	timezoneBatch.Queue(`INSERT INTO plan_members(id,plan_id,user_id,role,status,share_basis_points,created_at,updated_at)
+		VALUES('timezone-member','plan','timezone-user','member','active',0,$1,$1)`, now)
+	timezoneBatch.Queue(`INSERT INTO api_keys(id,user_id,name,key_prefix,key_hash,key_ciphertext,strategy,status,created_at,updated_at)
+		VALUES('timezone-key','timezone-user','Timezone Key','sk-sharesub-timezone',$2,$3,'balanced','active',$1,$1)`, now, []byte("timezone-hash"), []byte("timezone-ciphertext"))
+	if err := pool.SendBatch(ctx, timezoneBatch).Close(); err != nil {
+		t.Fatal(err)
+	}
+	for index, createdAt := range []time.Time{
+		time.Date(2026, 8, 20, 17, 0, 0, 0, time.UTC),
+		time.Date(2026, 8, 21, 1, 0, 0, 0, time.UTC),
+	} {
+		if err := store.RecordGatewayMetric(ctx, domain.GatewayMetric{
+			RequestID: fmt.Sprintf("timezone-request-%d", index), APIKeyID: "timezone-key", PlanID: "plan", AccountID: "account", MemberID: "timezone-member",
+			Model: "gpt-5.6-sol", RequestedModel: "gpt-5.6-sol", UpstreamModel: "gpt-5.6-sol", BillingModel: "gpt-5.6-sol",
+			StatusCode: http.StatusOK, TokenUsage: domain.TokenUsage{InputTokens: 100, OutputTokens: 50}, CreatedAt: createdAt,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	shanghai, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	timezoneNow := time.Date(2026, 8, 21, 10, 0, 0, 0, shanghai)
+	timezoneDashboard, err := store.Dashboard(
+		ctx,
+		"timezone-user",
+		time.Date(2026, 8, 21, 0, 0, 0, 0, shanghai),
+		timezoneNow.Add(-23*time.Hour),
+		time.Date(2025, 8, 22, 0, 0, 0, 0, shanghai),
+		timezoneNow,
+		"Asia/Shanghai",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lastDay := timezoneDashboard.DailyUsage[len(timezoneDashboard.DailyUsage)-1]
+	if timezoneDashboard.TodayTokens.TotalTokens != 300 || lastDay.UsageDate != "2026-08-21" || lastDay.RequestCount != 2 || lastDay.TokenUsage.TotalTokens != timezoneDashboard.TodayTokens.TotalTokens {
+		t.Fatalf("timezone dashboard today = %+v, last day = %+v", timezoneDashboard.TodayTokens, lastDay)
+	}
+	for _, query := range []string{
+		`DELETE FROM gateway_request_metrics WHERE member_id='timezone-member'`,
+		`DELETE FROM api_keys WHERE id='timezone-key'`,
+		`DELETE FROM plan_members WHERE id='timezone-member'`,
+		`DELETE FROM users WHERE id='timezone-user'`,
+	} {
+		if _, err := pool.Exec(ctx, query); err != nil {
+			t.Fatal(err)
+		}
 	}
 	usageDetail, err := store.PlanDetail(ctx, "plan", "applicant", now.Truncate(24*time.Hour), now.Add(time.Minute))
 	if err != nil {
@@ -1195,7 +1251,7 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM email_verification_tokens WHERE id='recent-expired-verification')`).Scan(&recentExpiredVerificationExists); err != nil || !recentExpiredVerificationExists {
 		t.Fatalf("recent expired verification retained for rate limit = %v, %v", recentExpiredVerificationExists, err)
 	}
-	dashboard, err = store.Dashboard(ctx, "applicant", cleanupNow.Add(-12*time.Hour), cleanupNow.Add(-23*time.Hour), cleanupNow)
+	dashboard, err = store.Dashboard(ctx, "applicant", cleanupNow.Add(-12*time.Hour), cleanupNow.Add(-23*time.Hour), cleanupNow.AddDate(0, 0, -364), cleanupNow, "UTC")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1204,6 +1260,13 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	}
 	if dashboard.TotalTokens.CacheCreationTokens != 50 || dashboard.TotalTokens.ImageCount != 1 {
 		t.Fatalf("rolled-up detailed dashboard totals = %+v", dashboard.TotalTokens)
+	}
+	var rolledUpDailyTokens int64
+	for _, usage := range dashboard.DailyUsage {
+		rolledUpDailyTokens += usage.TokenUsage.TotalTokens
+	}
+	if len(dashboard.DailyUsage) != 365 || rolledUpDailyTokens != 1500 {
+		t.Fatalf("rolled-up dashboard daily usage = %+v", dashboard.DailyUsage)
 	}
 	ranking, err := store.memberUsageRanking(ctx, "plan", now.Add(-time.Hour), cleanupNow)
 	if err != nil {

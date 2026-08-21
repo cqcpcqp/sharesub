@@ -531,7 +531,7 @@ func (s *Store) RecordGatewayMetric(ctx context.Context, metric domain.GatewayMe
 	return err
 }
 
-func (s *Store) Dashboard(ctx context.Context, userID string, todayStart, trendStart, now time.Time) (domain.Dashboard, error) {
+func (s *Store) Dashboard(ctx context.Context, userID string, todayStart, trendStart, dailyStart, now time.Time, timezone string) (domain.Dashboard, error) {
 	var out domain.Dashboard
 	var successToday int64
 	err := s.pool.QueryRow(ctx, `
@@ -633,7 +633,15 @@ func (s *Store) Dashboard(ctx context.Context, userID string, todayStart, trendS
 		}
 		out.Trend = append(out.Trend, point)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return out, err
+	}
+
+	out.DailyUsage, err = s.dashboardDailyUsage(ctx, userID, dailyStart, now, timezone)
+	if err != nil {
+		return out, err
+	}
+	return out, nil
 }
 
 func mapError(err error) error {

@@ -3,73 +3,100 @@
     <header v-if="dashboard" class="dashboard-actions">
       <div>
         <h1>仪表盘</h1>
-        <p>个人 Token、性能与最近 24 小时趋势</p>
+        <p>从年度使用节奏到最近 24 小时波动</p>
       </div>
       <NButton secondary size="small" :loading="refreshing" :disabled="refreshing" aria-label="刷新仪表盘数据" @click="emit('refresh')">
         <template #icon><RefreshCw :size="15" /></template>
         刷新数据
       </NButton>
     </header>
-    <div v-if="dashboard" class="dashboard-kpi-grid">
-      <article class="dashboard-kpi dashboard-kpi-today">
-        <div class="dashboard-kpi-icon"><Zap :size="21" /></div>
-        <div class="dashboard-kpi-body">
-          <NStatistic label="今日 Token" :value="formatTokens(dashboard.today_tokens.total_tokens)" />
-          <div class="token-breakdown">
-            <span class="token-input">Input {{ formatTokens(dashboard.today_tokens.input_tokens) }}</span>
-            <span class="token-output">Output {{ formatTokens(dashboard.today_tokens.output_tokens) }}</span>
-            <span>Cached {{ formatTokens(dashboard.today_tokens.cached_tokens) }}</span>
-          </div>
-        </div>
-      </article>
 
-      <article class="dashboard-kpi dashboard-kpi-total">
-        <div class="dashboard-kpi-icon"><Database :size="21" /></div>
-        <div class="dashboard-kpi-body">
-          <NStatistic label="总 Token" :value="formatTokens(dashboard.total_tokens.total_tokens)" />
-          <div class="token-breakdown">
-            <span class="token-input">Input {{ formatTokens(dashboard.total_tokens.input_tokens) }}</span>
-            <span class="token-output">Output {{ formatTokens(dashboard.total_tokens.output_tokens) }}</span>
-            <span>Cached {{ formatTokens(dashboard.total_tokens.cached_tokens) }}</span>
-          </div>
-        </div>
-      </article>
-
-      <article class="dashboard-kpi dashboard-kpi-performance">
-        <div class="dashboard-kpi-icon"><Gauge :size="21" /></div>
-        <div class="dashboard-kpi-body">
-          <NStatistic label="性能指标" :value="dashboard.performance.requests_per_minute">
-            <template #suffix><small>RPM</small></template>
-          </NStatistic>
-          <div class="dashboard-kpi-details">
-            <span><strong>{{ formatTokens(dashboard.performance.tokens_per_minute) }}</strong> TPM</span>
-            <span><strong>{{ formatPercent(dashboard.performance.success_rate) }}</strong> 成功率</span>
-          </div>
-        </div>
-      </article>
-
-      <article class="dashboard-kpi dashboard-kpi-response">
-        <div class="dashboard-kpi-icon"><Clock3 :size="21" /></div>
-        <div class="dashboard-kpi-body">
-          <NStatistic label="平均响应" :value="formatDuration(dashboard.performance.average_duration_ms)" />
-          <div class="dashboard-kpi-details">
-            <span><strong>{{ formatDuration(dashboard.performance.average_ttft_ms) }}</strong> 首字响应</span>
-            <span><strong>{{ dashboard.performance.requests_today }}</strong> 次请求 · <strong>{{ dashboard.performance.active_plans }}</strong> 个 Plan</span>
-          </div>
-        </div>
-      </article>
-    </div>
-
-    <section v-if="dashboard" class="dashboard-trend-panel">
-      <header class="dashboard-trend-header">
+    <section v-if="dashboard" class="dashboard-metric-band" aria-label="使用概览">
+      <dl class="dashboard-overview-ledger">
         <div>
-          <h2>Token 使用趋势</h2>
-          <p>最近 24 小时 · 按本地时间展示</p>
+          <dt>总 Token</dt>
+          <dd>{{ formatTokens(dashboard.total_tokens.total_tokens) }}</dd>
+          <small>累计使用</small>
         </div>
-        <div class="trend-summary">
-          <small>24 小时合计</small>
-          <strong>{{ formatTokens(trendTotal) }}</strong>
+        <div>
+          <dt>今日 Token</dt>
+          <dd>{{ formatTokens(dashboard.today_tokens.total_tokens) }}</dd>
+          <small>{{ dashboard.performance.requests_today }} 次请求</small>
         </div>
+        <div>
+          <dt>实时性能</dt>
+          <dd>{{ dashboard.performance.requests_per_minute }} <small>RPM</small></dd>
+          <small>{{ formatTokens(dashboard.performance.tokens_per_minute) }} TPM · {{ formatPercent(dashboard.performance.success_rate) }} 成功率</small>
+        </div>
+        <div>
+          <dt>平均响应</dt>
+          <dd>{{ formatDuration(dashboard.performance.average_duration_ms) }}</dd>
+          <small>{{ formatDuration(dashboard.performance.average_ttft_ms) }} 首字响应 · {{ dashboard.performance.active_plans }} 个 Plan</small>
+        </div>
+      </dl>
+    </section>
+
+    <section v-if="dashboard" class="dashboard-annual-section" aria-labelledby="dashboard-annual-title">
+      <header class="dashboard-section-header">
+        <div>
+          <h2 id="dashboard-annual-title">年度活跃</h2>
+          <p>最近 365 天 · 按本地日期统计 · 颜色表示相对用量</p>
+        </div>
+      </header>
+
+      <div class="dashboard-heatmap-stage">
+        <TokenActivityHeatmap :usage="dashboard.daily_usage" />
+      </div>
+
+      <dl class="dashboard-annual-facts" aria-label="年度使用节奏">
+        <div>
+          <dt>活跃日</dt>
+          <dd>{{ activeDays }}</dd>
+          <small>最近 365 天</small>
+        </div>
+        <div>
+          <dt>年度覆盖</dt>
+          <dd>{{ formatPercent(annualCoverage) }}</dd>
+          <small>有使用记录的日期</small>
+        </div>
+        <div>
+          <dt>年度请求</dt>
+          <dd>{{ annualRequestCount.toLocaleString('zh-CN') }}</dd>
+          <small>最近 365 天</small>
+        </div>
+        <div>
+          <dt>活跃日均量</dt>
+          <dd>{{ formatTokens(averageTokensPerActiveDay) }}</dd>
+          <small>仅统计活跃日期</small>
+        </div>
+        <div class="dashboard-peak-fact">
+          <dt>峰值日</dt>
+          <dd><time :datetime="peakDay.usage_date">{{ formatUTCShortDate(peakDay.usage_date) }}</time></dd>
+          <small>{{ formatTokens(peakDay.token_usage.total_tokens) }} Token</small>
+        </div>
+      </dl>
+    </section>
+
+    <section v-if="dashboard" class="dashboard-trend-section" aria-labelledby="dashboard-trend-title">
+      <header class="dashboard-section-header dashboard-trend-header">
+        <div>
+          <h2 id="dashboard-trend-title">24 小时趋势</h2>
+          <p>按本地时间展示，用量变化与工具调用同时对照</p>
+        </div>
+        <dl class="dashboard-trend-facts" aria-label="最近 24 小时摘要">
+          <div>
+            <dt>Token</dt>
+            <dd>{{ formatTokens(trendTotal) }}</dd>
+          </div>
+          <div>
+            <dt>Web Search</dt>
+            <dd>{{ trendWebSearchCalls.toLocaleString('zh-CN') }}</dd>
+          </div>
+          <div>
+            <dt>图片</dt>
+            <dd>{{ trendImageCount.toLocaleString('zh-CN') }}</dd>
+          </div>
+        </dl>
       </header>
       <div v-if="trendTotal > 0" class="dashboard-chart-wrap">
         <TokenUsageChart :trend="dashboard.trend" :theme="theme" />
@@ -78,7 +105,9 @@
     </section>
 
     <div v-else-if="loading" class="dashboard-loading" aria-live="polite">
-      <NSkeleton v-for="index in 4" :key="index" height="154px" :sharp="false" />
+      <NSkeleton height="190px" :sharp="true" />
+      <NSkeleton height="330px" :sharp="true" />
+      <NSkeleton height="390px" :sharp="true" />
     </div>
     <NEmpty v-else description="仪表盘暂时不可用" />
   </section>
@@ -86,8 +115,9 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { NButton, NEmpty, NStatistic, NSkeleton } from 'naive-ui'
-import { Clock3, Database, Gauge, RefreshCw, Zap } from 'lucide-vue-next'
+import { NButton, NEmpty, NSkeleton } from 'naive-ui'
+import { RefreshCw } from 'lucide-vue-next'
+import TokenActivityHeatmap from '../components/TokenActivityHeatmap.vue'
 import TokenUsageChart from '../components/TokenUsageChart.vue'
 import { formatDuration, formatPercent, formatTokens } from '../dashboardFormat'
 import type { Dashboard } from '../types'
@@ -102,5 +132,17 @@ const props = defineProps<{
 
 const emit = defineEmits<{ refresh: [] }>()
 
+const activeDays = computed(() => props.dashboard?.daily_usage.filter(day => day.token_usage.total_tokens > 0).length ?? 0)
+const annualCoverage = computed(() => props.dashboard === null ? 0 : activeDays.value / props.dashboard.daily_usage.length * 100)
+const annualRequestCount = computed(() => props.dashboard?.daily_usage.reduce((total, day) => total + day.request_count, 0) ?? 0)
+const annualTokens = computed(() => props.dashboard?.daily_usage.reduce((total, day) => total + day.token_usage.total_tokens, 0) ?? 0)
+const averageTokensPerActiveDay = computed(() => activeDays.value === 0 ? 0 : annualTokens.value / activeDays.value)
+const peakDay = computed(() => props.dashboard!.daily_usage.reduce((peak, day) => day.token_usage.total_tokens > peak.token_usage.total_tokens ? day : peak))
 const trendTotal = computed(() => props.dashboard?.trend.reduce((total, point) => total + point.input_tokens + point.output_tokens, 0) ?? 0)
+const trendWebSearchCalls = computed(() => props.dashboard?.trend.reduce((total, point) => total + point.web_search_calls, 0) ?? 0)
+const trendImageCount = computed(() => props.dashboard?.trend.reduce((total, point) => total + point.image_count, 0) ?? 0)
+
+function formatUTCShortDate(value: string): string {
+  return new Intl.DateTimeFormat('zh-CN', { timeZone: 'UTC', month: 'short', day: 'numeric' }).format(new Date(`${value}T00:00:00Z`))
+}
 </script>

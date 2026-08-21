@@ -502,5 +502,6 @@ func (s *Service) Dashboard(ctx context.Context, userID, timezone string) (domai
 	todayStart := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, location)
 	currentHour := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), localNow.Hour(), 0, 0, 0, location)
 	trendStart := currentHour.Add(-23 * time.Hour)
-	return s.store.Dashboard(ctx, userID, todayStart, trendStart, now)
+	dailyStart := todayStart.AddDate(0, 0, -364)
+	return s.store.Dashboard(ctx, userID, todayStart, trendStart, dailyStart, now, timezone)
 }

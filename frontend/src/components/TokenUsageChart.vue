@@ -33,11 +33,21 @@ const palette = computed(() => props.theme === 'dark' ? {
   grid: 'rgba(165, 161, 155, .15)',
   tooltip: '#f7f5f2',
   tooltipBackground: '#292a2d',
+  input: '#ed715c',
+  inputFill: 'rgba(237, 113, 92, .12)',
+  output: '#dca64a',
+  outputFill: 'rgba(220, 166, 74, .08)',
+  cached: '#a5a19b',
 } : {
   text: '#6d7078',
   grid: 'rgba(109, 112, 120, .14)',
   tooltip: '#222327',
   tooltipBackground: '#ffffff',
+  input: '#df5943',
+  inputFill: 'rgba(223, 89, 67, .11)',
+  output: '#b47814',
+  outputFill: 'rgba(180, 120, 20, .07)',
+  cached: '#7b7d84',
 })
 
 const chartData = computed<ChartData<'line'>>(() => ({
@@ -46,8 +56,8 @@ const chartData = computed<ChartData<'line'>>(() => ({
     {
       label: 'Input',
       data: props.trend.map(point => point.input_tokens),
-      borderColor: '#4b7bec',
-      backgroundColor: 'rgba(75, 123, 236, .12)',
+      borderColor: palette.value.input,
+      backgroundColor: palette.value.inputFill,
       fill: true,
       tension: 0.34,
       borderWidth: 2,
@@ -57,8 +67,8 @@ const chartData = computed<ChartData<'line'>>(() => ({
     {
       label: 'Output',
       data: props.trend.map(point => point.output_tokens),
-      borderColor: '#18a27f',
-      backgroundColor: 'rgba(24, 162, 127, .08)',
+      borderColor: palette.value.output,
+      backgroundColor: palette.value.outputFill,
       fill: false,
       tension: 0.34,
       borderWidth: 2,
@@ -68,8 +78,8 @@ const chartData = computed<ChartData<'line'>>(() => ({
     {
       label: 'Cached',
       data: props.trend.map(point => point.cached_tokens),
-      borderColor: '#d59020',
-      backgroundColor: 'rgba(213, 144, 32, .08)',
+      borderColor: palette.value.cached,
+      backgroundColor: 'transparent',
       borderDash: [5, 5],
       fill: false,
       tension: 0.34,

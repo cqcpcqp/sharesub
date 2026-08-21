@@ -353,6 +353,12 @@ export interface DashboardTrendPoint {
   web_search_calls: number
 }
 
+export interface DashboardDailyUsage {
+  usage_date: string
+  request_count: number
+  token_usage: TokenUsage
+}
+
 export interface ModelUsage {
   model: string
   request_count: number
@@ -380,6 +386,7 @@ export interface Dashboard {
   total_web_search_calls: number
   performance: DashboardPerformance
   trend: DashboardTrendPoint[]
+  daily_usage: DashboardDailyUsage[]
 }
 
 export interface PlanInsights {

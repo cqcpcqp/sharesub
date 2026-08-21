@@ -53,9 +53,9 @@
 
 | 方法 | 路径 | 鉴权 | 查询参数 | 用途 |
 |---|---|---|---|---|
-| `GET` | `/api/dashboard` | 登录 Token | `timezone` | 获取当前用户的 Token 与性能汇总及最近 24 小时趋势 |
+| `GET` | `/api/dashboard` | 登录 Token | `timezone` | 获取当前用户的 Token 与性能汇总、最近 24 小时趋势及最近 365 个本地自然日的每日用量 |
 
-`timezone` 必须是有效的 IANA 时区名称，例如 `Asia/Shanghai`。响应包含 `today_tokens`、`total_tokens`、`today_web_search_calls`、`total_web_search_calls`、`performance` 和固定 24 个小时桶的 `trend`。所有数据只聚合当前用户作为 Plan 成员实际发起的请求；“今日”边界按请求指定的时区计算。
+`timezone` 必须是有效的 IANA 时区名称，例如 `Asia/Shanghai`。响应包含 `today_tokens`、`total_tokens`、`today_web_search_calls`、`total_web_search_calls`、`performance`、固定 24 个小时桶的 `trend`，以及固定 365 个日期桶的 `daily_usage`。每个 `daily_usage` 项包含 `usage_date`（`YYYY-MM-DD`）、`request_count` 和 `token_usage`；日期边界按请求指定的时区计算，数组包含零用量日期并按日期升序排列。所有数据只聚合当前用户作为 Plan 成员实际发起的请求。
 
 `today_tokens` 和 `total_tokens` 固定包含 `input_tokens`、`output_tokens`、`cached_tokens`、`cache_creation_tokens`、`image_input_tokens`、`image_output_tokens`、`image_count` 与 `total_tokens`，其中总 Token 为 Input 与 Output 之和，Cached、Cache Creation 和 Image Input 是 Input 的细分，Image Output 是 Output 的细分。`trend` 的每个小时桶固定包含 `bucket_start`、上述除 `total_tokens` 外的 Token 与图片字段，以及 `web_search_calls`。`performance` 包含今日请求数、成功率、最近一分钟 RPM/TPM、今日平均 TTFT、今日平均总耗时和今日实际使用的 Plan 数。
 
