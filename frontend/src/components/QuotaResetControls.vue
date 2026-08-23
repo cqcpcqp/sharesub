@@ -35,6 +35,28 @@
           </template>
           将消耗 1 次重置机会。OpenAI 可能同时重置当前 5h 与 7d 额度窗口，此操作不可撤销。
         </NPopconfirm>
+        <NPopconfirm
+          v-if="showVoteAction"
+          :disabled="!canStartVote || busy"
+          positive-text="发起投票"
+          negative-text="取消"
+          @positive-click="emit('startVote')"
+        >
+          <template #trigger>
+            <NButton
+              size="tiny"
+              quaternary
+              type="primary"
+              :loading="voteAction === 'start'"
+              :disabled="!canStartVote || busy"
+              :title="voteDisabledReason || undefined"
+              aria-label="发起额度重置投票"
+            >
+              发起投票
+            </NButton>
+          </template>
+          投票持续 2 小时。达到严格多数后，系统会立即消耗 1 次重置机会，并可能同时重置当前 5h 与 7d 额度窗口。
+        </NPopconfirm>
       </div>
     </div>
 
@@ -62,6 +84,14 @@
     <p v-else-if="!credits" class="quota-reset-hint">
       查询 OpenAI 当前可用次数及到期时间<span v-if="!allowReset">；仅房主可执行重置</span>
     </p>
+
+    <QuotaResetVotePanel
+      :vote="vote"
+      :loading="voteLoading"
+      :action="voteAction"
+      @cast="emit('castVote', $event)"
+      @refresh="emit('refreshVote')"
+    />
   </section>
 </template>
 
@@ -70,19 +100,39 @@ import { computed, ref, watch } from 'vue'
 import { NButton, NPopconfirm } from 'naive-ui'
 import { RotateCcw } from 'lucide-vue-next'
 import type { QuotaResetCredits } from '../types'
+import type { QuotaResetVote, QuotaResetVoteChoice } from '../types'
+import QuotaResetVotePanel from './QuotaResetVotePanel.vue'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   credits: QuotaResetCredits | null
   querying: boolean
   resetting: boolean
   disabled: boolean
   allowReset: boolean
-}>()
+  canStartVote?: boolean
+  voteDisabledReason?: string
+  vote?: QuotaResetVote | null
+  voteLoading?: boolean
+  voteAction?: string
+}>(), {
+  canStartVote: false,
+  voteDisabledReason: '',
+  vote: null,
+  voteLoading: false,
+  voteAction: '',
+})
 
-const emit = defineEmits<{ query: []; reset: [] }>()
+const emit = defineEmits<{
+  query: []
+  reset: []
+  startVote: []
+  castVote: [choice: Exclude<QuotaResetVoteChoice, ''>]
+  refreshVote: []
+}>()
 const showAllExpirations = ref(false)
 const busy = computed(() => props.disabled || props.querying || props.resetting)
 const canReset = computed(() => props.allowReset && props.credits !== null && props.credits.available_count > 0 && !busy.value)
+const showVoteAction = computed(() => !props.vote || !['active', 'executing'].includes(props.vote.status))
 const expirationTimes = computed(() => (props.credits === null ? [] : [...props.credits.credits])
   .sort((left, right) => new Date(left.expires_at).getTime() - new Date(right.expires_at).getTime())
   .map(credit => credit.expires_at))

@@ -26,4 +26,5 @@ var (
 	ErrAccountConcurrency        = errors.New("OpenAI account concurrency limit reached")
 	ErrAccountRateLimited        = errors.New("OpenAI account RPM limit reached")
 	ErrAccountAlreadyBound       = fmt.Errorf("OpenAI account is already bound to another Plan: %w", ErrConflict)
+	ErrQuotaResetUnavailable     = fmt.Errorf("no quota reset credit is currently available: %w", ErrConflict)
 )

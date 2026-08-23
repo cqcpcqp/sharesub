@@ -141,8 +141,16 @@
             :resetting="quotaResetting"
             :disabled="refreshing"
             :allow-reset="canResetQuota"
+            :can-start-vote="canStartQuotaResetVote"
+            :vote-disabled-reason="quotaResetVoteDisabledReason"
+            :vote="quotaResetVote"
+            :vote-loading="quotaResetVoteLoading"
+            :vote-action="quotaResetVoteAction"
             @query="emit('queryQuotaResetCredits')"
             @reset="emit('resetQuota')"
+            @start-vote="emit('startQuotaResetVote')"
+            @cast-vote="emit('castQuotaResetVote', $event)"
+            @refresh-vote="emit('refreshQuotaResetVote')"
           />
 
           <dl class="window-summary">
@@ -256,7 +264,7 @@
 import { computed, ref } from 'vue'
 import { NButton, NProgress, NSelect, NTooltip } from 'naive-ui'
 import { Activity, CircleHelp, Clock3, Gauge, RefreshCw, Timer, Zap } from 'lucide-vue-next'
-import type { Member, MemberRankingPeriodID, PerformancePeriod, PlanAllocationMode, PlanInsights, QuotaResetCredits, QuotaWindow, WindowUsage } from '../types'
+import type { Member, MemberRankingPeriodID, PerformancePeriod, PlanAllocationMode, PlanInsights, QuotaResetCredits, QuotaResetVote, QuotaWindow, WindowUsage } from '../types'
 import type { ResolvedTheme } from '../themePreference'
 import { formatShareBasisPoints } from '../planAllocation'
 import { formatMilliseconds, formatTokens } from '../dashboardFormat'
@@ -277,6 +285,11 @@ const props = withDefaults(defineProps<{
   refreshing?: boolean
   canQueryQuotaReset?: boolean
   canResetQuota?: boolean
+  canStartQuotaResetVote?: boolean
+  quotaResetVoteDisabledReason?: string
+  quotaResetVote?: QuotaResetVote | null
+  quotaResetVoteLoading?: boolean
+  quotaResetVoteAction?: string
   quotaResetCredits?: QuotaResetCredits | null
   quotaResetCreditsLoading?: boolean
   quotaResetting?: boolean
@@ -289,6 +302,11 @@ const props = withDefaults(defineProps<{
   refreshing: false,
   canQueryQuotaReset: false,
   canResetQuota: false,
+  canStartQuotaResetVote: false,
+  quotaResetVoteDisabledReason: '',
+  quotaResetVote: null,
+  quotaResetVoteLoading: false,
+  quotaResetVoteAction: '',
   quotaResetCredits: null,
   quotaResetCreditsLoading: false,
   quotaResetting: false,
@@ -301,6 +319,9 @@ const emit = defineEmits<{
   refresh: []
   queryQuotaResetCredits: []
   resetQuota: []
+  startQuotaResetVote: []
+  castQuotaResetVote: [choice: 'support' | 'oppose']
+  refreshQuotaResetVote: []
   'update:performancePeriod': [value: PerformancePeriod]
 }>()
 const performancePeriodLabels: Record<PerformancePeriod, string> = {

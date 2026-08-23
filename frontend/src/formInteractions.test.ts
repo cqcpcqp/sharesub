@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { APIRequestError, api } from './api'
 import { adminAPI } from './api/admin'
 import { agreementVersions } from './agreements'
-import type { APIKey, Account, Plan, PlanDetail, PlanPerformance, PublicPlan, User } from './types'
+import type { APIKey, Account, Plan, PlanDetail, PlanPerformance, PublicPlan, QuotaResetVote, User } from './types'
 import APIKeySetupWizard from './components/APIKeySetupWizard.vue'
 import AccountsView from './views/AccountsView.vue'
 import AuthView from './views/AuthView.vue'
@@ -658,6 +658,34 @@ describe('form interactions', () => {
 
     expect(view.quotaResetCredits.value).toBeNull()
     expect(emit).toHaveBeenCalledWith('message', 'error', '重置请求未能确认结果，请先重新查询剩余次数：upstream connection closed')
+    scope.stop()
+  })
+
+  it('reports a cancelled voted reset as a failure instead of a successful submission', async () => {
+    const plan = { ...activePlan, id: 'plan-voted-reset-cancelled' }
+    const planDetail = { ...activeDetail, plan, members: activeDetail.members.map(member => ({ ...member, plan_id: plan.id })) }
+    const cancelledVote: QuotaResetVote = {
+      id: 'vote-cancelled', plan_id: plan.id, initiator_member_id: planDetail.members[0].id, initiator_user_id: owner.id, initiator_username: owner.username,
+      allocation_mode: 'shared', status: 'cancelled', eligible_count: 1, eligible_weight_basis_points: 0,
+      support_count: 1, support_weight_basis_points: 0, oppose_count: 0, current_user_choice: 'support', can_vote: false,
+      windows_reset: 0, result_code: 'quota_reset_preflight_failed', created_at: createdAt, expires_at: '2026-08-03T02:00:00Z',
+      execution_started_at: createdAt, completed_at: createdAt,
+      members: [{ member_id: planDetail.members[0].id, user_id: owner.id, username: owner.username, avatar_url: '', weight_basis_points: 0, choice: 'support', voted_at: createdAt }],
+    }
+    vi.spyOn(api, 'plan').mockResolvedValue(structuredClone(planDetail))
+    vi.spyOn(api, 'refreshPlanQuota').mockResolvedValue({ account_id: account.id, signals: [] })
+    vi.spyOn(api, 'quotaResetVote').mockResolvedValue({ vote: null })
+    vi.spyOn(api, 'createQuotaResetVote').mockResolvedValue({ vote: cancelledVote, reset_result: null })
+    vi.spyOn(api, 'planQuotaResetCredits').mockResolvedValue({ available_count: 1, credits: [{ expires_at: '2026-08-12T05:09:00Z' }], fetched_at: createdAt })
+    const emit = vi.fn()
+    const scope = effectScope()
+    const view = scope.run(() => usePlansView(reactive({ accounts: [account], plans: [plan], user: owner, initialPlanId: '', invitePlanId: '' }), emit))!
+    await flushPromises()
+
+    await view.startQuotaResetVote()
+
+    expect(emit).toHaveBeenCalledWith('message', 'error', '投票已通过，但系统未开始消费重置机会；请刷新 Plan 后重新发起投票。')
+    expect(emit).not.toHaveBeenCalledWith('message', 'success', '投票已提交')
     scope.stop()
   })
 

@@ -133,6 +133,9 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations WHERE name='027_email_verification.sql'`).Scan(&migrationCount); err != nil || migrationCount != 1 {
 		t.Fatalf("027 migration registrations = %d, error = %v", migrationCount, err)
 	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations WHERE name='028_quota_reset_votes.sql'`).Scan(&migrationCount); err != nil || migrationCount != 1 {
+		t.Fatalf("028 migration registrations = %d, error = %v", migrationCount, err)
+	}
 	var legacySnapshotAuthoritative bool
 	var legacySnapshotAuthoritativeAt *time.Time
 	if err := pool.QueryRow(ctx, `SELECT authoritative,authoritative_at FROM account_quota_snapshots WHERE account_id='account' AND window_type='7d'`).Scan(&legacySnapshotAuthoritative, &legacySnapshotAuthoritativeAt); err != nil {
@@ -1306,6 +1309,121 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	resetAdmin, err := store.ResetAdminPassword(ctx, bootstrapUser.Email, "reset-hash")
 	if err != nil || resetAdmin.Role != domain.RoleAdmin || !resetAdmin.MustChangePassword || resetAdmin.PasswordHash != "reset-hash" {
 		t.Fatalf("reset bootstrap admin = %+v, error = %v", resetAdmin, err)
+	}
+}
+
+func TestQuotaResetVoteWorkflow(t *testing.T) {
+	databaseURL := os.Getenv("SHARESUB_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("SHARESUB_TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	admin, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	schema := fmt.Sprintf("sharesub_vote_test_%d", time.Now().UnixNano())
+	identifier := pgx.Identifier{schema}.Sanitize()
+	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+identifier); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _, _ = admin.Exec(ctx, "DROP SCHEMA "+identifier+" CASCADE") }()
+	config, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.ConnConfig.RuntimeParams["search_path"] = schema
+	pool, err := pgxpool.NewWithConfig(ctx, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	store := &Store{pool: pool}
+	if err := store.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
+	for _, user := range []struct{ id, name string }{{"vote-owner", "owner"}, {"vote-a", "alice"}, {"vote-b", "bob"}} {
+		if err := store.CreateUser(ctx, domain.User{ID: user.id, Username: user.name, Email: user.id + "@example.com", PasswordHash: "hash", Status: domain.StatusActive, CreatedAt: now}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO openai_accounts(id,owner_user_id,name,notes,email,chatgpt_account_id,plan_type,access_token_ciphertext,refresh_token_ciphertext,max_concurrency,rpm_limit,token_expires_at,status,created_at,updated_at)
+		VALUES('vote-account','vote-owner','Vote account','','vote@example.com','vote-chatgpt','plus',$2,$3,0,0,$4,'active',$1,$1)`, now, []byte("access"), []byte("refresh"), now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO shared_plans(id,owner_user_id,account_id,name,status,visibility,allocation_mode,account_binding_generation,account_bound_at,created_at,updated_at)
+		VALUES('vote-plan','vote-owner','vote-account','Vote plan','active','private','fixed',1,$1,$1,$1)`, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO plan_members(id,plan_id,user_id,role,status,share_basis_points,created_at,updated_at) VALUES
+		('vote-owner-member','vote-plan','vote-owner','owner','active',4000,$1,$1),
+		('vote-a-member','vote-plan','vote-a','member','active',3000,$1,$1),
+		('vote-b-member','vote-plan','vote-b','member','active',3000,$1,$1)`, now); err != nil {
+		t.Fatal(err)
+	}
+	event := func(id, actor, action string) domain.AuditEvent {
+		return domain.AuditEvent{ID: id, ActorUserID: actor, Action: action, ResourceType: "plan", ResourceID: "vote-plan", Metadata: json.RawMessage(`{}`), CreatedAt: now}
+	}
+	vote := domain.QuotaResetVote{ID: "vote-1", PlanID: "vote-plan", CreatedAt: now, ExpiresAt: now.Add(2 * time.Hour)}
+	created, execute, err := store.CreateQuotaResetVote(ctx, vote, "vote-a", event("vote-start", "vote-a", "plan.quota_reset_vote_started"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if execute || created.SupportWeightBasisPoints != 3000 || created.Status != "active" {
+		t.Fatalf("created vote = %+v, execute = %v", created, execute)
+	}
+	passed, execute, err := store.CastQuotaResetVote(ctx, "vote-plan", vote.ID, "vote-b", "support", now.Add(time.Minute), event("vote-passed", "vote-b", "plan.quota_reset_vote_passed"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !execute || passed.Status != "executing" || passed.SupportWeightBasisPoints != 6000 {
+		t.Fatalf("passed vote = %+v, execute = %v", passed, execute)
+	}
+	votedLease := domain.QuotaResetExecutionLease{OperationID: "vote-operation", PlanID: "vote-plan", AccountID: "vote-account", AccountBindingGeneration: 1, VoteID: vote.ID, AcquiredAt: now.Add(time.Minute)}
+	if err := store.ReserveVotedQuotaReset(ctx, votedLease); err != nil {
+		t.Fatalf("reserve voted reset: %v", err)
+	}
+	manualLease := domain.QuotaResetExecutionLease{OperationID: "manual-operation", PlanID: "vote-plan", AccountID: "vote-account", AccountBindingGeneration: 1, AcquiredAt: now.Add(time.Minute)}
+	if err := store.ReserveManualQuotaReset(ctx, manualLease, "owner_reset", event("manual-conflict", "vote-owner", "plan.quota_reset_vote_cancelled")); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("manual reset during voted execution error = %v, want conflict", err)
+	}
+	if err := store.ReleaseQuotaResetExecution(ctx, "vote-plan", votedLease.OperationID); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := store.CompleteQuotaResetVote(ctx, vote.ID, "succeeded", 2, "rate_limit_reset_credit_redeemed", now.Add(2*time.Minute), event("vote-reset", "vote-b", "plan.quota_reset"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed.Status != "succeeded" || completed.WindowsReset != 2 {
+		t.Fatalf("completed vote = %+v", completed)
+	}
+	state, err := store.QuotaResetVote(ctx, "vote-plan", "vote-a", now.Add(3*time.Minute))
+	if err != nil || state == nil || state.Status != "succeeded" {
+		t.Fatalf("stored vote = %+v, error = %v", state, err)
+	}
+	manualLease = domain.QuotaResetExecutionLease{OperationID: "manual-operation-2", PlanID: "vote-plan", AccountID: "vote-account", AccountBindingGeneration: 1, AcquiredAt: now.Add(3 * time.Minute)}
+	if err := store.ReserveManualQuotaReset(ctx, manualLease, "owner_reset", event("manual-reserved", "vote-owner", "plan.quota_reset_vote_cancelled")); err != nil {
+		t.Fatalf("reserve manual reset: %v", err)
+	}
+	blockedVote := domain.QuotaResetVote{ID: "vote-blocked", PlanID: "vote-plan", CreatedAt: now.Add(3 * time.Minute), ExpiresAt: now.Add(2*time.Hour + 3*time.Minute)}
+	if _, _, err := store.CreateQuotaResetVote(ctx, blockedVote, "vote-a", event("vote-blocked-start", "vote-a", "plan.quota_reset_vote_started")); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("create vote during manual reset error = %v, want conflict", err)
+	}
+	if err := store.ReleaseQuotaResetExecution(ctx, "vote-plan", manualLease.OperationID); err != nil {
+		t.Fatal(err)
+	}
+	expiringVote := domain.QuotaResetVote{ID: "vote-expiring", PlanID: "vote-plan", CreatedAt: now.Add(4 * time.Minute), ExpiresAt: now.Add(5 * time.Minute)}
+	if _, execute, err := store.CreateQuotaResetVote(ctx, expiringVote, "vote-a", event("vote-expiring-start", "vote-a", "plan.quota_reset_vote_started")); err != nil || execute {
+		t.Fatalf("create expiring vote execute = %v, error = %v", execute, err)
+	}
+	if _, _, err := store.CastQuotaResetVote(ctx, "vote-plan", expiringVote.ID, "vote-b", "support", now.Add(6*time.Minute), event("vote-expired-cast", "vote-b", "plan.quota_reset_vote_passed")); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("cast expired vote error = %v, want conflict", err)
+	}
+	var expiredStatus string
+	if err := pool.QueryRow(ctx, `SELECT status FROM quota_reset_votes WHERE id=$1`, expiringVote.ID).Scan(&expiredStatus); err != nil || expiredStatus != "expired" {
+		t.Fatalf("expired vote status = %q, error = %v", expiredStatus, err)
 	}
 }
 

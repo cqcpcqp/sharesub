@@ -1,5 +1,5 @@
 import { reactive, ref } from 'vue'
-import type { AuditEvent, PerformancePeriod, PlanAllocationMode, PlanDetail, QuotaResetCredits } from '../types'
+import type { AuditEvent, PerformancePeriod, PlanAllocationMode, PlanDetail, QuotaResetCredits, QuotaResetVote } from '../types'
 
 export function createPlanViewState() {
   const detail = ref<PlanDetail | null>(null)
@@ -8,6 +8,9 @@ export function createPlanViewState() {
   const quotaResetCredits = ref<QuotaResetCredits | null>(null)
   const quotaResetCreditsLoading = ref(false)
   const quotaResetting = ref(false)
+  const quotaResetVote = ref<QuotaResetVote | null>(null)
+  const quotaResetVoteLoading = ref(false)
+  const quotaResetVoteAction = ref('')
   const performanceLoading = ref(false)
   const performancePeriod = ref<PerformancePeriod>('24h')
   const actionLoading = ref('')
@@ -34,6 +37,7 @@ export function createPlanViewState() {
 
   return {
     detail, planLoading, quotaRefreshing, quotaResetCredits, quotaResetCreditsLoading, quotaResetting,
+    quotaResetVote, quotaResetVoteLoading, quotaResetVoteAction,
     performanceLoading, performancePeriod, actionLoading, activeTab, auditEvents, auditLoading,
     showCreate, showConnectAccount, showInviteComposer, inviteSecret, showDeleteConfirmOne, showDeleteConfirmTwo,
     deleteNameDraft, renameDraft, descriptionDraft, transferMemberID, rebindAccountID,

@@ -14,6 +14,19 @@ const baseProps = {
 }
 
 describe('QuotaResetControls', () => {
+  it('offers a confirmed member vote without enabling direct reset', async () => {
+    const wrapper = mount(QuotaResetControls, {
+      props: { ...baseProps, allowReset: false, canStartVote: true },
+    })
+
+    expect(wrapper.get('button[aria-label="重置 OpenAI 额度"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('button[aria-label="发起额度重置投票"]').attributes('disabled')).toBeUndefined()
+    const confirm = wrapper.findAllComponents(NPopconfirm)[1]
+    confirm.vm.$emit('positiveClick')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.emitted('startVote')).toHaveLength(1)
+  })
+
   it('queries reset credits before enabling reset', async () => {
     const wrapper = mount(QuotaResetControls, { props: baseProps })
 

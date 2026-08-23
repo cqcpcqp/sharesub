@@ -474,6 +474,49 @@ export interface PlanQuotaResetResult {
   signals: QuotaSignal[]
 }
 
+export type QuotaResetVoteChoice = 'support' | 'oppose' | ''
+export type QuotaResetVoteStatus = 'active' | 'executing' | 'succeeded' | 'succeeded_unsynced' | 'expired' | 'cancelled' | 'outcome_unknown'
+
+export interface QuotaResetVoteMember {
+  member_id: string
+  user_id: string
+  username: string
+  avatar_url: string
+  weight_basis_points: number
+  choice: QuotaResetVoteChoice
+  voted_at: string | null
+}
+
+export interface QuotaResetVote {
+  id: string
+  plan_id: string
+  initiator_member_id: string
+  initiator_user_id: string
+  initiator_username: string
+  allocation_mode: PlanAllocationMode
+  status: QuotaResetVoteStatus
+  eligible_count: number
+  eligible_weight_basis_points: number
+  support_count: number
+  support_weight_basis_points: number
+  oppose_count: number
+  current_user_choice: QuotaResetVoteChoice
+  can_vote: boolean
+  windows_reset: number
+  result_code: string
+  created_at: string
+  expires_at: string
+  execution_started_at: string | null
+  completed_at: string | null
+  members: QuotaResetVoteMember[]
+}
+
+export interface QuotaResetVoteState { vote: QuotaResetVote | null }
+export interface QuotaResetVoteMutationResult {
+  vote: QuotaResetVote
+  reset_result: PlanQuotaResetResult | null
+}
+
 export interface AuditEvent {
   id: string
   actor_user_id: string

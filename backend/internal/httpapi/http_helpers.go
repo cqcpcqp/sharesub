@@ -94,6 +94,8 @@ func writeError(w http.ResponseWriter, err error) {
 		writeErrorStatus(w, 404, "not_found", err.Error())
 	case errors.Is(err, domain.ErrAccountAlreadyBound):
 		writeErrorStatus(w, 409, "account_already_bound", err.Error())
+	case errors.Is(err, domain.ErrQuotaResetUnavailable):
+		writeErrorStatus(w, 409, "quota_reset_unavailable", err.Error())
 	case errors.Is(err, domain.ErrConflict):
 		writeErrorStatus(w, 409, "conflict", err.Error())
 	case errors.Is(err, domain.ErrInvalidInput):

@@ -92,6 +92,13 @@ type PlanCollaborationStore interface {
 	RevokeInvite(context.Context, string, string, string, domain.AuditEvent) (domain.Invite, error)
 	UpdateMemberShare(context.Context, string, string, string, int, domain.AuditEvent) (domain.Member, error)
 	RemovePlanMember(context.Context, string, string, string, domain.AuditEvent) error
+	QuotaResetVote(context.Context, string, string, time.Time) (*domain.QuotaResetVote, error)
+	CreateQuotaResetVote(context.Context, domain.QuotaResetVote, string, domain.AuditEvent) (domain.QuotaResetVote, bool, error)
+	CastQuotaResetVote(context.Context, string, string, string, string, time.Time, domain.AuditEvent) (domain.QuotaResetVote, bool, error)
+	CompleteQuotaResetVote(context.Context, string, string, int, string, time.Time, domain.AuditEvent) (domain.QuotaResetVote, error)
+	ReserveManualQuotaReset(context.Context, domain.QuotaResetExecutionLease, string, domain.AuditEvent) error
+	ReserveVotedQuotaReset(context.Context, domain.QuotaResetExecutionLease) error
+	ReleaseQuotaResetExecution(context.Context, string, string) error
 }
 
 type KeyNotificationStore interface {

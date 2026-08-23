@@ -104,6 +104,11 @@
                 :quota-reset-credits="quotaResetCredits"
                 :quota-reset-credits-loading="quotaResetCreditsLoading"
                 :quota-resetting="quotaResetting"
+                :can-start-quota-reset-vote="canStartQuotaResetVote"
+                :quota-reset-vote-disabled-reason="quotaResetVoteDisabledReason"
+                :quota-reset-vote="quotaResetVote"
+                :quota-reset-vote-loading="quotaResetVoteLoading"
+                :quota-reset-vote-action="quotaResetVoteAction"
                 :performance-period="performancePeriod"
                 :performance-loading="performanceLoading"
                 :theme="theme"
@@ -111,6 +116,9 @@
                 @refresh="refreshQuota"
                 @query-quota-reset-credits="queryQuotaResetCredits"
                 @reset-quota="resetQuota"
+                @start-quota-reset-vote="startQuotaResetVote"
+                @cast-quota-reset-vote="castQuotaResetVote"
+                @refresh-quota-reset-vote="loadQuotaResetVote(detail.plan.id, true)"
                 @update:performance-period="loadPerformance"
               />
               <section v-else class="account-setup account-setup-overview">
@@ -564,19 +572,21 @@ const emit = defineEmits<PlansViewComponentEmits>()
 
 const {
   detail, planLoading, quotaRefreshing, quotaResetCredits, quotaResetCreditsLoading, quotaResetting,
+  quotaResetVote, quotaResetVoteLoading, quotaResetVoteAction,
   performanceLoading, performancePeriod, actionLoading, activeTab, auditEvents, auditLoading,
   loadPlan, loadAudit, loadPerformance,
   showCreate, showConnectAccount, showInviteComposer, showConvertToFixed, inviteSecret, showDeleteConfirmOne, showDeleteConfirmTwo,
   deleteNameDraft, renameDraft, descriptionDraft, transferMemberID, rebindAccountID, createForm, inviteForm,
   publication, shareDrafts, conversionShareDrafts, accountOptions, planOptions, isActualOwner, canManage, isShared, isArchived, isAccountBound, owner, currentMember,
   allocatedShare, reservedShares, remainingInviteSharePercent, canCreateInvite, approvedPublicMembers, availablePublicSlots, publicationAvailablePublicSlots,
+  canStartQuotaResetVote, quotaResetVoteDisabledReason,
   publicationReservedShares, maxPublicSeatSharePercent, publicationCapacityExceeded,
   canRename, canUpdateDescription, canSavePublication, conversionAllocatedBasisPoints, canConvertToFixed,
   canConfirmDelete, transferMemberOptions, rebindAccountOptions, actionLabels, metadataLabels,
   setPublicationVisibility, updateRenameDraft, updateDescriptionDraft, updateDeleteNameDraft, updatePublicationSlots,
   updatePublicationShare, updateRebindAccount, updateTransferMember, updateCreateName,
   updateCreateAccount, updateCreateAllocationMode, updateCreateShare, updateInviteShare, updateConversionShare, maxConversionSharePercent,
-  handleTabChange, openCreate, createPlan, openConvertToFixed, convertPlanToFixed, refreshQuota, queryQuotaResetCredits, resetQuota, sendInvite, revokeInvite, savePublication,
+  handleTabChange, openCreate, createPlan, openConvertToFixed, convertPlanToFixed, refreshQuota, queryQuotaResetCredits, resetQuota, loadQuotaResetVote, startQuotaResetVote, castQuotaResetVote, sendInvite, revokeInvite, savePublication,
   saveShare, removeMember, leavePlan, review, renamePlan, updatePlanDescription, updatePlanStatus,
   transferOwnership, rebindAccount, handleConnectedAccount, continueDelete, closeDeleteDialogs, deletePlan, copyInvite,
   formatDate, formatMetadata,

@@ -1,10 +1,12 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/sharesub/sharesub/backend/internal/application"
 	"github.com/sharesub/sharesub/backend/internal/domain"
@@ -396,6 +398,13 @@ func (s *Server) resetPlanQuota(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer release()
+	operationID, err := s.app.ReserveManualQuotaReset(r.Context(), probe, userID, "owner_reset")
+	if err != nil {
+		s.logger.Error("reserve owner quota reset", "error", err, "plan_id", planID)
+		writeError(w, err)
+		return
+	}
+	defer s.releaseQuotaResetExecution(r.Context(), planID, operationID)
 	reset, err := s.gateway.ConsumeQuotaResetCredit(r.Context(), probe.AccessToken, probe.ChatGPTAccountID, probe.ProxyURL)
 	if err != nil {
 		s.logger.Error("reset OpenAI quota", "error", err, "plan_id", planID)
@@ -420,6 +429,129 @@ func (s *Server) resetPlanQuota(w http.ResponseWriter, r *http.Request) {
 	result.QuotaRefreshed = true
 	result.Signals = signals
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) quotaResetVote(w http.ResponseWriter, r *http.Request) {
+	result, err := s.app.QuotaResetVote(r.Context(), currentUser(r).ID, r.PathValue("planID"))
+	writeResult(w, result, err)
+}
+
+func (s *Server) createQuotaResetVote(w http.ResponseWriter, r *http.Request) {
+	userID := currentUser(r).ID
+	planID := r.PathValue("planID")
+	probe, err := s.app.PreparePlanQuotaProbeForMember(r.Context(), userID, planID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	credits, err := s.gateway.QueryQuotaResetCredits(r.Context(), probe.AccessToken, probe.ChatGPTAccountID, probe.ProxyURL)
+	if err != nil {
+		s.logger.Error("query reset credits before vote", "error", err, "plan_id", planID)
+		writeErrorStatus(w, http.StatusBadGateway, "quota_reset_credits_query_failed", "OpenAI quota reset credits query failed")
+		return
+	}
+	if credits.AvailableCount == 0 {
+		writeError(w, domain.ErrQuotaResetUnavailable)
+		return
+	}
+	vote, execute, err := s.app.CreateQuotaResetVote(r.Context(), userID, planID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	result := s.executeQuotaResetVote(r.Context(), planID, userID, vote, execute)
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) castQuotaResetVote(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Choice string `json:"choice"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	userID := currentUser(r).ID
+	planID := r.PathValue("planID")
+	vote, execute, err := s.app.CastQuotaResetVote(r.Context(), userID, planID, r.PathValue("voteID"), input.Choice)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	result := s.executeQuotaResetVote(r.Context(), planID, userID, vote, execute)
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) executeQuotaResetVote(ctx context.Context, planID, actorUserID string, vote domain.QuotaResetVote, execute bool) domain.QuotaResetVoteMutationResult {
+	result := domain.QuotaResetVoteMutationResult{Vote: vote}
+	if !execute {
+		return result
+	}
+	completeUnknown := func(code string) {
+		completed, err := s.app.CompleteQuotaResetVote(ctx, planID, vote.ID, "outcome_unknown", 0, code, actorUserID)
+		if err != nil {
+			s.logger.Error("record uncertain voted quota reset", "error", err, "plan_id", planID, "vote_id", vote.ID)
+			return
+		}
+		result.Vote = completed
+	}
+	probe, release, err := s.app.QuiescePlanQuotaForMember(ctx, actorUserID, planID)
+	if err != nil {
+		completed, completeErr := s.app.CompleteQuotaResetVote(ctx, planID, vote.ID, "cancelled", 0, "quota_reset_preflight_failed", actorUserID)
+		if completeErr != nil {
+			s.logger.Error("record voted quota reset preflight failure", "error", completeErr, "plan_id", planID, "vote_id", vote.ID)
+		} else {
+			result.Vote = completed
+		}
+		return result
+	}
+	defer release()
+	operationID, err := s.app.ReserveVotedQuotaReset(ctx, probe, vote.ID)
+	if err != nil {
+		completed, completeErr := s.app.CompleteQuotaResetVote(ctx, planID, vote.ID, "cancelled", 0, "quota_reset_preflight_failed", actorUserID)
+		if completeErr != nil {
+			s.logger.Error("record voted quota reset reservation failure", "error", completeErr, "plan_id", planID, "vote_id", vote.ID)
+		} else {
+			result.Vote = completed
+		}
+		return result
+	}
+	defer s.releaseQuotaResetExecution(ctx, planID, operationID)
+	reset, err := s.gateway.ConsumeQuotaResetCredit(ctx, probe.AccessToken, probe.ChatGPTAccountID, probe.ProxyURL)
+	if err != nil {
+		s.logger.Error("voted quota reset result unknown", "error", err, "plan_id", planID, "vote_id", vote.ID)
+		completeUnknown("quota_reset_result_unknown")
+		return result
+	}
+	resetResult := domain.PlanQuotaResetResult{Code: reset.Code, Credit: reset.Credit, WindowsReset: reset.WindowsReset, QuotaRefreshed: false, Signals: make([]domain.QuotaSignal, 0)}
+	status := "succeeded_unsynced"
+	signals, probeErr := s.gateway.ProbeQuota(ctx, probe.AccessToken, probe.ChatGPTAccountID, probe.ProxyURL)
+	if probeErr == nil {
+		if recordErr := s.app.RecordResetQuotaSignals(ctx, probe, signals); recordErr == nil {
+			resetResult.QuotaRefreshed = true
+			resetResult.Signals = signals
+			status = "succeeded"
+		} else {
+			s.logger.Error("record quota after voted reset", "error", recordErr, "plan_id", planID, "vote_id", vote.ID)
+		}
+	} else {
+		s.logger.Error("refresh quota after voted reset", "error", probeErr, "plan_id", planID, "vote_id", vote.ID)
+	}
+	completed, completeErr := s.app.CompleteQuotaResetVote(ctx, planID, vote.ID, status, reset.WindowsReset, reset.Code, actorUserID)
+	if completeErr != nil {
+		s.logger.Error("record voted quota reset completion", "error", completeErr, "plan_id", planID, "vote_id", vote.ID)
+	} else {
+		result.Vote = completed
+	}
+	result.ResetResult = &resetResult
+	return result
+}
+
+func (s *Server) releaseQuotaResetExecution(ctx context.Context, planID, operationID string) {
+	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if err := s.app.ReleaseQuotaResetExecution(releaseCtx, planID, operationID); err != nil {
+		s.logger.Error("release quota reset execution", "error", err, "plan_id", planID, "operation_id", operationID)
+	}
 }
 func (s *Server) listPublicPlans(w http.ResponseWriter, r *http.Request) {
 	v, err := s.app.ListPublicPlans(r.Context(), currentUser(r).ID)

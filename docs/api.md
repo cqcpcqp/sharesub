@@ -109,6 +109,9 @@ OAuth 开始接口返回 `authorization_url` 和 `flow_id`。完成授权后，�
 | `POST` | `/api/plans/{planID}/quota/refresh` | 登录 Token | 无 | 房主主动查询并更新账号额度窗口 |
 | `GET` | `/api/plans/{planID}/quota/reset-credits` | 登录 Token | 无 | 有效成员查询 Codex 额度重置机会及到期时间 |
 | `POST` | `/api/plans/{planID}/quota/reset` | 登录 Token | 无 | 房主消耗一次 Codex 额度重置机会并同步最新窗口 |
+| `GET` | `/api/plans/{planID}/quota/reset-vote` | 登录 Token | 无 | 有效成员查询最近一次额度重置投票 |
+| `POST` | `/api/plans/{planID}/quota/reset-votes` | 登录 Token | 无 | 非仅查看成员发起两小时额度重置投票并自动投赞成票 |
+| `PATCH` | `/api/plans/{planID}/quota/reset-votes/{voteID}` | 登录 Token | `choice` | 有投票权的成员提交或修改 `support` / `oppose` 选择 |
 | `GET` | `/api/public-plans` | 登录 Token | 无 | 获取大厅内全部公开 Plan；未绑定账号时 `plan.account_id` 和 `plan_type` 为空字符串，`subscription_expires_at` 为 `null` |
 | `PATCH` | `/api/plans/{planID}/publication` | 登录 Token | `visibility`, `public_slots`, `public_share_basis_points` | 房主发布或取消公开 Plan |
 | `POST` | `/api/public-plans/{planID}/applications` | 登录 Token | `message` | 申请公开 Plan 席位 |
@@ -146,6 +149,8 @@ Plan 详情的 `insights.window_usage` 按当前 OpenAI 账号实际返回的 5h
 ```
 
 重置会消耗一个 OpenAI `codex_rate_limits` 类型的可用机会，并尝试立即查询最新额度。响应固定包含 `code`、`credit`、`windows_reset`、`quota_refreshed` 和 `signals`；`credit` 没有返回时为 `null`。`quota_refreshed` 为 `false` 表示重置已经成功，但后续额度查询或本地同步失败，客户端不得将其描述为重置失败或提示用户再次重置。同步成功时会强制覆盖同一 `reset_at` 下的账号窗口快照，并以重置后的当前值和同步时间重建该绑定代次的窗口基线，避免重置前用量继续参与成员估算额度。
+
+额度重置投票固定持续两小时，同一 Plan 同时只能有一场进行中或正在执行的投票。固定分配模式仅份额大于 0 的有效成员拥有票权，赞成成员的快照份额合计必须严格大于整个 Plan 的 `5000` 基点；共享模式下所有有效成员一人一票，赞成人数必须严格超过有效成员数的一半。发起人自动投赞成票。达到条件的关键票会原子地把投票锁定为执行中，随后自动消费一次重置机会，不再等待房主确认。成员、份额、额度方式、Plan 状态或账号绑定发生变化会使尚未通过的投票失效；外部消费结果无法确认，或执行记录中断超过 15 分钟时，状态固定为 `outcome_unknown`，服务端不会自动重试。
 
 ```json
 {

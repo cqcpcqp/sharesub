@@ -586,6 +586,58 @@ type PlanQuotaResetResult struct {
 	Signals        []QuotaSignal             `json:"signals"`
 }
 
+type QuotaResetVoteMember struct {
+	MemberID          string     `json:"member_id"`
+	UserID            string     `json:"user_id"`
+	Username          string     `json:"username"`
+	AvatarURL         string     `json:"avatar_url"`
+	WeightBasisPoints int        `json:"weight_basis_points"`
+	Choice            string     `json:"choice"`
+	VotedAt           *time.Time `json:"voted_at"`
+}
+
+type QuotaResetVote struct {
+	ID                        string                 `json:"id"`
+	PlanID                    string                 `json:"plan_id"`
+	InitiatorMemberID         string                 `json:"initiator_member_id"`
+	InitiatorUserID           string                 `json:"initiator_user_id"`
+	InitiatorUsername         string                 `json:"initiator_username"`
+	AllocationMode            string                 `json:"allocation_mode"`
+	Status                    string                 `json:"status"`
+	EligibleCount             int                    `json:"eligible_count"`
+	EligibleWeightBasisPoints int                    `json:"eligible_weight_basis_points"`
+	SupportCount              int                    `json:"support_count"`
+	SupportWeightBasisPoints  int                    `json:"support_weight_basis_points"`
+	OpposeCount               int                    `json:"oppose_count"`
+	CurrentUserChoice         string                 `json:"current_user_choice"`
+	CanVote                   bool                   `json:"can_vote"`
+	WindowsReset              int                    `json:"windows_reset"`
+	ResultCode                string                 `json:"result_code"`
+	CreatedAt                 time.Time              `json:"created_at"`
+	ExpiresAt                 time.Time              `json:"expires_at"`
+	ExecutionStartedAt        *time.Time             `json:"execution_started_at"`
+	CompletedAt               *time.Time             `json:"completed_at"`
+	Members                   []QuotaResetVoteMember `json:"members"`
+}
+
+type QuotaResetVoteState struct {
+	Vote *QuotaResetVote `json:"vote"`
+}
+
+type QuotaResetVoteMutationResult struct {
+	Vote        QuotaResetVote        `json:"vote"`
+	ResetResult *PlanQuotaResetResult `json:"reset_result"`
+}
+
+type QuotaResetExecutionLease struct {
+	OperationID              string
+	PlanID                   string
+	AccountID                string
+	AccountBindingGeneration int64
+	VoteID                   string
+	AcquiredAt               time.Time
+}
+
 type PlanQuotaCredential struct {
 	PlanID                   string
 	AccountID                string

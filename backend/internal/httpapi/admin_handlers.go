@@ -321,6 +321,13 @@ func (s *Server) adminResetPlanQuota(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer release()
+	operationID, err := s.app.ReserveManualQuotaReset(r.Context(), probe, currentUser(r).ID, "admin_reset")
+	if err != nil {
+		s.logger.Error("reserve admin quota reset", "error", err, "plan_id", planID)
+		writeError(w, err)
+		return
+	}
+	defer s.releaseQuotaResetExecution(r.Context(), planID, operationID)
 	reset, err := s.gateway.ConsumeQuotaResetCredit(r.Context(), probe.AccessToken, probe.ChatGPTAccountID, probe.ProxyURL)
 	if err != nil {
 		s.logger.Error("admin reset OpenAI quota", "error", err, "plan_id", planID)

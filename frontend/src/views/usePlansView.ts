@@ -6,6 +6,7 @@ import { createPlanManagementAPI } from './planManagementAPI'
 import { usePlanConversion } from './usePlanConversion'
 import { formatPlanAuditDate, formatPlanAuditMetadata, planAuditActionLabels, planAuditMetadataLabels, planRequestErrorMessage } from './planViewPresentation'
 import { createPlanViewState } from './planViewState'
+import { useQuotaResetVoting } from './useQuotaResetVoting'
 
 const automaticQuotaRefreshes = new Map<string, number>()
 const automaticQuotaRefreshTTL = 5 * 60 * 1000
@@ -21,6 +22,7 @@ export interface PlansViewEmit {
 export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
   const {
     detail, planLoading, quotaRefreshing, quotaResetCredits, quotaResetCreditsLoading, quotaResetting,
+    quotaResetVote, quotaResetVoteLoading, quotaResetVoteAction,
     performanceLoading, performancePeriod, actionLoading, activeTab, auditEvents, auditLoading,
     showCreate, showConnectAccount, showInviteComposer, inviteSecret, showDeleteConfirmOne, showDeleteConfirmTwo,
     deleteNameDraft, renameDraft, descriptionDraft, transferMemberID, rebindAccountID,
@@ -98,6 +100,14 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
   const metadataLabels = planAuditMetadataLabels
   const managementAPI = createPlanManagementAPI(props.adminMode)
   const conversion = usePlanConversion(detail, isShared, actionLoading, managementAPI, loadPlan, () => emit('changed'), notifySuccess, notifyError)
+  const quotaResetVoting = useQuotaResetVoting({
+    adminMode: props.adminMode, userID: props.user.id, detail, credits: quotaResetCredits,
+    vote: quotaResetVote, loading: quotaResetVoteLoading, action: quotaResetVoteAction, api: managementAPI,
+    queryCredits: queryQuotaResetCredits, notifySuccess, notifyError: notifyErrorWithContext,
+    notifyFailure: message => emit('message', 'error', message),
+  })
+  const canStartQuotaResetVote = quotaResetVoting.canStart
+  const quotaResetVoteDisabledReason = quotaResetVoting.disabledReason
 
   let planRequestSequence = 0
   let performanceRequestSequence = 0
@@ -172,6 +182,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
       if (!changingPlan && previousAccountID !== (value.account?.id ?? '')) clearQuotaResetState()
       detail.value = value
       syncDetail(value)
+      if (!props.adminMode && value.account && value.plan.status !== 'archived') void quotaResetVoting.load(id)
       if (activeTab.value === 'activity') void loadAudit(id)
       if (performancePeriod.value !== '24h') void loadPerformance(performancePeriod.value)
       if (value.account && value.plan.status !== 'archived') void refreshQuotaAutomatically(id, requestSequence)
@@ -326,6 +337,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
     quotaResetCredits.value = null
     quotaResetCreditsLoading.value = false
     quotaResetting.value = false
+    quotaResetVoting.clear()
   }
 
   function canManageQuotaReset() {
@@ -655,21 +667,10 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
     }
   }
 
-  function formatDate(value: string) {
-    return formatPlanAuditDate(value)
-  }
-
-  function formatMetadata(key: string | number, value: string | number) {
-    return formatPlanAuditMetadata(key, value)
-  }
-
-  function notifySuccess(message: string) {
-    emit('message', 'success', message)
-  }
-
-  function notifyError(value: unknown) {
-    emit('message', 'error', planRequestErrorMessage(value))
-  }
+  function formatDate(value: string) { return formatPlanAuditDate(value) }
+  function formatMetadata(key: string | number, value: string | number) { return formatPlanAuditMetadata(key, value) }
+  function notifySuccess(message: string) { emit('message', 'success', message) }
+  function notifyError(value: unknown) { emit('message', 'error', planRequestErrorMessage(value)) }
 
   function notifyErrorWithContext(context: string, value: unknown) {
     const message = value instanceof Error ? value.message : String(value)
@@ -677,20 +678,20 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
   }
 
   return {
-    detail, planLoading, quotaRefreshing, quotaResetCredits, quotaResetCreditsLoading, quotaResetting,
+    detail, planLoading, quotaRefreshing, quotaResetCredits, quotaResetCreditsLoading, quotaResetting, quotaResetVote, quotaResetVoteLoading, quotaResetVoteAction,
     performanceLoading, performancePeriod, actionLoading, activeTab, auditEvents, auditLoading,
     availableAccounts, loadPlan, loadAudit, loadPerformance,
     showCreate, showConnectAccount, showInviteComposer, inviteSecret, showDeleteConfirmOne, showDeleteConfirmTwo,
     deleteNameDraft, renameDraft, descriptionDraft, transferMemberID, rebindAccountID, createForm, inviteForm,
     publication, shareDrafts, accountOptions, planOptions, isActualOwner, canManage, isShared, isArchived, isAccountBound, owner,
     currentMember, allocatedShare, reservedShares, remainingInviteSharePercent, canCreateInvite, approvedPublicMembers, availablePublicSlots, publicationAvailablePublicSlots,
-    publicationReservedShares, maxPublicSeatSharePercent, publicationCapacityExceeded,
+    canStartQuotaResetVote, quotaResetVoteDisabledReason, publicationReservedShares, maxPublicSeatSharePercent, publicationCapacityExceeded,
     canRename, canUpdateDescription, canSavePublication,
     canConfirmDelete, transferMemberOptions, rebindAccountOptions, actionLabels, metadataLabels,
     setPublicationVisibility, updateRenameDraft, updateDescriptionDraft, updateDeleteNameDraft, updatePublicationSlots,
     updatePublicationShare, updateRebindAccount, updateTransferMember, updateCreateName,
     updateCreateAccount, updateCreateAllocationMode, updateCreateShare, updateInviteShare,
-    handleTabChange, openCreate, createPlan, refreshQuota, queryQuotaResetCredits, resetQuota, sendInvite, revokeInvite, savePublication,
+    handleTabChange, openCreate, createPlan, refreshQuota, queryQuotaResetCredits, resetQuota, loadQuotaResetVote: quotaResetVoting.load, startQuotaResetVote: quotaResetVoting.start, castQuotaResetVote: quotaResetVoting.cast, sendInvite, revokeInvite, savePublication,
     saveShare, removeMember, leavePlan, review, renamePlan, updatePlanDescription, updatePlanStatus,
     transferOwnership, rebindAccount, handleConnectedAccount, continueDelete, closeDeleteDialogs, deletePlan, copyInvite,
     formatDate, formatMetadata,

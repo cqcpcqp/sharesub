@@ -15,6 +15,8 @@ import type {
   PublicPlan,
   QuotaRefreshResult,
   QuotaResetCredits,
+  QuotaResetVoteMutationResult,
+  QuotaResetVoteState,
 } from '../types'
 import { request } from './client'
 
@@ -39,6 +41,9 @@ export const planAPI = {
   refreshPlanQuota: (id: string, automatic = false) => request<QuotaRefreshResult>(`/api/plans/${id}/quota/refresh${automatic ? '?automatic=true' : ''}`, { method: 'POST' }),
   planQuotaResetCredits: (id: string) => request<QuotaResetCredits>(`/api/plans/${id}/quota/reset-credits`),
   resetPlanQuota: (id: string) => request<PlanQuotaResetResult>(`/api/plans/${id}/quota/reset`, { method: 'POST' }),
+  quotaResetVote: (id: string) => request<QuotaResetVoteState>(`/api/plans/${id}/quota/reset-vote`),
+  createQuotaResetVote: (id: string) => request<QuotaResetVoteMutationResult>(`/api/plans/${id}/quota/reset-votes`, { method: 'POST' }),
+  castQuotaResetVote: (planID: string, voteID: string, choice: 'support' | 'oppose') => request<QuotaResetVoteMutationResult>(`/api/plans/${planID}/quota/reset-votes/${voteID}`, { method: 'PATCH', body: JSON.stringify({ choice }) }),
   publicPlans: () => request<PublicPlan[]>('/api/public-plans'),
   updatePublication: (id: string, payload: { visibility: string; public_slots: number; public_share_basis_points: number }) => request<Plan>(`/api/plans/${id}/publication`, { method: 'PATCH', body: JSON.stringify(payload) }),
   applyToPlan: (id: string, message: string) => request<JoinApplication>(`/api/public-plans/${id}/applications`, { method: 'POST', body: JSON.stringify({ message }) }),
