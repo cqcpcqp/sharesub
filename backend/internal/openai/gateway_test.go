@@ -896,6 +896,58 @@ func (w *failingResponseWriter) Write(body []byte) (int, error) {
 	return 0, errors.New("client disconnected")
 }
 
+type terminalCancelResponseWriter struct {
+	header       http.Header
+	cancel       context.CancelFunc
+	terminalSeen bool
+}
+
+func (w *terminalCancelResponseWriter) Header() http.Header {
+	if w.header == nil {
+		w.header = make(http.Header)
+	}
+	return w.header
+}
+
+func (w *terminalCancelResponseWriter) WriteHeader(int) {}
+
+func (w *terminalCancelResponseWriter) Write(body []byte) (int, error) {
+	if bytes.Contains(body, []byte(`"type":"response.completed"`)) {
+		w.terminalSeen = true
+	} else if w.terminalSeen && len(bytes.TrimSpace(body)) == 0 {
+		w.cancel()
+	}
+	return len(body), nil
+}
+
+func (w *terminalCancelResponseWriter) Flush() {}
+
+type terminalBoundaryFailResponseWriter struct {
+	header       http.Header
+	terminalSeen bool
+}
+
+func (w *terminalBoundaryFailResponseWriter) Header() http.Header {
+	if w.header == nil {
+		w.header = make(http.Header)
+	}
+	return w.header
+}
+
+func (w *terminalBoundaryFailResponseWriter) WriteHeader(int) {}
+
+func (w *terminalBoundaryFailResponseWriter) Write(body []byte) (int, error) {
+	if w.terminalSeen && len(bytes.TrimSpace(body)) == 0 {
+		return 0, errors.New("client disconnected before terminal event boundary")
+	}
+	if bytes.Contains(body, []byte(`"type":"response.completed"`)) {
+		w.terminalSeen = true
+	}
+	return len(body), nil
+}
+
+func (w *terminalBoundaryFailResponseWriter) Flush() {}
+
 func TestCopyResponseDrainsTerminalUsageAfterClientDisconnect(t *testing.T) {
 	body := "data: {\"type\":\"response.created\"}\n\n" +
 		"data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n" +
@@ -909,8 +961,80 @@ func TestCopyResponseDrainsTerminalUsageAfterClientDisconnect(t *testing.T) {
 	if !metrics.ClientDisconnected || destination.writes != 1 {
 		t.Fatalf("disconnect metrics = %+v, writes = %d", metrics, destination.writes)
 	}
+	if metrics.ResponseDelivered {
+		t.Fatalf("terminal response must not be marked delivered after downstream write failure: %+v", metrics)
+	}
 	if metrics.InputTokens != 11 || metrics.OutputTokens != 7 || metrics.CachedTokens != 3 || metrics.CacheCreationTokens != 2 {
 		t.Fatalf("terminal usage was not drained: %+v", metrics)
+	}
+}
+
+func TestCopyResponseMarksTerminalDeliveredBeforeRequestCancellation(t *testing.T) {
+	body := "data: {\"type\":\"response.created\"}\n\n" +
+		"data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n" +
+		"data: {\"type\":\"response.completed\",\"response\":{\"model\":\"gpt-5.6-sol\",\"usage\":{\"input_tokens\":11,\"output_tokens\":7}}}\n\n"
+	ctx, cancel := context.WithCancel(context.Background())
+	destination := &terminalCancelResponseWriter{cancel: cancel}
+	source := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}
+
+	metrics, err := CopyResponse(destination, source, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ctx.Err() == nil {
+		t.Fatal("request context was not canceled after terminal delivery")
+	}
+	if metrics.ClientDisconnected || !metrics.ResponseDelivered {
+		t.Fatalf("terminal delivery metrics = %+v", metrics)
+	}
+}
+
+func TestCopyResponseRequiresTerminalEventBoundaryForDelivery(t *testing.T) {
+	body := "data: {\"type\":\"response.created\"}\n\n" +
+		"data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n" +
+		"data: {\"type\":\"response.completed\",\"response\":{\"model\":\"gpt-5.6-sol\",\"usage\":{\"input_tokens\":11,\"output_tokens\":7}}}\n\n"
+	destination := &terminalBoundaryFailResponseWriter{}
+	source := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}
+
+	metrics, err := CopyResponse(destination, source, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !metrics.ClientDisconnected || metrics.ResponseDelivered {
+		t.Fatalf("terminal boundary failure metrics = %+v", metrics)
+	}
+}
+
+func TestCopyResponseMarksNonStreamingResponsesDelivered(t *testing.T) {
+	tests := []struct {
+		name        string
+		contentType string
+		body        string
+	}{
+		{
+			name:        "SSE converted to JSON",
+			contentType: "text/event-stream",
+			body:        "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"output\":[{\"type\":\"message\"}],\"usage\":{\"input_tokens\":2,\"output_tokens\":1}}}\n\n",
+		},
+		{
+			name:        "buffered JSON",
+			contentType: "application/json",
+			body:        `{"id":"resp_1","status":"completed","output":[{"type":"message"}],"usage":{"input_tokens":2,"output_tokens":1}}`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			source := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{test.contentType}}, Body: io.NopCloser(strings.NewReader(test.body))}
+			destination := httptest.NewRecorder()
+
+			metrics, err := CopyResponseForRequest(destination, source, time.Now(), false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if metrics.ClientDisconnected || !metrics.ResponseDelivered {
+				t.Fatalf("response delivery metrics = %+v", metrics)
+			}
+		})
 	}
 }
 

@@ -2,6 +2,7 @@ package openai
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -28,9 +29,14 @@ type ProxyMetrics struct {
 	WebSearchCalls      int64
 	UpstreamModel       string
 	ClientDisconnected  bool
-	ErrorCode           string
-	ErrorMessage        string
-	ErrorStatusCode     int
+	// ResponseDelivered reports that the terminal response was successfully
+	// written downstream. A client may close an SSE request immediately after
+	// receiving its terminal event; that post-terminal close is not an
+	// incomplete client request.
+	ResponseDelivered bool
+	ErrorCode         string
+	ErrorMessage      string
+	ErrorStatusCode   int
 }
 
 type StreamFailoverError struct {
@@ -162,17 +168,31 @@ func copySSEWithPendingLimitAndTimeout(dst http.ResponseWriter, src *http.Respon
 	terminalSeen := false
 	clientOutputStarted := false
 	clientDisconnected := false
+	responseDelivered := false
+	terminalBoundaryPending := false
+	pendingTerminal := false
+	pendingTerminalComplete := false
+	pendingEndsAtEventBoundary := false
 	pending := make([]byte, 0, 4096)
-	writeClient := func(data []byte) {
+	writeClient := func(data []byte) bool {
 		if clientDisconnected || len(data) == 0 {
-			return
+			return false
 		}
-		if _, err := dst.Write(data); err != nil {
+		written, err := dst.Write(data)
+		if err != nil || written != len(data) {
 			clientDisconnected = true
-			return
+			return false
 		}
 		if flusher != nil {
 			flusher.Flush()
+		}
+		return true
+	}
+	appendPending := func(line []byte) {
+		pending = append(pending, line...)
+		pendingEndsAtEventBoundary = len(bytes.TrimSpace(line)) == 0
+		if pendingTerminal && pendingEndsAtEventBoundary {
+			pendingTerminalComplete = true
 		}
 	}
 	startClientOutput := func() {
@@ -185,8 +205,22 @@ func copySSEWithPendingLimitAndTimeout(dst http.ResponseWriter, src *http.Respon
 			dst.Header().Set("Content-Type", "text/event-stream")
 		}
 		dst.WriteHeader(src.StatusCode)
-		writeClient(sanitizeCapacityShedSSEForClient(pending))
+		if writeClient(sanitizeCapacityShedSSEForClient(pending)) {
+			if pendingTerminalComplete {
+				responseDelivered = true
+			} else if pendingTerminal {
+				terminalBoundaryPending = true
+			}
+		}
 		pending = pending[:0]
+		pendingTerminal = false
+		pendingTerminalComplete = false
+		pendingEndsAtEventBoundary = false
+	}
+	currentMetrics := func() ProxyMetrics {
+		metrics := proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, clientDisconnected)
+		metrics.ResponseDelivered = responseDelivered
+		return metrics
 	}
 	deadline := time.Time{}
 	if firstOutputTimeout > 0 {
@@ -195,9 +229,10 @@ func copySSEWithPendingLimitAndTimeout(dst http.ResponseWriter, src *http.Respon
 	for {
 		line, err, timedOut := readLimitedLineBefore(reader, deadline, clientOutputStarted)
 		if timedOut {
-			return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, clientDisconnected), &StreamFailoverError{StatusCode: http.StatusGatewayTimeout, StreamBody: append([]byte(nil), pending...)}
+			return currentMetrics(), &StreamFailoverError{StatusCode: http.StatusGatewayTimeout, StreamBody: append([]byte(nil), pending...)}
 		}
 		if len(line) > 0 {
+			eventBoundary := len(bytes.TrimSpace(line)) == 0
 			now := time.Now()
 			if firstByteAt.IsZero() {
 				firstByteAt = now
@@ -224,26 +259,37 @@ func copySSEWithPendingLimitAndTimeout(dst http.ResponseWriter, src *http.Respon
 			}
 			if hasEvent && isTerminalResponseEvent(eventType) {
 				terminalSeen = true
+				if !clientOutputStarted {
+					pendingTerminal = true
+				}
 				if (eventType == "response.completed" || eventType == "response.done") && !clientOutputStarted && terminal.emptyCompleted() {
-					pending = append(pending, line...)
-					return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, clientDisconnected), &StreamFailoverError{StatusCode: http.StatusBadGateway, StreamBody: append([]byte(nil), pending...)}
+					appendPending(line)
+					return currentMetrics(), &StreamFailoverError{StatusCode: http.StatusBadGateway, StreamBody: append([]byte(nil), pending...)}
 				}
 				if eventType == "response.failed" && !clientOutputStarted {
-					pending = append(pending, line...)
+					appendPending(line)
 					if status, retryable := retryableTerminalFailure(terminal); retryable {
-						return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, clientDisconnected), &StreamFailoverError{StatusCode: status, StreamBody: append([]byte(nil), pending...), RequestScopedTransient: requestScopedCapacityFailure(terminal)}
+						return currentMetrics(), &StreamFailoverError{StatusCode: status, StreamBody: append([]byte(nil), pending...), RequestScopedTransient: requestScopedCapacityFailure(terminal)}
 					}
 					startClientOutput()
 					continue
 				}
 			}
 			if !clientOutputStarted {
-				pending = append(pending, line...)
+				appendPending(line)
 				if startsOutput {
 					startClientOutput()
 				}
 			} else {
-				writeClient(sanitizeCapacityShedSSELineForClient(line))
+				if writeClient(sanitizeCapacityShedSSELineForClient(line)) {
+					if hasEvent && isTerminalResponseEvent(eventType) {
+						terminalBoundaryPending = true
+					}
+					if terminalBoundaryPending && eventBoundary {
+						responseDelivered = true
+						terminalBoundaryPending = false
+					}
+				}
 			}
 		}
 		if err != nil {
@@ -256,11 +302,13 @@ func copySSEWithPendingLimitAndTimeout(dst http.ResponseWriter, src *http.Respon
 					if topLevelError != nil {
 						if !clientOutputStarted {
 							if status, retryable := retryableTerminalFailure(terminal); retryable {
-								return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, clientDisconnected), &StreamFailoverError{StatusCode: status, StreamBody: append([]byte(nil), pending...), RequestScopedTransient: requestScopedCapacityFailure(terminal)}
+								return currentMetrics(), &StreamFailoverError{StatusCode: status, StreamBody: append([]byte(nil), pending...), RequestScopedTransient: requestScopedCapacityFailure(terminal)}
 							}
+							pendingTerminal = true
+							pendingTerminalComplete = pendingEndsAtEventBoundary
 							startClientOutput()
 						}
-						return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, clientDisconnected), nil
+						return currentMetrics(), nil
 					}
 					if !clientOutputStarted {
 						startClientOutput()
@@ -268,22 +316,24 @@ func copySSEWithPendingLimitAndTimeout(dst http.ResponseWriter, src *http.Respon
 					if !clientDisconnected {
 						_ = writeResponsesFailedSSE(dst, src.Header, ErrIncompleteStream.Error())
 					}
-					return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, clientDisconnected), ErrIncompleteStream
+					return currentMetrics(), ErrIncompleteStream
 				}
 				if !clientOutputStarted {
 					startClientOutput()
 				}
-				return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, clientDisconnected), nil
+				return currentMetrics(), nil
 			}
 			if successfulStatus(src.StatusCode) && !terminalSeen {
 				if topLevelError != nil {
 					if !clientOutputStarted {
 						if status, retryable := retryableTerminalFailure(terminal); retryable {
-							return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, clientDisconnected), &StreamFailoverError{StatusCode: status, StreamBody: append([]byte(nil), pending...), RequestScopedTransient: requestScopedCapacityFailure(terminal)}
+							return currentMetrics(), &StreamFailoverError{StatusCode: status, StreamBody: append([]byte(nil), pending...), RequestScopedTransient: requestScopedCapacityFailure(terminal)}
 						}
+						pendingTerminal = true
+						pendingTerminalComplete = pendingEndsAtEventBoundary
 						startClientOutput()
 					}
-					return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, clientDisconnected), nil
+					return currentMetrics(), nil
 				}
 				if !clientOutputStarted {
 					startClientOutput()
@@ -291,9 +341,9 @@ func copySSEWithPendingLimitAndTimeout(dst http.ResponseWriter, src *http.Respon
 				if !clientDisconnected {
 					_ = writeResponsesFailedSSE(dst, src.Header, "upstream stream read failed")
 				}
-				return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, clientDisconnected), fmt.Errorf("%w: %v", ErrIncompleteStream, err)
+				return currentMetrics(), fmt.Errorf("%w: %v", ErrIncompleteStream, err)
 			}
-			return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, clientDisconnected), err
+			return currentMetrics(), err
 		}
 	}
 }
@@ -380,7 +430,9 @@ func copySSEAsJSON(dst http.ResponseWriter, src *http.Response, startedAt time.T
 			dst.Header().Set("Content-Type", "application/json")
 			dst.WriteHeader(status)
 			_, err := dst.Write(errorEnvelope)
-			return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), err
+			metrics := proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, err != nil)
+			metrics.ResponseDelivered = err == nil
+			return metrics, err
 		}
 		writeProxyJSONError(dst, http.StatusBadGateway, "upstream_error", ErrIncompleteStream.Error())
 		return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), ErrIncompleteStream
@@ -394,7 +446,9 @@ func copySSEAsJSON(dst http.ResponseWriter, src *http.Response, startedAt time.T
 		dst.Header().Set("Content-Type", "application/json")
 		dst.WriteHeader(status)
 		_, err := dst.Write(finalResponse)
-		return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), err
+		metrics := proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, err != nil)
+		metrics.ResponseDelivered = err == nil
+		return metrics, err
 	}
 	if (terminalType == "response.completed" || terminalType == "response.done") && terminal.emptyCompleted() {
 		return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), &StreamFailoverError{StatusCode: http.StatusBadGateway, Response: append(json.RawMessage(nil), finalResponse...)}
@@ -403,7 +457,9 @@ func copySSEAsJSON(dst http.ResponseWriter, src *http.Response, startedAt time.T
 	dst.Header().Set("Content-Type", "application/json")
 	dst.WriteHeader(src.StatusCode)
 	_, err := dst.Write(finalResponse)
-	return proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, false), err
+	metrics := proxyMetrics(startedAt, firstByteAt, firstTokenAt, terminal, err != nil)
+	metrics.ResponseDelivered = err == nil
+	return metrics, err
 }
 
 type limitedLineResult struct {
@@ -485,7 +541,9 @@ func copyBufferedResponse(dst http.ResponseWriter, src *http.Response, startedAt
 	}
 	dst.WriteHeader(src.StatusCode)
 	_, writeErr := dst.Write(sanitizeCapacityShedResponseForClient(body))
-	return proxyMetrics(startedAt, firstByteAt, time.Time{}, terminal, false), writeErr
+	metrics := proxyMetrics(startedAt, firstByteAt, time.Time{}, terminal, writeErr != nil)
+	metrics.ResponseDelivered = writeErr == nil
+	return metrics, writeErr
 }
 
 func writeProxyJSONError(dst http.ResponseWriter, status int, code, message string) {

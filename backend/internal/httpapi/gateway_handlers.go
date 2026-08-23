@@ -257,7 +257,7 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		metricStatus := gatewayMetricStatus(upstream.StatusCode, metrics, copyErr)
 		var failoverErr *openai.StreamFailoverError
 		metric := gatewayMetric(requestID, billingMetadata.Model, r.URL.Path, policyMetadata, metricStatus, metrics)
-		if metrics.ClientDisconnected || r.Context().Err() != nil {
+		if gatewayResponseClientDisconnected(metrics, r.Context().Err()) {
 			metric.StatusCode = clientClosedRequestStatus
 			metric.ErrorSource = domain.GatewayErrorSourceRequest
 			metric.ErrorCode = "client_disconnected"
@@ -306,6 +306,10 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+}
+
+func gatewayResponseClientDisconnected(metrics openai.ProxyMetrics, requestErr error) bool {
+	return !metrics.ResponseDelivered && (metrics.ClientDisconnected || requestErr != nil)
 }
 
 func requestScopedCapacityDelay(retry int) time.Duration {

@@ -455,6 +455,28 @@ func TestGatewayClientDisconnectMetricUsesRequestErrorStatus(t *testing.T) {
 	}
 }
 
+func TestGatewayResponseClientDisconnectedRequiresIncompleteDelivery(t *testing.T) {
+	tests := []struct {
+		name    string
+		metrics openai.ProxyMetrics
+		err     error
+		want    bool
+	}{
+		{name: "context canceled before terminal delivery", err: context.Canceled, want: true},
+		{name: "write failed before terminal delivery", metrics: openai.ProxyMetrics{ClientDisconnected: true}, want: true},
+		{name: "context canceled after terminal delivery", metrics: openai.ProxyMetrics{ResponseDelivered: true}, err: context.Canceled},
+		{name: "terminal delivered before later write failure", metrics: openai.ProxyMetrics{ResponseDelivered: true, ClientDisconnected: true}},
+		{name: "active request", metrics: openai.ProxyMetrics{}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := gatewayResponseClientDisconnected(test.metrics, test.err); got != test.want {
+				t.Fatalf("gatewayResponseClientDisconnected() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestGatewayMetricStatusPreservesUpstreamHTTPError(t *testing.T) {
 	status := gatewayMetricStatus(http.StatusNotFound, openai.ProxyMetrics{ErrorStatusCode: http.StatusBadGateway}, nil)
 	if status != http.StatusNotFound {
