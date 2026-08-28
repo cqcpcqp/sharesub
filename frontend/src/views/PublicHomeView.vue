@@ -20,7 +20,7 @@
       <section class="public-hero">
         <div class="public-hero-copy">
           <h1>一起使用，<br /><em>也各自清楚。</em></h1>
-          <p><strong>为 Codex 协作而生。</strong>把你有权使用的 OpenAI Codex 账号接入 ShareSub，通过 Plan 管理成员、分配额度，并让每个人使用独立的 API Key。</p>
+          <p><strong>为 Codex 拼车与团队协作而生。</strong>把你有权使用的 OpenAI Codex 账号接入 ShareSub，通过 Plan 管理成员、分配额度，并让每个人使用独立的 API Key。</p>
           <div class="public-hero-actions">
             <NButton type="primary" size="large" @click="emit('register')">开始使用<template #icon><ArrowRight :size="18" /></template></NButton>
             <NButton size="large" secondary tag="a" href="#workflow">了解工作方式</NButton>

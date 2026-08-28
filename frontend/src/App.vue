@@ -216,6 +216,7 @@ import { canMemberRoutePlan, isPlanRoutable } from './planAvailability'
 import { isThemeMode, resolveTheme, type ThemeMode } from './themePreference'
 import { appRoutePath, parseAppRoute, type AppRoute, type PublicPageID, type ViewID } from './appRoutes'
 import { buildInfo, shortRevision } from './buildInfo'
+import { applyPrivatePageSEO, applyPublicPageSEO } from './seo'
 
 function defineAsyncView(loader: () => Promise<{ default: Component }>) {
   return defineAsyncComponent({
@@ -311,15 +312,17 @@ let notificationRequestSequence = 0
 watch(themeMode, mode => localStorage.setItem(themeStorageKey, mode), { immediate: true })
 watch(resolvedTheme, theme => { document.documentElement.dataset.theme = theme }, { immediate: true })
 watch(sidebarCollapsed, collapsed => localStorage.setItem(sidebarStorageKey, String(collapsed)))
-watch([publicPage, activeView, user], () => {
-  const publicTitles: Record<PublicPageID, string> = {
-    home: 'ShareSub · 一起使用，也各自清楚',
-    terms: '用户协议 · ShareSub',
-    privacy: '隐私政策 · ShareSub',
-    'acceptable-use': '可接受使用规范 · ShareSub',
+watch([publicPage, activeView, user, emailVerificationPage], () => {
+  if (publicPage.value) {
+    applyPublicPageSEO(publicPage.value)
+    return
   }
   const viewTitle = navItems.value.find(item => item.id === activeView.value)?.label
-  document.title = publicPage.value ? publicTitles[publicPage.value] : user.value && viewTitle ? `${viewTitle} · ShareSub` : '登录 · ShareSub'
+  if (user.value && viewTitle) {
+    applyPrivatePageSEO(`${viewTitle}｜ShareSub`, `在 ShareSub ${viewTitle}中管理你的 Codex 共享协作。`)
+    return
+  }
+  applyPrivatePageSEO(emailVerificationPage.value ? '验证邮箱｜ShareSub' : '登录｜ShareSub')
 }, { immediate: true })
 
 function updateSystemTheme(event: MediaQueryListEvent) { systemPrefersDark.value = event.matches }

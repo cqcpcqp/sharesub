@@ -1,0 +1,20 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /v1/
+Disallow: /backend-api/
+Disallow: /responses
+Disallow: /images/
+Disallow: /models
+Disallow: /alpha/
+Disallow: /login
+Disallow: /verify-email
+Disallow: /dashboard
+Disallow: /lobby
+Disallow: /plans
+Disallow: /accounts
+Disallow: /keys
+Disallow: /admin
+Disallow: /profile
+
+Sitemap: https://share.underelay.com/sitemap.xml

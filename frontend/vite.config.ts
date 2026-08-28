@@ -17,6 +17,16 @@ if (!/^[0-9a-f]{40}$/.test(revision)) {
 
 export default defineConfig({
   plugins: [vue()],
+  build: {
+    rollupOptions: {
+      input: {
+        main: resolve(__dirname, 'index.html'),
+        terms: resolve(__dirname, 'terms/index.html'),
+        privacy: resolve(__dirname, 'privacy/index.html'),
+        acceptableUse: resolve(__dirname, 'acceptable-use/index.html'),
+      },
+    },
+  },
   define: {
     __SHARESUB_VERSION__: JSON.stringify(version),
     __SHARESUB_REVISION__: JSON.stringify(revision),

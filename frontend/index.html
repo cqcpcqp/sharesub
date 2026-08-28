@@ -5,12 +5,113 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="color-scheme" content="light" />
     <meta name="theme-color" content="#f4f5f2" />
-    <meta name="description" content="ShareSub 为 OpenAI Codex 协作提供 Plan、成员、额度与独立 API Key 管理。" />
+    <meta name="description" content="ShareSub 是面向 Codex 拼车与小团队协作的平台，支持独立 API Key、成员管理、额度分配和用量查看。仅可接入自己拥有或已获授权使用的 OpenAI Codex 账号。" />
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
+    <meta property="og:title" content="Codex 拼车与团队协作平台｜ShareSub" />
+    <meta property="og:description" content="ShareSub 是面向 Codex 拼车与小团队协作的平台，支持独立 API Key、成员管理、额度分配和用量查看。仅可接入自己拥有或已获授权使用的 OpenAI Codex 账号。" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://share.underelay.com/" />
+    <meta property="og:site_name" content="ShareSub" />
+    <meta property="og:locale" content="zh_CN" />
+    <meta property="og:image" content="https://share.underelay.com/brand/sharesub-social-card.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="ShareSub — Codex 拼车与团队协作平台" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Codex 拼车与团队协作平台｜ShareSub" />
+    <meta name="twitter:description" content="ShareSub 是面向 Codex 拼车与小团队协作的平台，支持独立 API Key、成员管理、额度分配和用量查看。" />
+    <meta name="twitter:image" content="https://share.underelay.com/brand/sharesub-social-card.png" />
+    <meta name="twitter:image:alt" content="ShareSub — Codex 拼车与团队协作平台" />
+    <link rel="canonical" href="https://share.underelay.com/" />
     <link rel="icon" href="/brand/favicon.svg" type="image/svg+xml" />
-    <title>ShareSub · 一起使用，也各自清楚</title>
+    <title>Codex 拼车与团队协作平台｜ShareSub</title>
+    <script id="seo-structured-data" type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "Organization",
+            "@id": "https://share.underelay.com/#organization",
+            "name": "ShareSub",
+            "url": "https://share.underelay.com/",
+            "logo": "https://share.underelay.com/brand/sharesub-mark.svg"
+          },
+          {
+            "@type": "WebSite",
+            "@id": "https://share.underelay.com/#website",
+            "url": "https://share.underelay.com/",
+            "name": "ShareSub",
+            "description": "ShareSub 是面向 Codex 拼车与小团队协作的平台，支持独立 API Key、成员管理、额度分配和用量查看。仅可接入自己拥有或已获授权使用的 OpenAI Codex 账号。",
+            "inLanguage": "zh-CN",
+            "publisher": { "@id": "https://share.underelay.com/#organization" }
+          },
+          {
+            "@type": "WebApplication",
+            "@id": "https://share.underelay.com/#webapp",
+            "name": "ShareSub",
+            "url": "https://share.underelay.com/",
+            "description": "ShareSub 是面向 Codex 拼车与小团队协作的平台，支持独立 API Key、成员管理、额度分配和用量查看。仅可接入自己拥有或已获授权使用的 OpenAI Codex 账号。",
+            "applicationCategory": "DeveloperApplication",
+            "operatingSystem": "Web",
+            "inLanguage": "zh-CN",
+            "featureList": ["Codex 拼车与小团队协作", "成员独立 API Key", "五小时和七天额度窗口管理", "成员用量与性能查看", "公开招募、私密邀请和申请审批"],
+            "publisher": { "@id": "https://share.underelay.com/#organization" }
+          },
+          {
+            "@type": "FAQPage",
+            "@id": "https://share.underelay.com/#faq",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "ShareSub 是 OpenAI 官方产品吗？",
+                "acceptedAnswer": { "@type": "Answer", "text": "不是。ShareSub 是独立开发的共享管理平台，与 OpenAI 无隶属、授权或代理关系。" }
+              },
+              {
+                "@type": "Question",
+                "name": "平台会保存我的对话内容吗？",
+                "acceptedAnswer": { "@type": "Answer", "text": "不会。系统记录账号额度状态、成员估算用量与性能指标，但不把请求或响应正文写入数据库或性能记录。" }
+              },
+              {
+                "@type": "Question",
+                "name": "任何 OpenAI 账号都可以接入吗？",
+                "acceptedAnswer": { "@type": "Answer", "text": "你只能接入自己拥有或已获得明确授权使用的账号，并需要遵守 OpenAI 条款及 ShareSub 使用规范。" }
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+    <script>
+      if (window.location.pathname.replace(/\/+$/, '') !== '') document.documentElement.classList.add('non-home-route')
+    </script>
+    <style>
+      .non-home-route .seo-fallback{display:none}.seo-fallback{max-width:1180px;margin:0 auto;padding:72px 24px 96px;color:#222327;font-family:"Avenir Next","Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}.seo-fallback h1{max-width:10ch;margin:0;color:#151619;font-size:clamp(44px,6vw,76px);line-height:1.06;letter-spacing:-.035em}.seo-fallback>section>p{max-width:680px;margin:24px 0;color:#6d7078;font-size:15px;line-height:1.85}.seo-fallback strong{color:#151619}.seo-fallback nav,.seo-fallback .seo-actions{display:flex;flex-wrap:wrap;gap:16px}.seo-fallback a{color:#c94734;font-weight:700;text-decoration:none}.seo-fallback .seo-actions a:first-child{padding:12px 18px;border-radius:7px;background:#df5943;color:#fff}.seo-fallback h2{margin:72px 0 16px;color:#151619;font-size:28px}.seo-fallback ul{max-width:760px;padding-left:20px;color:#6d7078;line-height:1.9}@media(max-width:640px){.seo-fallback{padding:48px 16px 72px}.seo-fallback h1{font-size:43px}}
+    </style>
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app">
+      <main class="seo-fallback">
+        <nav aria-label="公开导航"><a href="#workflow">工作方式</a><a href="#trust">安全与透明</a><a href="#faq">常见问题</a></nav>
+        <section>
+          <h1>一起使用，也各自清楚。</h1>
+          <p><strong>为 Codex 拼车与团队协作而生。</strong>把你有权使用的 OpenAI Codex 账号接入 ShareSub，通过 Plan 管理成员、分配额度，并让每个人使用独立的 API Key。</p>
+          <div class="seo-actions"><a href="/login?mode=register">免费注册</a><a href="#workflow">了解工作方式</a></div>
+        </section>
+        <section id="workflow">
+          <h2>从账号到协作，只需四步</h2>
+          <ul><li>房主通过 OpenAI OAuth 接入自己有权使用的 Codex 账号。</li><li>创建 Plan，选择固定份额或共享使用。</li><li>私密邀请成员，或开放招募名额并审批申请。</li><li>成员使用独立 API Key，并查看自己的用量与性能。</li></ul>
+        </section>
+        <section id="trust">
+          <h2>安全与透明</h2>
+          <p>OAuth 凭据加密保存；网关不把请求或响应正文写入数据库；五小时和七天额度窗口、成员用量与路由规则清晰可见。</p>
+        </section>
+        <section id="faq">
+          <h2>常见问题</h2>
+          <p><strong>ShareSub 是 OpenAI 官方产品吗？</strong><br />不是。ShareSub 是独立开发的共享管理平台，与 OpenAI 无隶属、授权或代理关系。</p>
+          <p><strong>任何 OpenAI 账号都可以接入吗？</strong><br />你只能接入自己拥有或已获得明确授权使用的账号，并需要遵守 OpenAI 条款及 ShareSub 使用规范。</p>
+        </section>
+      </main>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

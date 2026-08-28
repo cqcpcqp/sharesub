@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title description">
+  <title id="title">ShareSub — Codex 拼车与团队协作平台</title>
+  <desc id="description">ShareSub 品牌社交分享图，介绍 Codex 拼车、独立 API Key 与清晰额度管理。</desc>
+  <rect width="1200" height="630" fill="#f4f5f2"/>
+  <circle cx="1060" cy="92" r="240" fill="#fbeae6"/>
+  <circle cx="110" cy="600" r="210" fill="#e4f2ef"/>
+  <g transform="translate(84 78)">
+    <rect width="84" height="84" rx="19" fill="#df5943"/>
+    <g transform="translate(10 10)">
+      <path d="M14 49.5c7.8 5.4 22.2 5.5 27.3-2.3 4.3-6.6-.8-12.4-9.4-13.3l-5.4-.6c-7.7-.8-11.6-5.8-9.3-11.1 2.3-5.2 10.3-7.6 20.5-5" fill="none" stroke="#fff8f5" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M35.4 17.2c.8-5 4.8-8.2 9.4-7.5l4.2.7c4 .6 6.3 4.7 4.8 8.3-1.2 2.9-4.3 4.5-7.4 4l-4.7-.7c-4.1-.6-6.9-2.5-6.3-4.8Z" fill="#fff8f5"/>
+      <path d="m44.7 7.3 6.6 6.4" fill="none" stroke="#f4c45e" stroke-width="5" stroke-linecap="round"/>
+      <path d="m40.8 8.6-3.5-3.1m3 5.8-4.7.2m7.2-5.1.3-4.1" fill="none" stroke="#ffe39a" stroke-width="1.8" stroke-linecap="round"/>
+    </g>
+  </g>
+  <text x="190" y="123" fill="#151619" font-family="Avenir Next, PingFang SC, Microsoft YaHei, sans-serif" font-size="39" font-weight="700">ShareSub</text>
+  <text x="190" y="155" fill="#6d7078" font-family="Avenir Next, PingFang SC, Microsoft YaHei, sans-serif" font-size="18" font-weight="600" letter-spacing="1.8">ACCESS TOGETHER</text>
+  <text x="84" y="302" fill="#151619" font-family="Avenir Next, PingFang SC, Microsoft YaHei, sans-serif" font-size="67" font-weight="700">Codex 拼车与团队协作</text>
+  <text x="84" y="382" fill="#df5943" font-family="Avenir Next, PingFang SC, Microsoft YaHei, sans-serif" font-size="67" font-weight="700">也可以各自清楚。</text>
+  <text x="88" y="475" fill="#6d7078" font-family="Avenir Next, PingFang SC, Microsoft YaHei, sans-serif" font-size="25">独立 API Key · 清晰额度 · 可控成员关系</text>
+  <rect x="84" y="532" width="1032" height="2" fill="#e2e3df"/>
+  <text x="84" y="580" fill="#6d7078" font-family="Avenir Next, PingFang SC, Microsoft YaHei, sans-serif" font-size="19">share.underelay.com</text>
+</svg>
