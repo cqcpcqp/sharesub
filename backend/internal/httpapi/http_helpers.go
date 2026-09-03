@@ -151,6 +151,22 @@ func writeGatewayErrorStatus(w http.ResponseWriter, status int, code, message st
 	}})
 }
 
+// gatewayBodyReadError distinguishes an actual MaxBytesReader limit breach
+// from other failures while consuming the client request stream.  The latter
+// can be caused by a disconnect or truncated/invalid transfer and must not be
+// reported as a misleading 413.
+func gatewayBodyReadError(err error) (status int, code, message string) {
+	var maxErr *http.MaxBytesError
+	if errors.As(err, &maxErr) {
+		limitMessage := gatewayBodyTooLargeMessage
+		if maxErr.Limit == maxTextGatewayBody {
+			limitMessage = textGatewayBodyTooLargeMessage
+		}
+		return http.StatusRequestEntityTooLarge, "request_too_large", limitMessage
+	}
+	return http.StatusBadRequest, "invalid_request_error", "failed to read request body"
+}
+
 func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")

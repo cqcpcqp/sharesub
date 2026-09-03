@@ -25,8 +25,12 @@ func (s *Server) alphaSearch(w http.ResponseWriter, r *http.Request) {
 
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxTextGatewayBody))
 	if err != nil {
-		s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(requestID, r.URL.Path, "", openai.RequestBilling{}, http.StatusRequestEntityTooLarge, domain.GatewayErrorSourceRequest, "request_too_large", textGatewayBodyTooLargeMessage, 0), time.Now())
-		writeGatewayErrorStatus(w, http.StatusRequestEntityTooLarge, "request_too_large", textGatewayBodyTooLargeMessage)
+		status, code, message := gatewayBodyReadError(err)
+		if status != http.StatusRequestEntityTooLarge {
+			s.logger.Warn("read gateway request body", "request_id", requestID, "path", r.URL.Path, "content_length", r.ContentLength, "error", err)
+		}
+		s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(requestID, r.URL.Path, "", openai.RequestBilling{}, status, domain.GatewayErrorSourceRequest, code, message, 0), time.Now())
+		writeGatewayErrorStatus(w, status, code, message)
 		return
 	}
 	forwardBody, metadata, err := openai.PrepareAlphaSearchRequest(body)

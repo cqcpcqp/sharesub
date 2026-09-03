@@ -109,8 +109,12 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 	gatewayRequestID := gatewayRequestID(r)
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxGatewayBody))
 	if err != nil {
-		s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, "", openai.RequestBilling{}, http.StatusRequestEntityTooLarge, domain.GatewayErrorSourceRequest, "request_too_large", gatewayBodyTooLargeMessage, 0), time.Now())
-		writeGatewayErrorStatus(w, http.StatusRequestEntityTooLarge, "request_too_large", gatewayBodyTooLargeMessage)
+		status, code, message := gatewayBodyReadError(err)
+		if status != http.StatusRequestEntityTooLarge {
+			s.logger.Warn("read gateway request body", "request_id", gatewayRequestID, "path", r.URL.Path, "content_length", r.ContentLength, "error", err)
+		}
+		s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, "", openai.RequestBilling{}, status, domain.GatewayErrorSourceRequest, code, message, 0), time.Now())
+		writeGatewayErrorStatus(w, status, code, message)
 		return
 	}
 	compact := strings.HasSuffix(strings.TrimRight(r.URL.Path, "/"), "/responses/compact")
@@ -352,8 +356,12 @@ func (s *Server) images(w http.ResponseWriter, r *http.Request) {
 
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxGatewayBody))
 	if err != nil {
-		s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, "", openai.RequestBilling{}, http.StatusRequestEntityTooLarge, domain.GatewayErrorSourceRequest, "request_too_large", gatewayBodyTooLargeMessage, 0), time.Now())
-		writeGatewayErrorStatus(w, http.StatusRequestEntityTooLarge, "request_too_large", gatewayBodyTooLargeMessage)
+		status, code, message := gatewayBodyReadError(err)
+		if status != http.StatusRequestEntityTooLarge {
+			s.logger.Warn("read gateway request body", "request_id", gatewayRequestID, "path", r.URL.Path, "content_length", r.ContentLength, "error", err)
+		}
+		s.recordGatewayMetric(r.Context(), access, gatewayErrorMetric(gatewayRequestID, r.URL.Path, "", openai.RequestBilling{}, status, domain.GatewayErrorSourceRequest, code, message, 0), time.Now())
+		writeGatewayErrorStatus(w, status, code, message)
 		return
 	}
 	forwardBody, imageRequest, billingMetadata, err := openai.PrepareImagesRequest(body, r.Header.Get("Content-Type"), r.URL.Path)

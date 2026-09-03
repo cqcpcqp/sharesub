@@ -166,6 +166,25 @@ func TestGatewayBodyLimitsMatchEndpointCapabilities(t *testing.T) {
 	}
 }
 
+func TestGatewayBodyReadErrorClassifiesOnlyMaxBytesAs413(t *testing.T) {
+	status, code, message := gatewayBodyReadError(&http.MaxBytesError{Limit: maxGatewayBody})
+	if status != http.StatusRequestEntityTooLarge || code != "request_too_large" || message != gatewayBodyTooLargeMessage {
+		t.Fatalf("max bytes classification = %d/%q/%q", status, code, message)
+	}
+
+	status, code, message = gatewayBodyReadError(io.ErrUnexpectedEOF)
+	if status != http.StatusBadRequest || code != "invalid_request_error" || message != "failed to read request body" {
+		t.Fatalf("read failure classification = %d/%q/%q", status, code, message)
+	}
+}
+
+func TestGatewayBodyReadErrorUsesTextLimitMessage(t *testing.T) {
+	status, code, message := gatewayBodyReadError(&http.MaxBytesError{Limit: maxTextGatewayBody})
+	if status != http.StatusRequestEntityTooLarge || code != "request_too_large" || message != textGatewayBodyTooLargeMessage {
+		t.Fatalf("text max bytes classification = %d/%q/%q", status, code, message)
+	}
+}
+
 func TestGatewayContextsHandleClientCancellation(t *testing.T) {
 	parent, cancelParent := context.WithCancel(context.Background())
 	metricCtx, cancelMetric := metricContext(parent)
