@@ -21,7 +21,8 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
     const body = await response.json() as T | APIError
     if (!response.ok) {
       const error = (body as APIError).error
-      throw new APIRequestError(response.status, error.code, error.message)
+      const retryAfter = Number.parseInt(response.headers.get('Retry-After') ?? '', 10)
+      throw new APIRequestError(response.status, error.code, error.message, Number.isFinite(retryAfter) ? retryAfter : null)
     }
     return body as T
   } finally {
@@ -35,6 +36,7 @@ export class APIRequestError extends Error {
     readonly status: number,
     readonly code: string,
     message: string,
+    readonly retryAfterSeconds: number | null = null,
   ) {
     super(message)
     this.name = 'APIRequestError'

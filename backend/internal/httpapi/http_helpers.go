@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/sharesub/sharesub/backend/internal/domain"
+	"github.com/sharesub/sharesub/backend/internal/openai"
 )
 
 func (s *Server) requireUser(next http.Handler) http.Handler {
@@ -122,6 +123,15 @@ func writeError(w http.ResponseWriter, err error) {
 }
 func writeErrorStatus(w http.ResponseWriter, status int, code, message string) {
 	writeJSON(w, status, map[string]any{"error": map[string]string{"code": code, "message": message}})
+}
+func writeQuotaResetCreditsError(w http.ResponseWriter, err error) {
+	var upstreamErr *openai.QuotaResetUpstreamError
+	if errors.As(err, &upstreamErr) && upstreamErr.StatusCode == http.StatusTooManyRequests {
+		w.Header().Set("Retry-After", retryAfterSeconds(upstreamErr.RetryAfter))
+		writeErrorStatus(w, http.StatusTooManyRequests, "quota_reset_credits_rate_limited", "OpenAI quota reset credits query rate limited")
+		return
+	}
+	writeErrorStatus(w, http.StatusBadGateway, "quota_reset_credits_query_failed", "OpenAI quota reset credits query failed")
 }
 
 func writeGatewayDomainError(w http.ResponseWriter, err error) {

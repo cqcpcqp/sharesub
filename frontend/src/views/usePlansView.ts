@@ -1,5 +1,5 @@
 import { computed, watch } from 'vue'
-import { api } from '../api'
+import { APIRequestError, api } from '../api'
 import { allocationShareBasisPoints, formatShareBasisPoints, maxPlanShareBasisPoints, planApprovedPublicMemberCount, planAvailablePublicSlotCount, planPublicationShareBasisPoints, planReservedShareBasisPoints } from '../planAllocation'
 import type { Account, Member, PerformancePeriod, Plan, PlanAllocationMode, PlanDetail, User } from '../types'
 import { createPlanManagementAPI } from './planManagementAPI'
@@ -673,7 +673,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
   function notifyError(value: unknown) { emit('message', 'error', planRequestErrorMessage(value)) }
 
   function notifyErrorWithContext(context: string, value: unknown) {
-    const message = value instanceof Error ? value.message : String(value)
+    const message = value instanceof APIRequestError && value.code === 'quota_reset_credits_rate_limited' ? `${value.message}，请 ${Math.max(1, value.retryAfterSeconds ?? 10)} 秒后再试` : value instanceof Error ? value.message : String(value)
     emit('message', 'error', `${context}：${message}`)
   }
 

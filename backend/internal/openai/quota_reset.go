@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,7 +21,22 @@ const (
 	chatGPTRateLimitResetConsumeURL = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume"
 	quotaResetRequestTimeout        = 20 * time.Second
 	maxQuotaResetResponseBytes      = 1 << 20
+	defaultQuotaResetQueryBackoff   = 10 * time.Second
+	maximumQuotaResetQueryBackoff   = time.Minute
 )
+
+type QuotaResetUpstreamError struct {
+	Operation       string
+	StatusCode      int
+	RetryAfter      time.Duration
+	XRequestID      string
+	OpenAIRequestID string
+	LocallyDeferred bool
+}
+
+func (e *QuotaResetUpstreamError) Error() string {
+	return fmt.Sprintf("%s quota reset request returned status %d", e.Operation, e.StatusCode)
+}
 
 type quotaResetCreditPayload struct {
 	ResetType string    `json:"reset_type"`
@@ -34,6 +50,9 @@ type quotaResetCreditsPayload struct {
 }
 
 func (g *Gateway) QueryQuotaResetCredits(ctx context.Context, accessToken, chatgptAccountID, proxyURL string) (domain.QuotaResetCredits, error) {
+	if retryAfter := g.quotaResetQueryRetryAfter(chatgptAccountID); retryAfter > 0 {
+		return domain.QuotaResetCredits{}, &QuotaResetUpstreamError{Operation: "query", StatusCode: http.StatusTooManyRequests, RetryAfter: retryAfter, LocallyDeferred: true}
+	}
 	requestCtx, cancel := context.WithTimeout(ctx, quotaResetRequestTimeout)
 	defer cancel()
 	req, err := newQuotaResetRequest(requestCtx, http.MethodGet, g.quotaResetCreditsURL, accessToken, chatgptAccountID, nil)
@@ -46,7 +65,11 @@ func (g *Gateway) QueryQuotaResetCredits(ctx context.Context, accessToken, chatg
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return domain.QuotaResetCredits{}, fmt.Errorf("query quota reset credits returned status %d", resp.StatusCode)
+		upstreamErr := newQuotaResetUpstreamError("query", resp, g.now())
+		if upstreamErr.StatusCode == http.StatusTooManyRequests {
+			g.backoffQuotaResetQuery(chatgptAccountID, upstreamErr.RetryAfter)
+		}
+		return domain.QuotaResetCredits{}, upstreamErr
 	}
 	var payload quotaResetCreditsPayload
 	if err := decodeQuotaResetResponse(resp.Body, &payload); err != nil {
@@ -59,6 +82,52 @@ func (g *Gateway) QueryQuotaResetCredits(ctx context.Context, accessToken, chatg
 		}
 	}
 	return domain.QuotaResetCredits{AvailableCount: len(credits), Credits: credits, FetchedAt: g.now()}, nil
+}
+
+func newQuotaResetUpstreamError(operation string, resp *http.Response, now time.Time) *QuotaResetUpstreamError {
+	err := &QuotaResetUpstreamError{Operation: operation, StatusCode: resp.StatusCode, XRequestID: strings.TrimSpace(resp.Header.Get("X-Request-Id")), OpenAIRequestID: strings.TrimSpace(resp.Header.Get("Openai-Request-Id"))}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		err.RetryAfter = quotaResetRetryDelay(resp.Header.Get("Retry-After"), now)
+	}
+	return err
+}
+func quotaResetRetryDelay(value string, now time.Time) time.Duration {
+	delay := defaultQuotaResetQueryBackoff
+	if seconds, err := strconv.Atoi(strings.TrimSpace(value)); err == nil && seconds > 0 {
+		delay = time.Duration(seconds) * time.Second
+	} else if retryAt, err := http.ParseTime(strings.TrimSpace(value)); err == nil && retryAt.After(now) {
+		delay = retryAt.Sub(now)
+	}
+	if delay > maximumQuotaResetQueryBackoff {
+		return maximumQuotaResetQueryBackoff
+	}
+	return delay
+}
+func (g *Gateway) quotaResetQueryRetryAfter(accountID string) time.Duration {
+	now := g.now()
+	g.quotaResetMu.Lock()
+	defer g.quotaResetMu.Unlock()
+	for id, until := range g.quotaResetBackoffs {
+		if !now.Before(until) {
+			delete(g.quotaResetBackoffs, id)
+		}
+	}
+	return g.quotaResetBackoffs[accountID].Sub(now)
+}
+func (g *Gateway) backoffQuotaResetQuery(accountID string, delay time.Duration) {
+	if strings.TrimSpace(accountID) == "" || delay <= 0 {
+		return
+	}
+	now := g.now()
+	g.quotaResetMu.Lock()
+	defer g.quotaResetMu.Unlock()
+	if g.quotaResetBackoffs == nil {
+		g.quotaResetBackoffs = make(map[string]time.Time)
+	}
+	until := now.Add(delay)
+	if until.After(g.quotaResetBackoffs[accountID]) {
+		g.quotaResetBackoffs[accountID] = until
+	}
 }
 
 func (g *Gateway) ConsumeQuotaResetCredit(ctx context.Context, accessToken, chatgptAccountID, proxyURL string) (domain.QuotaResetResult, error) {

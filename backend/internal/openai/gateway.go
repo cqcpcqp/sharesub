@@ -64,6 +64,8 @@ type Gateway struct {
 	httpClient           *http.Client
 	proxyMu              sync.Mutex
 	proxyClients         map[string]*proxyClientEntry
+	quotaResetMu         sync.Mutex
+	quotaResetBackoffs   map[string]time.Time
 	now                  func() time.Time
 	quotaResetCreditsURL string
 	quotaResetConsumeURL string

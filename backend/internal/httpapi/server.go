@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -38,6 +39,23 @@ type Server struct {
 
 type userContextKey struct{}
 type tokenContextKey struct{}
+
+func (s *Server) logQuotaResetCreditsError(message, planID string, err error) {
+	var upstreamErr *openai.QuotaResetUpstreamError
+	if errors.As(err, &upstreamErr) {
+		s.logger.Error(message,
+			"error", err,
+			"plan_id", planID,
+			"upstream_status", upstreamErr.StatusCode,
+			"retry_after", upstreamErr.RetryAfter.String(),
+			"x_request_id", upstreamErr.XRequestID,
+			"openai_request_id", upstreamErr.OpenAIRequestID,
+			"locally_deferred", upstreamErr.LocallyDeferred,
+		)
+		return
+	}
+	s.logger.Error(message, "error", err, "plan_id", planID)
+}
 
 func New(app *application.Service, gateway *openai.Gateway, logger *slog.Logger, webSocketConfig ...ResponsesWebSocketConfig) *Server {
 	config := DefaultResponsesWebSocketConfig()

@@ -382,8 +382,8 @@ func (s *Server) planQuotaResetCredits(w http.ResponseWriter, r *http.Request) {
 	}
 	credits, err := s.gateway.QueryQuotaResetCredits(r.Context(), probe.AccessToken, probe.ChatGPTAccountID, probe.ProxyURL)
 	if err != nil {
-		s.logger.Error("query OpenAI quota reset credits", "error", err, "plan_id", planID)
-		writeErrorStatus(w, http.StatusBadGateway, "quota_reset_credits_query_failed", "OpenAI quota reset credits query failed")
+		s.logQuotaResetCreditsError("query OpenAI quota reset credits", planID, err)
+		writeQuotaResetCreditsError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, credits)

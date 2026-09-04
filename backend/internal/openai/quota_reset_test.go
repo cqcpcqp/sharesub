@@ -3,6 +3,7 @@ package openai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"regexp"
@@ -83,6 +84,29 @@ func TestQuotaResetEndpointsRejectUpstreamErrors(t *testing.T) {
 	}
 	if _, err := gateway.ConsumeQuotaResetCredit(context.Background(), "access-token", "account-id", ""); err == nil || !strings.Contains(err.Error(), "status 403") {
 		t.Fatalf("reset error = %v", err)
+	}
+}
+
+func TestQueryQuotaResetCreditsBacksOffUpstreamRateLimit(t *testing.T) {
+	calls := 0
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		return &http.Response{StatusCode: http.StatusTooManyRequests, Header: http.Header{
+			"Retry-After": []string{"30"}, "X-Request-Id": []string{"req-1"},
+		}, Body: io.NopCloser(strings.NewReader("rate limited")), Request: r}, nil
+	})}
+	gateway := NewGateway(client)
+	now := time.Date(2026, 9, 4, 2, 0, 0, 0, time.UTC)
+	gateway.now = func() time.Time { return now }
+	_, err := gateway.QueryQuotaResetCredits(context.Background(), "access-token", "account-id", "")
+	var upstreamErr *QuotaResetUpstreamError
+	if !strings.Contains(err.Error(), "status 429") || !errors.As(err, &upstreamErr) || upstreamErr.RetryAfter != 30*time.Second || upstreamErr.XRequestID != "req-1" {
+		t.Fatalf("error = %v", err)
+	}
+	now = now.Add(time.Second)
+	_, err = gateway.QueryQuotaResetCredits(context.Background(), "access-token", "account-id", "")
+	if !errors.As(err, &upstreamErr) || !upstreamErr.LocallyDeferred || calls != 1 {
+		t.Fatalf("deferred error = %v, calls = %d", err, calls)
 	}
 }
 
