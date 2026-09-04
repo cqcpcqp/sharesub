@@ -17,7 +17,7 @@ Audit a ShareSub production release using repository and GitHub evidence. Treat 
 
 ## 1. Collect authoritative commits
 
-Run `scripts/collect-deploy-context.sh` from the repository. It fetches `origin/main` and tags, then reports:
+Run `.agents/skills/check-production-deploy/scripts/collect-deploy-context.sh` from the repository root. It fetches `origin/main` and tags, then reports:
 
 - the latest successful `Deploy production` workflow run and its commit;
 - the exact commit the workflow would deploy (`origin/main`);
