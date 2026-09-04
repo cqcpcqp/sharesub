@@ -18,16 +18,19 @@ import (
 var modelPricingJSON []byte
 
 type modelPricing struct {
-	InputPrice             float64 `json:"input_cost_per_token"`
-	InputPricePriority     float64 `json:"input_cost_per_token_priority"`
-	OutputPrice            float64 `json:"output_cost_per_token"`
-	OutputPricePriority    float64 `json:"output_cost_per_token_priority"`
-	CacheCreationPrice     float64 `json:"cache_creation_input_token_cost"`
-	CacheCreationPriority  float64 `json:"cache_creation_input_token_cost_priority"`
-	CacheReadPrice         float64 `json:"cache_read_input_token_cost"`
-	CacheReadPricePriority float64 `json:"cache_read_input_token_cost_priority"`
-	ImageInputPrice        float64 `json:"input_cost_per_image_token"`
-	ImageOutputPrice       float64 `json:"output_cost_per_image_token"`
+	InputPrice              float64 `json:"input_cost_per_token"`
+	InputPricePriority      float64 `json:"input_cost_per_token_priority"`
+	OutputPrice             float64 `json:"output_cost_per_token"`
+	OutputPricePriority     float64 `json:"output_cost_per_token_priority"`
+	CacheCreationPrice      float64 `json:"cache_creation_input_token_cost"`
+	CacheCreationPriority   float64 `json:"cache_creation_input_token_cost_priority"`
+	CacheReadPrice          float64 `json:"cache_read_input_token_cost"`
+	CacheReadPricePriority  float64 `json:"cache_read_input_token_cost_priority"`
+	ImageInputPrice         float64 `json:"input_cost_per_image_token"`
+	ImageOutputPrice        float64 `json:"output_cost_per_image_token"`
+	LongContextThreshold    int64   `json:"long_context_input_token_threshold"`
+	LongContextInputFactor  float64 `json:"long_context_input_cost_multiplier"`
+	LongContextOutputFactor float64 `json:"long_context_output_cost_multiplier"`
 }
 
 var (
@@ -103,6 +106,17 @@ func AccountCostForImageSize(model, serviceTier string, usage domain.TokenUsage,
 	if imageOutputPrice == 0 {
 		imageOutputPrice = outputPrice
 	}
+	// InputTokens is the upstream total input count; CachedTokens and
+	// CacheCreationTokens are subsets used to split that total below. Once the
+	// total input exceeds 272K, bill the whole request at the catalog's
+	// long-context multipliers.
+	if isGPT56Model(model) && pricing.LongContextThreshold > 0 &&
+		usage.InputTokens > pricing.LongContextThreshold {
+		inputPrice *= positiveOrOne(pricing.LongContextInputFactor)
+		cacheCreationPrice *= positiveOrOne(pricing.LongContextInputFactor)
+		cacheReadPrice *= positiveOrOne(pricing.LongContextInputFactor)
+		outputPrice *= positiveOrOne(pricing.LongContextOutputFactor)
+	}
 
 	textInput := usage.InputTokens - usage.CachedTokens - usage.CacheCreationTokens - usage.ImageInputTokens
 	if textInput < 0 {
@@ -123,6 +137,13 @@ func AccountCostForImageSize(model, serviceTier string, usage domain.TokenUsage,
 	out.ImageOutputMicros = toMicros(usage.ImageOutputTokens, imageOutputPrice)
 	out.TotalMicros = out.InputMicros + out.OutputMicros + out.CacheCreationMicros + out.CacheReadMicros + out.ImageInputMicros + out.ImageOutputMicros + out.WebSearchMicros
 	return out
+}
+
+func positiveOrOne(value float64) float64 {
+	if value <= 0 {
+		return 1
+	}
+	return value
 }
 
 func hasPriorityPricing(pricing modelPricing) bool {
@@ -251,4 +272,8 @@ func knownCodexFamily(model string) string {
 	default:
 		return ""
 	}
+}
+
+func isGPT56Model(model string) bool {
+	return strings.Contains(canonicalModel(model), "gpt-5.6")
 }

@@ -48,9 +48,9 @@ func TestAccountCostMicrosUsesGPT56ModelPricing(t *testing.T) {
 		model string
 		want  int64
 	}{
-		{model: "gpt-5.6-sol", want: 19_225_000},
-		{model: "gpt-5.6-terra", want: 7_690_000},
-		{model: "gpt-5.6-luna", want: 769_000},
+		{model: "gpt-5.6-sol", want: 30_950_000},
+		{model: "gpt-5.6-terra", want: 12_380_000},
+		{model: "gpt-5.6-luna", want: 1_238_000},
 	}
 	for _, test := range tests {
 		t.Run(test.model, func(t *testing.T) {
@@ -65,8 +65,22 @@ func TestAccountCostMicrosUsesGPT56PriorityCacheCreationPricing(t *testing.T) {
 	usage := domain.TokenUsage{
 		InputTokens: 1_000_000, CachedTokens: 200_000, CacheCreationTokens: 100_000, OutputTokens: 500_000,
 	}
-	if got, want := AccountCostMicros("gpt-5.6-sol", "priority", usage), int64(38_450_000); got != want {
+	if got, want := AccountCostMicros("gpt-5.6-sol", "priority", usage), int64(61_900_000); got != want {
 		t.Fatalf("priority account cost = %d, want %d", got, want)
+	}
+}
+
+func TestAccountCostMicrosUsesGPT56LongContextPricing(t *testing.T) {
+	usage := domain.TokenUsage{InputTokens: 273_000, CacheCreationTokens: 100_000, CachedTokens: 73_000, OutputTokens: 10}
+	if got, want := AccountCostMicros("gpt-5.6-sol", "", usage), int64(2_323_450); got != want {
+		t.Fatalf("long-context account cost = %d, want %d", got, want)
+	}
+}
+
+func TestAccountCostMicrosGPT56LongContextBoundaryIsExclusive(t *testing.T) {
+	usage := domain.TokenUsage{InputTokens: 272_000, CacheCreationTokens: 50_000, CachedTokens: 22_000, OutputTokens: 10}
+	if got, want := AccountCostMicros("gpt-5.6-sol", "", usage), int64(1_323_800); got != want {
+		t.Fatalf("boundary account cost = %d, want %d", got, want)
 	}
 }
 
