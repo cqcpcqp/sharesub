@@ -409,7 +409,11 @@ func (s *Service) RecordGatewayMetric(ctx context.Context, access GatewayAccess,
 	metric.Endpoint = truncateGatewayMetricText(metric.Endpoint, 160)
 	metric.ErrorCode = truncateGatewayMetricText(metric.ErrorCode, 120)
 	metric.ErrorMessage = truncateGatewayErrorMessage(metric.ErrorMessage, 2000)
-	metric.CostBreakdown = billing.AccountCostForImageSize(metric.BillingModel, metric.ServiceTier, metric.TokenUsage, metric.WebSearchCalls, metric.ImageSize)
+	if len(metric.BillingSegments) > 0 {
+		metric.CostBreakdown = billing.AccountCostForSegments(metric.BillingModel, metric.ServiceTier, metric.BillingSegments)
+	} else {
+		metric.CostBreakdown = billing.AccountCostForImageSize(metric.BillingModel, metric.ServiceTier, metric.TokenUsage, metric.WebSearchCalls, metric.ImageSize)
+	}
 	metric.AccountCostMicros = metric.CostBreakdown.TotalMicros
 	metric.CreatedAt = recordedAt
 	return s.store.RecordGatewayMetric(ctx, metric)

@@ -593,13 +593,17 @@ func gatewayMetric(requestID, requestedModel, endpoint string, metadata openai.R
 		ServiceTier: metadata.ServiceTier, Endpoint: endpoint, IsStream: metadata.Stream, StatusCode: status,
 		ErrorSource: errorSource, ErrorCode: metrics.ErrorCode, ErrorMessage: metrics.ErrorMessage,
 		TTFT: metrics.TTFT, Duration: metrics.Duration,
-		TokenUsage: domain.TokenUsage{
-			InputTokens: metrics.InputTokens, OutputTokens: metrics.OutputTokens, CachedTokens: metrics.CachedTokens,
-			CacheCreationTokens: metrics.CacheCreationTokens, ImageInputTokens: metrics.ImageInputTokens, ImageOutputTokens: metrics.ImageOutputTokens,
-			ImageCount: metrics.ImageCount, TotalTokens: metrics.InputTokens + metrics.OutputTokens,
-		},
+		TokenUsage: gatewayTokenUsage(metrics),
 		ImageCount: metrics.ImageCount, WebSearchCalls: metrics.WebSearchCalls,
 		ImageSize: metrics.ImageSize,
+	}
+}
+
+func gatewayTokenUsage(metrics openai.ProxyMetrics) domain.TokenUsage {
+	return domain.TokenUsage{
+		InputTokens: metrics.InputTokens, OutputTokens: metrics.OutputTokens, CachedTokens: metrics.CachedTokens,
+		CacheCreationTokens: metrics.CacheCreationTokens, ImageInputTokens: metrics.ImageInputTokens, ImageOutputTokens: metrics.ImageOutputTokens,
+		ImageCount: metrics.ImageCount, TotalTokens: metrics.InputTokens + metrics.OutputTokens,
 	}
 }
 

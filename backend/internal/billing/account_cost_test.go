@@ -84,6 +84,47 @@ func TestAccountCostMicrosGPT56LongContextBoundaryIsExclusive(t *testing.T) {
 	}
 }
 
+func TestAccountCostMicrosUsesGPT6AstraPricing(t *testing.T) {
+	usage := domain.TokenUsage{
+		InputTokens: 1_000_000, CachedTokens: 200_000, CacheCreationTokens: 100_000, OutputTokens: 500_000,
+	}
+	if got, want := AccountCostMicros("gpt-6-astra", "", usage), int64(54_400_000); got != want {
+		t.Fatalf("standard account cost = %d, want %d", got, want)
+	}
+	for _, tier := range []string{"priority", "fast"} {
+		if got, want := AccountCostMicros("gpt-6-astra", tier, usage), int64(108_800_000); got != want {
+			t.Fatalf("%s account cost = %d, want %d", tier, got, want)
+		}
+	}
+	if got, want := AccountCostMicros("gpt-6-astra", "flex", usage), int64(27_200_000); got != want {
+		t.Fatalf("flex account cost = %d, want %d", got, want)
+	}
+}
+
+func TestAccountCostMicrosGPT6AstraLongContextBoundaryIsExclusive(t *testing.T) {
+	boundary := domain.TokenUsage{InputTokens: 272_000, CacheCreationTokens: 50_000, CachedTokens: 22_000, OutputTokens: 10}
+	if got, want := AccountCostMicros("gpt-6-astra", "", boundary), int64(2_647_500); got != want {
+		t.Fatalf("boundary account cost = %d, want %d", got, want)
+	}
+	above := domain.TokenUsage{InputTokens: 273_000, CacheCreationTokens: 100_000, CachedTokens: 73_000, OutputTokens: 10}
+	if got, want := AccountCostMicros("gpt-6-astra", "", above), int64(4_646_750); got != want {
+		t.Fatalf("long-context account cost = %d, want %d", got, want)
+	}
+}
+
+func TestAccountCostForSegmentsAppliesLongContextPricingPerResponse(t *testing.T) {
+	segments := []domain.GatewayBillingSegment{
+		{TokenUsage: domain.TokenUsage{InputTokens: 150_000}},
+		{TokenUsage: domain.TokenUsage{InputTokens: 150_000}},
+	}
+	if got, want := AccountCostForSegments("gpt-6-astra", "", segments).TotalMicros, int64(3_000_000); got != want {
+		t.Fatalf("segmented account cost = %d, want %d", got, want)
+	}
+	if got := AccountCostMicros("gpt-6-astra", "", domain.TokenUsage{InputTokens: 300_000}); got == 3_000_000 {
+		t.Fatalf("aggregate usage unexpectedly matched segmented long-context cost: %d", got)
+	}
+}
+
 func TestAccountCostMicrosNormalizesGPT56AliasesToSol(t *testing.T) {
 	usage := domain.TokenUsage{InputTokens: 100_000}
 	for _, model := range []string{"gpt-5.6", "openai/gpt-5.6", "gpt-5.6-codex"} {

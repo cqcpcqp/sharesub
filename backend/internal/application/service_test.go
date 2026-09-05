@@ -1251,6 +1251,25 @@ func TestRecordGatewayMetricKeepsResolvedBindingAndRequestStart(t *testing.T) {
 	}
 }
 
+func TestRecordGatewayMetricPricesWebSocketResponsesSeparately(t *testing.T) {
+	store := &gatewayStore{}
+	service := &Service{store: store}
+	metric := domain.GatewayMetric{
+		BillingModel: "gpt-6-astra",
+		TokenUsage:   domain.TokenUsage{InputTokens: 300_000},
+		BillingSegments: []domain.GatewayBillingSegment{
+			{TokenUsage: domain.TokenUsage{InputTokens: 150_000}},
+			{TokenUsage: domain.TokenUsage{InputTokens: 150_000}},
+		},
+	}
+	if err := service.RecordGatewayMetric(context.Background(), GatewayAccess{}, metric, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := store.recordedMetric.AccountCostMicros, int64(3_000_000); got != want {
+		t.Fatalf("segmented account cost = %d, want %d", got, want)
+	}
+}
+
 func TestResolveGatewayAccessRejectsZeroShareWithoutQuotaLookup(t *testing.T) {
 	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
 	manager := testSecurityManager(t)

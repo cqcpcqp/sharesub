@@ -388,6 +388,14 @@ type CostBreakdown struct {
 	TotalMicros         int64 `json:"total_micros"`
 }
 
+// GatewayBillingSegment preserves per-response usage when one client-visible
+// request produces multiple upstream Responses, such as GPT-6 steering.
+type GatewayBillingSegment struct {
+	TokenUsage     TokenUsage
+	WebSearchCalls int64
+	ImageSize      string
+}
+
 type WindowUsage struct {
 	WindowType          string     `json:"window_type"`
 	RequestCount        int64      `json:"request_count"`
@@ -540,6 +548,7 @@ type GatewayMetric struct {
 	ImageSize                string
 	WebSearchCalls           int64
 	CostBreakdown            CostBreakdown
+	BillingSegments          []GatewayBillingSegment
 	AccountCostMicros        int64
 	CreatedAt                time.Time
 	AccountBindingGeneration int64

@@ -46,6 +46,22 @@ func AccountCost(model, serviceTier string, usage domain.TokenUsage, webSearchCa
 	return AccountCostForImageSize(model, serviceTier, usage, webSearchCalls, "")
 }
 
+func AccountCostForSegments(model, serviceTier string, segments []domain.GatewayBillingSegment) domain.CostBreakdown {
+	var total domain.CostBreakdown
+	for _, segment := range segments {
+		cost := AccountCostForImageSize(model, serviceTier, segment.TokenUsage, segment.WebSearchCalls, segment.ImageSize)
+		total.InputMicros += cost.InputMicros
+		total.OutputMicros += cost.OutputMicros
+		total.CacheCreationMicros += cost.CacheCreationMicros
+		total.CacheReadMicros += cost.CacheReadMicros
+		total.ImageInputMicros += cost.ImageInputMicros
+		total.ImageOutputMicros += cost.ImageOutputMicros
+		total.WebSearchMicros += cost.WebSearchMicros
+		total.TotalMicros += cost.TotalMicros
+	}
+	return total
+}
+
 // AccountCostForImageSize applies sub2api's image-generation size tiers. An
 // unspecified or unrecognized size is billed as 2K.
 func AccountCostForImageSize(model, serviceTier string, usage domain.TokenUsage, webSearchCalls int64, imageSize string) domain.CostBreakdown {
@@ -110,7 +126,7 @@ func AccountCostForImageSize(model, serviceTier string, usage domain.TokenUsage,
 	// CacheCreationTokens are subsets used to split that total below. Once the
 	// total input exceeds 272K, bill the whole request at the catalog's
 	// long-context multipliers.
-	if isGPT56Model(model) && pricing.LongContextThreshold > 0 &&
+	if pricing.LongContextThreshold > 0 &&
 		usage.InputTokens > pricing.LongContextThreshold {
 		inputPrice *= positiveOrOne(pricing.LongContextInputFactor)
 		cacheCreationPrice *= positiveOrOne(pricing.LongContextInputFactor)
@@ -233,6 +249,8 @@ func canonicalModel(model string) string {
 
 func knownCodexFamily(model string) string {
 	switch {
+	case strings.Contains(model, "gpt-6-astra"):
+		return "gpt-6-astra"
 	case strings.Contains(model, "gpt-5.6-terra"):
 		return "gpt-5.6-terra"
 	case strings.Contains(model, "gpt-5.6-luna"):
@@ -272,8 +290,4 @@ func knownCodexFamily(model string) string {
 	default:
 		return ""
 	}
-}
-
-func isGPT56Model(model string) bool {
-	return strings.Contains(canonicalModel(model), "gpt-5.6")
 }

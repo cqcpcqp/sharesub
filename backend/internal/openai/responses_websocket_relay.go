@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -38,6 +39,10 @@ func (s *ResponsesWebSocketSession) relayTurn(
 	activeClientReads := clientReads
 	var firstTokenAt time.Time
 	var terminal terminalResponse
+	var steeredUsage terminalResponse
+	var steerAccepted bool
+	var awaitingSteerContinuation bool
+	var heldTerminalEvent string
 	var pendingError *responseError
 	var replayCollector responsesWebSocketReplayCollector
 	if activeReplayState != nil {
@@ -71,6 +76,8 @@ func (s *ResponsesWebSocketSession) relayTurn(
 	}
 	finishMetrics := func() {
 		applyPendingError()
+		mergeResponsesWebSocketTerminal(&terminal, steeredUsage)
+		steeredUsage = terminalResponse{}
 		result.Metrics = proxyMetrics(result.StartedAt, time.Time{}, firstTokenAt, terminal, clientDisconnected)
 		if clientDisconnected {
 			result.Metrics.ErrorStatusCode = 499
@@ -95,6 +102,14 @@ func (s *ResponsesWebSocketSession) relayTurn(
 		case read := <-activeClientReads:
 			if read.err != nil {
 				markClientDisconnected(read.err)
+				continue
+			}
+			if isResponsesWebSocketResponseCreate(read.messageType, read.frame) && (steerAccepted || awaitingSteerContinuation) {
+				if len(result.nextFrame) > 0 {
+					finishMetrics()
+					return result, NewResponsesWebSocketCloseError(websocket.StatusPolicyViolation, "overlapping response.create is not supported", nil)
+				}
+				result.nextFrame = append([]byte(nil), read.frame...)
 				continue
 			}
 			if isResponsesWebSocketResponseCreate(read.messageType, read.frame) {
@@ -168,10 +183,26 @@ func (s *ResponsesWebSocketSession) relayTurn(
 			}
 			eventType := ""
 			terminalEvent := false
+			logicalTerminalEvent := ""
 			if read.messageType == websocket.MessageText {
 				var responseID string
 				var parsedTerminal *terminalResponse
 				eventType, responseID, parsedTerminal = observeResponsesWebSocketEvent(read.frame)
+				switch eventType {
+				case "response.steer.accepted":
+					steerAccepted = true
+				case "response.steer.failed":
+					steerAccepted = false
+				case "response.created":
+					if awaitingSteerContinuation {
+						if len(result.nextFrame) > 0 {
+							finishMetrics()
+							return result, NewResponsesWebSocketCloseError(websocket.StatusPolicyViolation, "response.create is not allowed when steering continues automatically", nil)
+						}
+						awaitingSteerContinuation = false
+						heldTerminalEvent = ""
+					}
+				}
 				replayCollector.addEvent(eventType, read.frame)
 				if result.RequestID == "" && responseID != "" {
 					result.RequestID = responseID
@@ -180,7 +211,21 @@ func (s *ResponsesWebSocketSession) relayTurn(
 					firstTokenAt = time.Now()
 				}
 				if parsedTerminal != nil {
-					terminal = *parsedTerminal
+					result.BillingSegments = append(result.BillingSegments, responsesWebSocketBillingMetrics(*parsedTerminal))
+					if isResponsesWebSocketSteeredIncomplete(read.frame, eventType) || steerAccepted {
+						mergeResponsesWebSocketTerminal(&steeredUsage, *parsedTerminal)
+						terminal = terminalResponse{}
+						pendingError = nil
+						awaitingSteerContinuation = true
+						heldTerminalEvent = normalizeResponsesWebSocketTerminalEvent(eventType)
+						steerAccepted = false
+					} else {
+						terminal = *parsedTerminal
+						mergeResponsesWebSocketTerminal(&terminal, steeredUsage)
+						steeredUsage = terminalResponse{}
+						terminalEvent = isTerminalResponseEvent(eventType)
+						logicalTerminalEvent = eventType
+					}
 				}
 				if eventType == "error" {
 					if upstreamEventErr := parseResponsesWebSocketErrorEvent(read.frame); upstreamEventErr != nil {
@@ -194,7 +239,12 @@ func (s *ResponsesWebSocketSession) relayTurn(
 						}
 					}
 				}
-				terminalEvent = isTerminalResponseEvent(eventType)
+				if awaitingSteerContinuation && (eventType == "response.steer.pending" || eventType == "response.steer.failed") {
+					terminalEvent = true
+					logicalTerminalEvent = heldTerminalEvent
+					awaitingSteerContinuation = false
+					result.allowQueuedCreate = eventType == "response.steer.pending"
+				}
 			}
 			if !clientDisconnected {
 				if terminalEvent {
@@ -220,12 +270,12 @@ func (s *ResponsesWebSocketSession) relayTurn(
 				result.replayOutput = replayCollector.items
 				result.replayOutputExceedsLimit = replayCollector.exceedsLimit
 				retainReplayOutput = activeReplayState != nil && activeReplayState.collect && activeReplayState.outputReservation != nil
-				result.TerminalEvent = normalizeResponsesWebSocketTerminalEvent(eventType)
+				result.TerminalEvent = normalizeResponsesWebSocketTerminalEvent(logicalTerminalEvent)
 				applyPendingError()
-				applyResponsesWebSocketTerminalFailure(eventType, &terminal)
+				applyResponsesWebSocketTerminalFailure(logicalTerminalEvent, &terminal)
 				finishMetrics()
-				if !clientDisconnected && !isSuccessfulResponsesWebSocketTerminalEvent(eventType) {
-					return result, newResponsesWebSocketTerminalError(eventType, terminal.Error)
+				if !clientDisconnected && !isSuccessfulResponsesWebSocketTerminalEvent(logicalTerminalEvent) {
+					return result, newResponsesWebSocketTerminalError(logicalTerminalEvent, terminal.Error)
 				}
 				return result, clientErr
 			}
@@ -253,5 +303,55 @@ func (s *ResponsesWebSocketSession) relayTurn(
 			}
 			return result, NewResponsesWebSocketCloseError(websocket.StatusGoingAway, "Responses WebSocket session canceled", context.Cause(ctx))
 		}
+	}
+}
+
+func isResponsesWebSocketSteeredIncomplete(frame []byte, eventType string) bool {
+	if eventType != "response.incomplete" {
+		return false
+	}
+	var event struct {
+		Response struct {
+			IncompleteDetails struct {
+				Reason string `json:"reason"`
+			} `json:"incomplete_details"`
+		} `json:"response"`
+	}
+	return json.Unmarshal(frame, &event) == nil && strings.TrimSpace(event.Response.IncompleteDetails.Reason) == "steered"
+}
+
+func mergeResponsesWebSocketTerminal(dst *terminalResponse, addition terminalResponse) {
+	if dst == nil {
+		return
+	}
+	if dst.ID == "" {
+		dst.ID = addition.ID
+	}
+	if dst.Model == "" {
+		dst.Model = addition.Model
+	}
+	dst.Usage.InputTokens += addition.Usage.InputTokens
+	dst.Usage.OutputTokens += addition.Usage.OutputTokens
+	dst.Usage.Images += addition.Usage.Images
+	dst.Usage.InputTokenDetails.CachedTokens += addition.Usage.InputTokenDetails.CachedTokens
+	dst.Usage.InputTokenDetails.CacheWriteTokens += addition.Usage.InputTokenDetails.CacheWriteTokens
+	dst.Usage.InputTokenDetails.ImageTokens += addition.Usage.InputTokenDetails.ImageTokens
+	dst.Usage.OutputTokenDetails.ImageTokens += addition.Usage.OutputTokenDetails.ImageTokens
+	dst.Output = append(dst.Output, addition.Output...)
+	dst.hasUsage = dst.hasUsage || addition.hasUsage
+	dst.hasOutput = dst.hasOutput || addition.hasOutput
+}
+
+func responsesWebSocketBillingMetrics(terminal terminalResponse) ProxyMetrics {
+	return ProxyMetrics{
+		InputTokens:         terminal.Usage.InputTokens,
+		OutputTokens:        terminal.Usage.OutputTokens,
+		CachedTokens:        terminal.Usage.InputTokenDetails.CachedTokens,
+		CacheCreationTokens: terminal.Usage.InputTokenDetails.CacheWriteTokens,
+		ImageInputTokens:    terminal.Usage.InputTokenDetails.ImageTokens,
+		ImageOutputTokens:   terminal.Usage.OutputTokenDetails.ImageTokens,
+		ImageCount:          terminal.imageCount(),
+		WebSearchCalls:      terminal.webSearchCalls(),
+		UpstreamModel:       terminal.Model,
 	}
 }

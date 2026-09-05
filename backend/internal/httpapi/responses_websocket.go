@@ -325,6 +325,11 @@ func (s *Server) responsesWebSocketHandler(w http.ResponseWriter, r *http.Reques
 			}
 			metric := gatewayMetric(requestID, result.Billing.Model, r.URL.Path, result.Billing, status, result.Metrics)
 			metric.IsStream = true
+			for _, segment := range result.BillingSegments {
+				metric.BillingSegments = append(metric.BillingSegments, domain.GatewayBillingSegment{
+					TokenUsage: gatewayTokenUsage(segment), WebSearchCalls: segment.WebSearchCalls, ImageSize: segment.ImageSize,
+				})
+			}
 			if serverShuttingDown {
 				metric.StatusCode = http.StatusServiceUnavailable
 				metric.ErrorSource = domain.GatewayErrorSourceGateway

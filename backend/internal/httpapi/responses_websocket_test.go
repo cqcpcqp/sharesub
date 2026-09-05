@@ -515,6 +515,35 @@ func TestResponsesWebSocketHTTPUpgradeAndTwoTurnsReuseUpstream(t *testing.T) {
 	}
 }
 
+func TestResponsesWebSocketHTTPSteeringPricesEachResponseSeparately(t *testing.T) {
+	config := responsesWebSocketHTTPConfig()
+	httpServer, _, store, upstream, _ := newResponsesWebSocketHTTPServer(t, config)
+	defer httpServer.Close()
+
+	client, _, err := dialResponsesWebSocketHTTP(t, httpServer.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.CloseNow()
+	writeResponsesWebSocketHTTP(t, client, `{"type":"response.create","model":"gpt-6-astra"}`)
+	waitResponsesWebSocketHTTPWrite(t, upstream)
+	upstream.send(`{"type":"response.created","response":{"id":"resp_original"}}`)
+	readResponsesWebSocketHTTP(t, client)
+	writeResponsesWebSocketHTTP(t, client, `{"type":"response.steer","previous_response_id":"resp_original","input":"focus"}`)
+	waitResponsesWebSocketHTTPWrite(t, upstream)
+	upstream.send(`{"type":"response.steer.accepted","steer":{"id":"steer_1","previous_response_id":"resp_original"}}`)
+	upstream.send(`{"type":"response.completed","response":{"id":"resp_original","model":"gpt-6-astra","usage":{"input_tokens":150000}}}`)
+	upstream.send(`{"type":"response.created","response":{"id":"resp_continuation"}}`)
+	upstream.send(`{"type":"response.completed","response":{"id":"resp_continuation","model":"gpt-6-astra","usage":{"input_tokens":150000}}}`)
+	for range 4 {
+		readResponsesWebSocketHTTP(t, client)
+	}
+	metrics := waitResponsesWebSocketHTTPMetrics(t, store, 1)
+	if metrics[0].TokenUsage.InputTokens != 300_000 || metrics[0].AccountCostMicros != 3_000_000 || len(metrics[0].BillingSegments) != 2 {
+		t.Fatalf("steering metric = %+v", metrics[0])
+	}
+}
+
 func TestResponsesWebSocketHTTPFirstHandshake429SwitchesAndPinsSuccessfulAccount(t *testing.T) {
 	config := responsesWebSocketHTTPConfig()
 	httpServer, service, store, firstUpstream, dialer := newResponsesWebSocketHTTPServer(t, config, func(credential *domain.GatewayCredential) {

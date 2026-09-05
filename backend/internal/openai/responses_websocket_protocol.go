@@ -161,6 +161,7 @@ func prepareResponsesWebSocketFrame(frame []byte, turn int, inheritedModel strin
 	for _, field := range chatGPTUnsupportedFields {
 		delete(payload, field)
 	}
+	normalizeGPT6AstraRequest(payload, metadata.Model)
 	delete(payload, "background")
 	payload["type"] = "response.create"
 	payload["store"] = false

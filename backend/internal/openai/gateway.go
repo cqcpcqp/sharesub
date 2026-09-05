@@ -50,7 +50,7 @@ var responseHeaders = []string{
 }
 
 var chatGPTUnsupportedFields = []string{
-	"max_output_tokens", "max_completion_tokens", "temperature", "top_p", "frequency_penalty", "presence_penalty",
+	"max_output_tokens", "max_completion_tokens", "temperature", "top_p", "top_logprobs", "frequency_penalty", "presence_penalty",
 	"user", "metadata", "prompt_cache_retention", "safety_identifier", "stream_options",
 }
 
@@ -172,6 +172,7 @@ func prepareRequest(body []byte, compact, normalize bool) ([]byte, RequestBillin
 	for _, field := range chatGPTUnsupportedFields {
 		delete(payload, field)
 	}
+	normalizeGPT6AstraRequest(payload, model)
 	normalizeCodexInput(payload)
 	normalizeCodexToolParameterTypes(payload)
 	if compact {
@@ -194,6 +195,32 @@ func prepareRequest(body []byte, compact, normalize bool) ([]byte, RequestBillin
 		return nil, RequestBilling{}, fmt.Errorf("normalize Codex request: %w", err)
 	}
 	return normalized, metadata, nil
+}
+
+func normalizeGPT6AstraRequest(payload map[string]any, model string) {
+	if strings.ToLower(strings.TrimSpace(model)) != "gpt-6-astra" {
+		return
+	}
+	if reasoning, ok := payload["reasoning"].(map[string]any); ok {
+		if effort, ok := reasoning["effort"].(string); ok {
+			switch strings.ToLower(strings.TrimSpace(effort)) {
+			case "none", "minimal":
+				reasoning["effort"] = "low"
+			}
+		}
+	}
+	include, ok := payload["include"].([]any)
+	if !ok {
+		return
+	}
+	filtered := include[:0]
+	for _, value := range include {
+		if value == "message.output_text.logprobs" {
+			continue
+		}
+		filtered = append(filtered, value)
+	}
+	payload["include"] = filtered
 }
 
 func normalizeCodexInput(payload map[string]any) {

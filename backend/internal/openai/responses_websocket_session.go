@@ -397,6 +397,11 @@ func (s *ResponsesWebSocketSession) Run(ctx context.Context, client ResponsesWeb
 			}
 			break
 		}
+		if len(result.nextFrame) > 0 {
+			frame = result.nextFrame
+			result.nextFrame = nil
+			continue
+		}
 
 		idleTimer := time.NewTimer(s.interTurnIdleTimeout)
 		for {
@@ -408,7 +413,7 @@ func (s *ResponsesWebSocketSession) Run(ctx context.Context, client ResponsesWeb
 				}
 				if isResponsesWebSocketResponseCreate(read.messageType, read.frame) {
 					stopResponsesWebSocketTimer(idleTimer)
-					if read.duringTurn {
+					if read.duringTurn && !result.allowQueuedCreate {
 						return NewResponsesWebSocketCloseError(websocket.StatusPolicyViolation, "overlapping response.create is not supported", nil)
 					}
 					frame = read.frame

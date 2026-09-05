@@ -15,6 +15,7 @@ ShareSub 复用 sub2api 已验证的 OpenAI Codex 协议行为，但产品边界
 | Remote compact | 支持三个入口的 `/responses/compact`，转发到 ChatGPT Codex compact 上游 |
 | 独立联网检索 | 支持三个入口的 `/alpha/search`，按 SearchClient JSON 协议转发到 ChatGPT Codex alpha search 上游 |
 | 模型列表 | 普通请求返回支持配置的模型；Codex `client_version` 请求通过所选 OAuth 账号透传实时 manifest 与 ETag |
+| GPT-6 Astra | 静态模型列表提供官方 ID `gpt-6-astra`；Responses 请求按官方兼容规则移除不支持的采样/logprobs 参数，并将 `none`、`minimal` reasoning effort 规范为 `low` |
 | Images API | 支持 `/v1/images/generations`、`/v1/images/edits` 及无 `/v1` 别名；OAuth 请求转换为 hosted `image_generation` 工具 |
 | 图片输入输出 | 生成支持 JSON；编辑支持 JSON 图片 URL、multipart 图片与 mask；响应支持 JSON 和 Images SSE |
 | 图片模型 | `/v1/models` 返回 `gpt-image-1`、`gpt-image-1.5`、`gpt-image-2` |
@@ -28,6 +29,7 @@ ShareSub 复用 sub2api 已验证的 OpenAI Codex 协议行为，但产品边界
 | 安全账号切换 | 只在上游明确返回 `429` 或 `529` 时切换账号，最多切换 3 次 |
 | 账号代理 | 支持账号独立代理，且不会在代理失败后静默改为直连 |
 | Token 与成本指标 | 记录 Input、Output、Cached/Image Token、图片数、独立联网检索次数，并按实际模型、service tier、图片尺寸与 Web Search 次数计算账号成本 |
+| GPT-6 计费 | 按官方 Standard、Fast/Priority、Flex 和缓存读写价格计费；输入超过 272K 时按官方长上下文倍率计算整次请求 |
 | Fast/Flex 策略 | 账号规则优先，成员 API Key 规则补充；可按成员、模型和 `service_tier` 透传、过滤、强制 Fast 或拦截，强制 Fast 会为未指定 tier 的请求写入 ChatGPT Codex 兼容值 `priority` |
 
 ## 有意不支持
@@ -43,6 +45,7 @@ ShareSub 复用 sub2api 已验证的 OpenAI Codex 协议行为，但产品边界
 ## Responses WebSocket v2 边界
 
 - 同一连接一次只允许一个正在执行的 response；收到终止事件后才接受下一轮 `response.create`。
+- 活动响应支持透传 `response.steer`；原响应无论以 `response.incomplete(reason=steered)` 还是正常 `response.completed` 结束，都会在当前逻辑 turn 等待自动 continuation；各段 usage 汇总展示、逐响应计费。需要工具结果时支持 `response.steer.pending` 及客户端提前提交匹配的 `response.create`。
 - 会话建立后固定使用同一个 ChatGPT 账号，不会把 `previous_response_id` 或加密推理上下文迁移到另一个账号。
 - 仅首轮且尚未向客户端发送任何上游帧时，上游握手 `429` 或明确的 rate/usage/quota error 才会换号，最多切换 3 次；任一下行后、客户端已发送 `response.cancel` 后和后续 turn 均不换号、不重放。首下行前的 cancel 会立即发给当前上游，并固定当前 attempt。
 - 上游连接在轮间保持热态，但账号业务并发槽会释放；下一轮开始时必须重新通过该账号的额度、并发和 RPM 检查。

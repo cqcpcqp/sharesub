@@ -330,6 +330,52 @@ func TestPrepareRequestAddsEncryptedReasoningInclude(t *testing.T) {
 	}
 }
 
+func TestPrepareRequestNormalizesGPT6AstraCompatibilityFields(t *testing.T) {
+	body, _, err := PrepareRequest([]byte(`{
+		"model":" GPT-6-ASTRA ",
+		"input":[],
+		"reasoning":{"effort":"minimal","summary":"auto"},
+		"temperature":0.2,
+		"top_p":0.9,
+		"top_logprobs":5,
+		"include":["message.output_text.logprobs","reasoning.encrypted_content","web_search_call.action.sources"]
+	}`), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"temperature", "top_p", "top_logprobs"} {
+		if _, exists := payload[field]; exists {
+			t.Fatalf("unsupported field %q was preserved: %#v", field, payload)
+		}
+	}
+	reasoning := payload["reasoning"].(map[string]any)
+	if reasoning["effort"] != "low" || reasoning["summary"] != "auto" {
+		t.Fatalf("reasoning = %#v", reasoning)
+	}
+	include := payload["include"].([]any)
+	if len(include) != 2 || include[0] != "reasoning.encrypted_content" || include[1] != "web_search_call.action.sources" {
+		t.Fatalf("include = %#v", include)
+	}
+}
+
+func TestPrepareRequestKeepsGPT6CompatibleReasoningEffort(t *testing.T) {
+	body, _, err := PrepareRequest([]byte(`{"model":"gpt-6-astra","input":[],"reasoning":{"effort":"max"}}`), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if effort := payload["reasoning"].(map[string]any)["effort"]; effort != "max" {
+		t.Fatalf("reasoning effort = %#v", effort)
+	}
+}
+
 func TestPrepareRequestPreservesNativeResponsesToolsAndContinuation(t *testing.T) {
 	body, _, err := PrepareRequest([]byte(`{
 		"model":"gpt-5.4",

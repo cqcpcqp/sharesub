@@ -80,8 +80,11 @@ type ResponsesWebSocketTurnResult struct {
 	StartedAt                time.Time
 	Billing                  RequestBilling
 	Metrics                  ProxyMetrics
+	BillingSegments          []ProxyMetrics
 	HandshakeSucceeded       bool
 	ResponseHeaders          http.Header
+	nextFrame                []byte
+	allowQueuedCreate        bool
 	replayOutput             []json.RawMessage
 	replayOutputExceedsLimit bool
 }

@@ -1535,6 +1535,34 @@ func TestResponsesWebSocketSessionRejectsOverlappingResponseCreate(t *testing.T)
 	}
 }
 
+func TestPrepareResponsesWebSocketFrameNormalizesGPT6Astra(t *testing.T) {
+	frame, _, _, err := prepareResponsesWebSocketFrame([]byte(`{
+		"type":"response.create","model":"gpt-6-astra","input":[],
+		"reasoning":{"effort":"none"},"temperature":0.3,"top_logprobs":3,
+		"include":["message.output_text.logprobs","web_search_call.action.sources"]
+	}`), 1, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(frame, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["reasoning"].(map[string]any)["effort"] != "low" {
+		t.Fatalf("reasoning = %#v", payload["reasoning"])
+	}
+	if _, exists := payload["temperature"]; exists {
+		t.Fatalf("temperature was preserved: %#v", payload)
+	}
+	if _, exists := payload["top_logprobs"]; exists {
+		t.Fatalf("top_logprobs was preserved: %#v", payload)
+	}
+	include := payload["include"].([]any)
+	if len(include) != 2 || include[0] != "web_search_call.action.sources" || include[1] != "reasoning.encrypted_content" {
+		t.Fatalf("include = %#v", include)
+	}
+}
+
 func TestResponsesWebSocketSessionForwardsControlFramesDuringActiveTurn(t *testing.T) {
 	upstream := newResponsesWebSocketTestConn()
 	client := newResponsesWebSocketTestConn()
@@ -1569,6 +1597,147 @@ func TestResponsesWebSocketSessionForwardsControlFramesDuringActiveTurn(t *testi
 	}
 	if result.TerminalEvent != "response.cancelled" || result.Metrics.InputTokens != 2 || result.Metrics.OutputTokens != 1 {
 		t.Fatalf("turn result = %+v", result)
+	}
+}
+
+func TestResponsesWebSocketSessionKeepsSteeredContinuationInSameTurn(t *testing.T) {
+	upstream := newResponsesWebSocketTestConn()
+	client := newResponsesWebSocketTestConn()
+	session := NewResponsesWebSocketSession(ResponsesWebSocketOptions{
+		Dialer: &responsesWebSocketTestDialer{conn: upstream}, DialTimeout: time.Second,
+		ReadTimeout: time.Second, WriteTimeout: time.Second, InterTurnIdleTimeout: 20 * time.Millisecond,
+	})
+	var results []ResponsesWebSocketTurnResult
+	runErr := make(chan error, 1)
+	go func() {
+		runErr <- session.Run(context.Background(), client, []byte(`{"type":"response.create","model":"gpt-6-astra"}`), ResponsesWebSocketHooks{
+			BeforeTurn: func(_ context.Context, request ResponsesWebSocketTurnRequest) (ResponsesWebSocketTurnConfig, error) {
+				return ResponsesWebSocketTurnConfig{Frame: request.Frame, Dial: &ResponsesWebSocketDialConfig{
+					AccessToken: "token", ChatGPTAccountID: "account", APIKeyID: "key",
+				}}, nil
+			},
+			AfterTurn: func(_ context.Context, _ int, result ResponsesWebSocketTurnResult, _ error) {
+				results = append(results, result)
+			},
+		})
+	}()
+	waitForResponsesWebSocketWrites(t, upstream, 1)
+	upstream.send(`{"type":"response.created","response":{"id":"resp_original"}}`)
+	waitForResponsesWebSocketWrites(t, client, 1)
+	client.send(`{"type":"response.steer","previous_response_id":"resp_original","input":"focus on tests"}`)
+	waitForResponsesWebSocketWrites(t, upstream, 2)
+	if got := string(upstream.written()[1]); got != `{"type":"response.steer","previous_response_id":"resp_original","input":"focus on tests"}` {
+		t.Fatalf("forwarded steer frame = %s", got)
+	}
+	upstream.send(`{"type":"response.steer.accepted","previous_response_id":"resp_original"}`)
+	upstream.send(`{"type":"response.incomplete","response":{"id":"resp_original","model":"gpt-6-astra","incomplete_details":{"reason":"steered"},"usage":{"input_tokens":11,"output_tokens":3,"input_tokens_details":{"cached_tokens":2}}}}`)
+	upstream.send(`{"type":"response.created","response":{"id":"resp_continuation"}}`)
+	upstream.send(`{"type":"response.completed","response":{"id":"resp_continuation","model":"gpt-6-astra","usage":{"input_tokens":7,"output_tokens":5,"input_tokens_details":{"cache_write_tokens":1}}}}`)
+	waitForResponsesWebSocketWrites(t, client, 5)
+
+	client.send(`{"type":"response.create","model":"gpt-6-astra"}`)
+	waitForResponsesWebSocketWrites(t, upstream, 3)
+	upstream.send(`{"type":"response.completed","response":{"id":"resp_next","model":"gpt-6-astra","usage":{"input_tokens":2,"output_tokens":1}}}`)
+	waitForResponsesWebSocketWrites(t, client, 6)
+	if err := <-runErr; err == nil {
+		t.Fatal("Run() unexpectedly returned nil")
+	}
+	if len(results) != 2 {
+		t.Fatalf("AfterTurn results = %d, want 2", len(results))
+	}
+	first := results[0]
+	if first.TerminalEvent != "response.completed" || first.Metrics.InputTokens != 18 || first.Metrics.OutputTokens != 8 ||
+		first.Metrics.CachedTokens != 2 || first.Metrics.CacheCreationTokens != 1 {
+		t.Fatalf("steered turn result = %+v", first)
+	}
+	if results[1].RequestID != "resp_next" || results[1].Metrics.InputTokens != 2 {
+		t.Fatalf("next turn result = %+v", results[1])
+	}
+}
+
+func TestResponsesWebSocketSessionKeepsCompletedResponseOpenForAutomaticSteeringContinuation(t *testing.T) {
+	upstream := newResponsesWebSocketTestConn()
+	client := newResponsesWebSocketTestConn()
+	session := NewResponsesWebSocketSession(ResponsesWebSocketOptions{
+		Dialer: &responsesWebSocketTestDialer{conn: upstream}, DialTimeout: time.Second,
+		ReadTimeout: time.Second, WriteTimeout: time.Second, InterTurnIdleTimeout: 20 * time.Millisecond,
+	})
+	var results []ResponsesWebSocketTurnResult
+	runErr := make(chan error, 1)
+	go func() {
+		runErr <- session.Run(context.Background(), client, []byte(`{"type":"response.create","model":"gpt-6-astra"}`), ResponsesWebSocketHooks{
+			BeforeTurn: func(_ context.Context, request ResponsesWebSocketTurnRequest) (ResponsesWebSocketTurnConfig, error) {
+				return ResponsesWebSocketTurnConfig{Frame: request.Frame, Dial: &ResponsesWebSocketDialConfig{
+					AccessToken: "token", ChatGPTAccountID: "account", APIKeyID: "key",
+				}}, nil
+			},
+			AfterTurn: func(_ context.Context, _ int, result ResponsesWebSocketTurnResult, _ error) {
+				results = append(results, result)
+			},
+		})
+	}()
+	waitForResponsesWebSocketWrites(t, upstream, 1)
+	upstream.send(`{"type":"response.created","response":{"id":"resp_original"}}`)
+	waitForResponsesWebSocketWrites(t, client, 1)
+	client.send(`{"type":"response.steer","previous_response_id":"resp_original","input":"focus"}`)
+	waitForResponsesWebSocketWrites(t, upstream, 2)
+	upstream.send(`{"type":"response.steer.accepted","steer":{"id":"steer_1","previous_response_id":"resp_original"}}`)
+	upstream.send(`{"type":"response.completed","response":{"id":"resp_original","model":"gpt-6-astra","usage":{"input_tokens":150000,"output_tokens":3}}}`)
+	upstream.send(`{"type":"response.created","response":{"id":"resp_continuation"}}`)
+	upstream.send(`{"type":"response.completed","response":{"id":"resp_continuation","model":"gpt-6-astra","usage":{"input_tokens":150000,"output_tokens":5}}}`)
+	waitForResponsesWebSocketWrites(t, client, 5)
+	if err := <-runErr; err == nil {
+		t.Fatal("Run() unexpectedly returned nil")
+	}
+	if len(results) != 1 {
+		t.Fatalf("AfterTurn results = %d, want 1", len(results))
+	}
+	result := results[0]
+	if result.TerminalEvent != "response.completed" || result.Metrics.InputTokens != 300_000 || len(result.BillingSegments) != 2 ||
+		result.BillingSegments[0].InputTokens != 150_000 || result.BillingSegments[1].InputTokens != 150_000 {
+		t.Fatalf("completed steering result = %+v", result)
+	}
+}
+
+func TestResponsesWebSocketSessionQueuesEarlyRequiredInputUntilSteerPending(t *testing.T) {
+	upstream := newResponsesWebSocketTestConn()
+	client := newResponsesWebSocketTestConn()
+	session := NewResponsesWebSocketSession(ResponsesWebSocketOptions{
+		Dialer: &responsesWebSocketTestDialer{conn: upstream}, DialTimeout: time.Second,
+		ReadTimeout: time.Second, WriteTimeout: time.Second, InterTurnIdleTimeout: 20 * time.Millisecond,
+	})
+	var results []ResponsesWebSocketTurnResult
+	runErr := make(chan error, 1)
+	go func() {
+		runErr <- session.Run(context.Background(), client, []byte(`{"type":"response.create","model":"gpt-6-astra"}`), ResponsesWebSocketHooks{
+			BeforeTurn: func(_ context.Context, request ResponsesWebSocketTurnRequest) (ResponsesWebSocketTurnConfig, error) {
+				return ResponsesWebSocketTurnConfig{Frame: request.Frame, Dial: &ResponsesWebSocketDialConfig{
+					AccessToken: "token", ChatGPTAccountID: "account", APIKeyID: "key",
+				}}, nil
+			},
+			AfterTurn: func(_ context.Context, _ int, result ResponsesWebSocketTurnResult, _ error) {
+				results = append(results, result)
+			},
+		})
+	}()
+	waitForResponsesWebSocketWrites(t, upstream, 1)
+	upstream.send(`{"type":"response.created","response":{"id":"resp_tool"}}`)
+	waitForResponsesWebSocketWrites(t, client, 1)
+	client.send(`{"type":"response.steer","previous_response_id":"resp_tool","input":"focus"}`)
+	waitForResponsesWebSocketWrites(t, upstream, 2)
+	upstream.send(`{"type":"response.steer.accepted","steer":{"id":"steer_1","previous_response_id":"resp_tool"}}`)
+	upstream.send(`{"type":"response.completed","response":{"id":"resp_tool","model":"gpt-6-astra","usage":{"input_tokens":9},"output":[{"type":"function_call","status":"completed"}]}}`)
+	waitForResponsesWebSocketWrites(t, client, 3)
+	client.send(`{"type":"response.create","model":"gpt-6-astra","previous_response_id":"resp_tool","input":[{"type":"function_call_output","call_id":"call_1","output":"done"}]}`)
+	upstream.send(`{"type":"response.steer.pending","steer":{"id":"steer_1","previous_response_id":"resp_tool"},"reason":"waiting_for_required_input"}`)
+	waitForResponsesWebSocketWrites(t, upstream, 3)
+	upstream.send(`{"type":"response.completed","response":{"id":"resp_after_tool","model":"gpt-6-astra","usage":{"input_tokens":4,"output_tokens":2}}}`)
+	waitForResponsesWebSocketWrites(t, client, 5)
+	if err := <-runErr; err == nil {
+		t.Fatal("Run() unexpectedly returned nil")
+	}
+	if len(results) != 2 || results[0].TerminalEvent != "response.completed" || results[1].RequestID != "resp_after_tool" {
+		t.Fatalf("pending steering results = %+v", results)
 	}
 }
 

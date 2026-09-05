@@ -10,8 +10,9 @@ type Model struct {
 	DisplayName string `json:"display_name"`
 }
 
-// CodexModels mirrors the OpenAI-compatible model subset exposed by sub2api.
+// CodexModels is the OpenAI-compatible model subset exposed by ShareSub.
 var CodexModels = []Model{
+	{ID: "gpt-6-astra", Object: "model", Created: 0, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6 Astra"},
 	{ID: "gpt-5.6-sol", Object: "model", Created: 1780876800, OwnedBy: "openai", Type: "model", DisplayName: "GPT-5.6 Sol"},
 	{ID: "gpt-5.6", Object: "model", Created: 1780876800, OwnedBy: "openai", Type: "model", DisplayName: "GPT-5.6 (Sol)"},
 	{ID: "gpt-5.6-terra", Object: "model", Created: 1780876800, OwnedBy: "openai", Type: "model", DisplayName: "GPT-5.6 Terra"},
