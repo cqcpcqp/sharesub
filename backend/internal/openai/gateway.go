@@ -30,7 +30,7 @@ const (
 )
 
 const (
-	codexProbeModel   = "gpt-5.4"
+	codexProbeModel   = "codex-auto-review"
 	codexProbeTimeout = 20 * time.Second
 )
 
@@ -77,10 +77,11 @@ type proxyClientEntry struct {
 }
 
 type codexProbePayload struct {
-	Model  string              `json:"model"`
-	Input  []codexProbeMessage `json:"input"`
-	Stream bool                `json:"stream"`
-	Store  bool                `json:"store"`
+	Model        string              `json:"model"`
+	Instructions string              `json:"instructions"`
+	Input        []codexProbeMessage `json:"input"`
+	Stream       bool                `json:"stream"`
+	Store        bool                `json:"store"`
 }
 
 type codexProbeMessage struct {
@@ -335,7 +336,8 @@ func (g *Gateway) Close() {
 // ProbeQuota actively obtains the current Codex quota windows for an OAuth account.
 func (g *Gateway) ProbeQuota(ctx context.Context, accessToken, chatgptAccountID, proxyURL string) ([]domain.QuotaSignal, error) {
 	payload, err := json.Marshal(codexProbePayload{
-		Model: codexProbeModel,
+		Model:        codexProbeModel,
+		Instructions: "Reply with OK.",
 		Input: []codexProbeMessage{{
 			Role: "user",
 			Content: []codexProbeContent{{

@@ -62,6 +62,46 @@ func TestProbeQuotaQueriesResponsesEndpointAndParsesStandardWindows(t *testing.T
 	assertProbeRequest(t, captured)
 }
 
+func TestProbeQuotaSendsNonEmptyInstructions(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		var payload map[string]json.RawMessage
+		if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		var model string
+		if err := json.Unmarshal(payload["model"], &model); err != nil || model != "codex-auto-review" {
+			t.Fatalf("probe model = %q, want codex-auto-review", model)
+		}
+		var instructions string
+		if err := json.Unmarshal(payload["instructions"], &instructions); err != nil || strings.TrimSpace(instructions) == "" {
+			return &http.Response{
+				StatusCode: http.StatusBadRequest,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"instructions must be a non-empty string"}}`)),
+				Request:    req,
+			}, nil
+		}
+		headers := make(http.Header)
+		headers.Set("x-codex-primary-used-percent", "19")
+		headers.Set("x-codex-primary-reset-after-seconds", "604800")
+		headers.Set("x-codex-primary-window-minutes", "10080")
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     headers,
+			Body:       io.NopCloser(strings.NewReader("data: {}\n\n")),
+			Request:    req,
+		}, nil
+	})}
+
+	signals, err := NewGateway(client).ProbeQuota(context.Background(), "access-token", "account-id", "")
+	if err != nil {
+		t.Fatalf("quota probe with required instructions failed: %v", err)
+	}
+	if len(signals) != 1 || signals[0].WindowType != domain.Window7D {
+		t.Fatalf("signals = %#v, want weekly quota", signals)
+	}
+}
+
 func TestProbeQuotaAcceptsCompleteHeadersBeforeErrorStatus(t *testing.T) {
 	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		headers := make(http.Header)
