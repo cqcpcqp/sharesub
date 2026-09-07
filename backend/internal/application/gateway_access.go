@@ -112,6 +112,9 @@ func (s *Service) AuthenticateGatewayKey(ctx context.Context, apiKey string) err
 		return domain.ErrUnauthorized
 	}
 	routes, err := s.store.ResolveGatewayRoutes(ctx, s.security.HashToken(apiKey), s.now())
+	if errors.Is(err, domain.ErrMembershipRequired) {
+		return err
+	}
 	if err != nil {
 		return domain.ErrUnauthorized
 	}
@@ -128,6 +131,9 @@ func (s *Service) ResolveGatewayAPIKeyID(ctx context.Context, apiKey string) (st
 		return "", domain.ErrUnauthorized
 	}
 	routes, err := s.store.ResolveGatewayRoutes(ctx, s.security.HashToken(apiKey), s.now())
+	if errors.Is(err, domain.ErrMembershipRequired) {
+		return "", err
+	}
 	if err != nil || routes.APIKey.ID == "" {
 		return "", domain.ErrUnauthorized
 	}
@@ -139,6 +145,9 @@ func (s *Service) ResolveGatewayAccess(ctx context.Context, apiKey string, exclu
 		return GatewayAccess{}, domain.ErrUnauthorized
 	}
 	routes, err := s.store.ResolveGatewayRoutes(ctx, s.security.HashToken(apiKey), s.now())
+	if errors.Is(err, domain.ErrMembershipRequired) {
+		return GatewayAccess{}, err
+	}
 	if err != nil {
 		return GatewayAccess{}, domain.ErrUnauthorized
 	}
@@ -226,6 +235,9 @@ func (s *Service) ReacquireGatewayAccess(ctx context.Context, apiKey string, pin
 		return GatewayAccess{}, domain.ErrUnauthorized
 	}
 	routes, err := s.store.ResolveGatewayRoutes(ctx, s.security.HashToken(apiKey), s.now())
+	if errors.Is(err, domain.ErrMembershipRequired) {
+		return GatewayAccess{}, err
+	}
 	if err != nil || routes.APIKey.ID != pinned.Credential.APIKeyID {
 		return GatewayAccess{}, domain.ErrUnauthorized
 	}

@@ -18,6 +18,22 @@ type Store interface {
 	KeyNotificationStore
 	AdminStore
 	GatewayStore
+	MembershipStore
+}
+
+type MembershipStore interface {
+	Membership(context.Context, string, time.Time) (domain.Membership, error)
+	AdjustMembership(context.Context, string, domain.MembershipAdjustment, domain.AuditEvent) error
+	CreateMembershipOrder(context.Context, domain.MembershipOrder) (domain.MembershipOrder, error)
+	MembershipOrder(context.Context, string) (domain.MembershipOrder, error)
+	MembershipOrders(context.Context, string) ([]domain.MembershipOrder, error)
+	CancelMembershipOrder(context.Context, string, string) error
+	ConfirmMembershipPayment(context.Context, string, string, string, int, time.Time) error
+	ClaimMembershipQuery(context.Context, string, time.Time) (bool, error)
+	MembershipReconciliationBatch(context.Context, time.Time) ([]domain.MembershipOrder, error)
+	SendMembershipReminders(context.Context, time.Time) error
+	PaymentSettings(context.Context) (domain.PaymentSettings, error)
+	SavePaymentSettings(context.Context, domain.PaymentSettings, domain.AuditEvent) error
 }
 
 type IdentityStore interface {

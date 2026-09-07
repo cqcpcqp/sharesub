@@ -1,5 +1,6 @@
 <template>
   <section class="view-content narrow-content">
+    <MembershipPanel :key="user.id" class="profile-membership" />
     <div class="profile-layout">
       <aside class="profile-summary">
         <div class="profile-avatar-wrap">
@@ -151,6 +152,7 @@
 </template>
 
 <script setup lang="ts">
+import MembershipPanel from '../components/MembershipPanel.vue'
 import { NButton, NPopconfirm, NRadioButton, NRadioGroup, NUpload } from 'naive-ui'
 import type { UploadCustomRequestOptions } from 'naive-ui'
 import { Camera, Info, LockKeyhole, Monitor, Moon, Palette, Save, Sun, Trash2 } from 'lucide-vue-next'
@@ -270,3 +272,7 @@ function formatDate(value: string) {
 
 onBeforeUnmount(clearAvatarPreview)
 </script>
+
+<style scoped>
+.profile-membership { margin-bottom: 24px; }
+</style>

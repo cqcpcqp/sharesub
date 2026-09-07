@@ -98,6 +98,11 @@ func main() {
 	}
 	app := application.NewServiceWithEmailVerification(store, securityManager, oauthClient, cfg.SessionTTL, cfg.OAuthRedirect, cfg.PublicURL, emailSender, cfg.EmailVerificationTTL, cfg.EmailResendCooldown, gateway)
 	app.SetRuntimeStatusProvider(runtimeMonitor)
+	if err := app.InitializePayments(ctx, config.EasyPay()); err != nil {
+		logger.Error("configure EasyPay", "error", err)
+		os.Exit(1)
+	}
+	go app.RunMembershipMaintenance(ctx, logger)
 	bootstrapAdmin, err := app.EnsureBootstrapAdmin(ctx)
 	if err != nil {
 		logger.Error("bootstrap admin", "error", err)

@@ -75,6 +75,18 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 }
 func writeError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, domain.ErrMembershipRequired):
+		writeErrorStatus(w, 402, "membership_required", err.Error())
+	case errors.Is(err, domain.ErrSVIPRequired):
+		writeErrorStatus(w, 403, "svip_required", err.Error())
+	case errors.Is(err, domain.ErrOwnerLimit):
+		writeErrorStatus(w, 409, "owner_limit_reached", err.Error())
+	case errors.Is(err, domain.ErrMembershipProduct):
+		writeErrorStatus(w, 409, "membership_product_conflict", err.Error())
+	case errors.Is(err, domain.ErrPendingMembershipOrder):
+		writeErrorStatus(w, 409, "membership_order_pending", err.Error())
+	case errors.Is(err, domain.ErrPaymentUnavailable):
+		writeErrorStatus(w, 503, "payment_unavailable", err.Error())
 	case errors.Is(err, domain.ErrUnauthorized):
 		writeErrorStatus(w, 401, "unauthorized", err.Error())
 	case errors.Is(err, domain.ErrForbidden):
@@ -136,6 +148,8 @@ func writeQuotaResetCreditsError(w http.ResponseWriter, err error) {
 
 func writeGatewayDomainError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, domain.ErrMembershipRequired):
+		writeGatewayErrorStatus(w, http.StatusPaymentRequired, "membership_required", err.Error())
 	case errors.Is(err, domain.ErrUnauthorized):
 		writeGatewayErrorStatus(w, http.StatusUnauthorized, "authentication_error", err.Error())
 	case errors.Is(err, domain.ErrQuotaExhausted):

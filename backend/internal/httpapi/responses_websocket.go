@@ -477,6 +477,9 @@ func headerHasToken(headers http.Header, name, token string) bool {
 }
 
 func responsesWebSocketAccessError(err error) error {
+	if errors.Is(err, domain.ErrMembershipRequired) {
+		return openai.NewResponsesWebSocketCloseError(websocket.StatusPolicyViolation, "platform membership expired; renew in membership center", err)
+	}
 	if errors.Is(err, domain.ErrAccountConcurrency) || errors.Is(err, domain.ErrAccountRateLimited) ||
 		errors.Is(err, domain.ErrQuotaExhausted) || errors.Is(err, domain.ErrAccountUnavailable) ||
 		errors.Is(err, domain.ErrNoRouteAvailable) {

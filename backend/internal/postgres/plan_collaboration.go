@@ -45,6 +45,9 @@ func (s *Store) UpdatePlanPublication(ctx context.Context, ownerID, planID, visi
 		return domain.Plan{}, err
 	}
 	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `LOCK TABLE shared_plans IN ROW EXCLUSIVE MODE`); err != nil {
+		return domain.Plan{}, err
+	}
 	plan, err := scanPlan(tx.QueryRow(ctx, `SELECT id,owner_user_id,account_id,name,description,status,visibility,public_slots,public_share_basis_points,allocation_mode,created_at,archived_at FROM shared_plans WHERE id=$1 FOR UPDATE`, planID))
 	if err != nil {
 		return domain.Plan{}, err
@@ -54,6 +57,11 @@ func (s *Store) UpdatePlanPublication(ctx context.Context, ownerID, planID, visi
 	}
 	if plan.Status != domain.StatusActive {
 		return domain.Plan{}, domain.ErrConflict
+	}
+	if visibility == domain.VisibilityPublic && (plan.Visibility != domain.VisibilityPublic || slots > plan.PublicSlots) {
+		if err := requireOwnerMembership(ctx, tx, ownerID, false); err != nil {
+			return domain.Plan{}, err
+		}
 	}
 	if visibility == domain.VisibilityPrivate {
 		slots = 0
@@ -141,6 +149,9 @@ func (s *Store) ReviewJoinApplication(ctx context.Context, ownerID, expectedPlan
 		return domain.JoinApplication{}, err
 	}
 	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `LOCK TABLE shared_plans IN ROW EXCLUSIVE MODE`); err != nil {
+		return domain.JoinApplication{}, err
+	}
 	var application domain.JoinApplication
 	var actualOwner, accountID, visibility, allocationMode string
 	var slots, share int
@@ -158,6 +169,9 @@ func (s *Store) ReviewJoinApplication(ctx context.Context, ownerID, expectedPlan
 	}
 	status := "rejected"
 	if approve {
+		if err := requireOwnerMembership(ctx, tx, ownerID, false); err != nil {
+			return domain.JoinApplication{}, err
+		}
 		if visibility != domain.VisibilityPublic {
 			return domain.JoinApplication{}, domain.ErrConflict
 		}
@@ -229,12 +243,18 @@ func (s *Store) CreateInvite(ctx context.Context, planID, ownerID string, invite
 		return err
 	}
 	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `LOCK TABLE shared_plans IN ROW EXCLUSIVE MODE`); err != nil {
+		return err
+	}
 	var actualOwner, allocationMode string
 	if err = tx.QueryRow(ctx, `SELECT owner_user_id,allocation_mode FROM shared_plans WHERE id=$1 AND status='active' FOR UPDATE`, planID).Scan(&actualOwner, &allocationMode); err != nil {
 		return mapError(err)
 	}
 	if actualOwner != ownerID {
 		return domain.ErrForbidden
+	}
+	if err := requireOwnerMembership(ctx, tx, ownerID, false); err != nil {
+		return err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE plan_invites SET status='expired' WHERE plan_id=$1 AND status='pending' AND expires_at<=$2`, planID, invite.CreatedAt); err != nil {
 		return err
@@ -271,6 +291,9 @@ func (s *Store) AcceptInvite(ctx context.Context, tokenHash []byte, user domain.
 		return domain.Member{}, err
 	}
 	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `LOCK TABLE shared_plans IN ROW EXCLUSIVE MODE`); err != nil {
+		return domain.Member{}, err
+	}
 	var invite domain.Invite
 	var planOwnerID, planStatus, allocationMode string
 	err = tx.QueryRow(ctx, `SELECT i.id,i.plan_id,i.share_basis_points,i.status,i.expires_at,p.owner_user_id,p.status,p.allocation_mode FROM plan_invites i JOIN shared_plans p ON p.id=i.plan_id WHERE i.token_hash=$1 FOR UPDATE OF i,p`, tokenHash).Scan(&invite.ID, &invite.PlanID, &invite.ShareBasisPoints, &invite.Status, &invite.ExpiresAt, &planOwnerID, &planStatus, &allocationMode)
@@ -288,6 +311,9 @@ func (s *Store) AcceptInvite(ctx context.Context, tokenHash []byte, user domain.
 	}
 	if invite.Status != "pending" || planStatus != domain.StatusActive {
 		return domain.Member{}, domain.ErrConflict
+	}
+	if err := requireOwnerMembership(ctx, tx, planOwnerID, false); err != nil {
+		return domain.Member{}, err
 	}
 	member := domain.Member{ID: memberID, PlanID: invite.PlanID, UserID: user.ID, Username: user.Username, AvatarURL: user.AvatarURL, Email: user.Email, Role: domain.RoleMember, Status: domain.StatusActive, ShareBasisPoints: invite.ShareBasisPoints, CreatedAt: now}
 	var existingStatus string
@@ -397,6 +423,10 @@ func (s *Store) ConvertPlanToFixed(ctx context.Context, planID, ownerID string, 
 		return domain.Plan{}, err
 	}
 	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `LOCK TABLE shared_plans IN ROW EXCLUSIVE MODE`); err != nil {
+		return domain.Plan{}, err
+	}
 
 	var actualOwner, allocationMode string
 	if err = tx.QueryRow(ctx, `SELECT owner_user_id,allocation_mode FROM shared_plans WHERE id=$1 FOR UPDATE`, planID).Scan(&actualOwner, &allocationMode); err != nil {

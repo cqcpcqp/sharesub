@@ -6,6 +6,12 @@ import (
 )
 
 var (
+	ErrMembershipRequired        = errors.New("平台会员未开通或已到期，请续费 VIP 或 SVIP；仅影响当前用户")
+	ErrSVIPRequired              = errors.New("此操作需要有效 SVIP；已有 Plan 和成员不受影响")
+	ErrOwnerLimit                = errors.New("未归档 Plan 房主数量已达到个人上限")
+	ErrMembershipProduct         = errors.New("当前会员状态不允许购买此商品；有效 SVIP 不支持降级，VIP 请使用补差升级")
+	ErrPendingMembershipOrder    = errors.New("已有其他商品的待付款订单，请先核实或取消该订单")
+	ErrPaymentUnavailable        = errors.New("支付暂不可用，请联系管理员")
 	ErrNotFound                  = errors.New("resource not found")
 	ErrUnauthorized              = errors.New("authentication required")
 	ErrForbidden                 = errors.New("operation forbidden")

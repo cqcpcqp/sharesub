@@ -145,6 +145,9 @@ func (s *Store) UpdatePlanStatus(ctx context.Context, planID, ownerID, status st
 		return domain.Plan{}, err
 	}
 	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `LOCK TABLE shared_plans IN ROW EXCLUSIVE MODE`); err != nil {
+		return domain.Plan{}, err
+	}
 	var currentOwner, currentStatus string
 	var accountID *string
 	if err := tx.QueryRow(ctx, `SELECT owner_user_id,status,account_id FROM shared_plans WHERE id=$1 FOR UPDATE`, planID).Scan(&currentOwner, &currentStatus, &accountID); err != nil {
@@ -161,6 +164,11 @@ func (s *Store) UpdatePlanStatus(ctx context.Context, planID, ownerID, status st
 	}
 	if status == domain.StatusActive && currentStatus != domain.StatusArchived {
 		return domain.Plan{}, domain.ErrConflict
+	}
+	if status == domain.StatusActive {
+		if err := requireOwnerMembership(ctx, tx, ownerID, true); err != nil {
+			return domain.Plan{}, err
+		}
 	}
 	if status == domain.StatusActive && accountID != nil {
 		var lockedAccountID string
@@ -237,8 +245,11 @@ func (s *Store) TransferPlanOwnership(ctx context.Context, planID, ownerID, memb
 		return domain.Plan{}, err
 	}
 	defer tx.Rollback(ctx)
-	var actualOwner string
-	if err := tx.QueryRow(ctx, `SELECT owner_user_id FROM shared_plans WHERE id=$1 FOR UPDATE`, planID).Scan(&actualOwner); err != nil {
+	if _, err := tx.Exec(ctx, `LOCK TABLE shared_plans IN ROW EXCLUSIVE MODE`); err != nil {
+		return domain.Plan{}, err
+	}
+	var actualOwner, planStatus string
+	if err := tx.QueryRow(ctx, `SELECT owner_user_id,status FROM shared_plans WHERE id=$1 FOR UPDATE`, planID).Scan(&actualOwner, &planStatus); err != nil {
 		return domain.Plan{}, mapError(err)
 	}
 	if actualOwner != ownerID {
@@ -250,6 +261,9 @@ func (s *Store) TransferPlanOwnership(ctx context.Context, planID, ownerID, memb
 	}
 	if targetStatus != domain.StatusActive || targetRole != domain.RoleMember || targetUserID == ownerID {
 		return domain.Plan{}, domain.ErrConflict
+	}
+	if err := requireOwnerMembership(ctx, tx, targetUserID, planStatus != domain.StatusArchived); err != nil {
+		return domain.Plan{}, err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE plan_members SET role='member',updated_at=$3 WHERE plan_id=$1 AND user_id=$2 AND role='owner' AND status='active'`, planID, ownerID, event.CreatedAt); err != nil {
 		return domain.Plan{}, err

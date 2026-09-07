@@ -20,6 +20,12 @@ func (s *Store) CreatePlan(ctx context.Context, plan domain.Plan, owner domain.M
 		return err
 	}
 	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `LOCK TABLE shared_plans IN ROW EXCLUSIVE MODE`); err != nil {
+		return err
+	}
+	if err := requireOwnerMembership(ctx, tx, plan.OwnerUserID, true); err != nil {
+		return err
+	}
 	if plan.AccountID != "" {
 		if len(signals) == 0 || observedAt.IsZero() {
 			return domain.ErrInvalidInput

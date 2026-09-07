@@ -1,5 +1,24 @@
 # HTTP API
 
+## 管理员支付配置
+
+- `GET /api/admin/payment-settings`：仅管理员读取配置，返回 `base_url`、`pid`、`enabled`、`revision`、`started_at`（未启用时为 null）、`key_configured`、`source`（database/environment）、`public_url`、`callback_ready`；不返回密钥或密文。
+- `PUT /api/admin/payment-settings`：仅管理员更新，输入固定字段 `base_url`、`pid`、`key`、`enabled`、`revision`，返回与 GET 相同结构。`key` 为空保留原密钥；`revision` 必须匹配当前版本，否则返回冲突。首次 `enabled=true` 原子启用个人会员制；存量房主赠送 SVIP，其他有效成员赠送 VIP，均为 30 天，超额房主设置个人名额，重复启用不重赠。`enabled=false` 仅停用新收款，不撤销收费。具体操作见 `docs/membership.md`。
+
+## 个人会员与房主名额
+
+- `GET /api/membership`：当前用户会员。固定字段为 `user_id`、`tier`（none/vip/svip）、`expires_at`（可为 null）、`active`、`owner_limit_override`（null 表示默认名额）、`owner_limit`、`owned_plans`、`revision`、`source`、`billing_started`、`payment_enabled`。名额仅对有效 SVIP 的新增房主操作生效，已有 Plan 不因到期或额度降低而删除。
+- `GET /api/membership/orders`：当前用户订单数组。
+- `POST /api/membership/orders`：输入 `product`（vip/svip/upgrade）、`payment_method`（alipay/wxpay），返回 `{order, pay_url}`。金额由后端确定为 990/1990/1000 分。相同商品复用待支付订单及原支付方式；不同商品须先取消待支付订单。
+- `POST /api/membership/orders/{orderID}/verify`：核实本人订单并返回订单；仅可信支付结果可发放权益。
+- `POST /api/membership/orders/{orderID}/cancel`：返回 `{cancelled: true}`，只关闭本地待支付状态，不执行退款；晚到的真实支付仍核实处理。
+- `GET /api/admin/users/{userID}/membership`、`GET /api/admin/users/{userID}/membership/orders`：仅管理员读取指定用户会员及订单。
+- `PATCH /api/admin/users/{userID}/membership`：仅管理员调整，输入 `tier`、`expires_at`、`owner_limit_override`、`revision`、`reason`、`review_order_id`。名额覆盖范围 0–10000，null 恢复默认 2；调整需填写原因并匹配版本。`review_order_id` 为空表示普通调整，非空则在同一事务处理该用户的待核实到账订单。返回 `{updated: true}`。
+
+订单固定字段：`id`、`user_id`、`product`、`amount_cents`、`upgrade_expires_at`、`payment_method`、`status`、`trade_no`、`created_at`、`expires_at`、`paid_at`、`service_expires_at`。时间及交易号未产生时为 null；状态为 pending/expired/paid/review_required。`review_required` 表示已核实到账但权益冲突，需管理员处理，不能提示用户再次支付；响应不包含商户密钥或密文。
+
+VIP 升级补 10 元且不改变原到期时间；同等级续费追加 720 小时，过期重购从确认到账时开始。会员门禁按 API Key 所属用户校验，Plus/Pro 一致；房主到期不影响车内其他有效会员。支付回调使用 `GET/POST /api/payment/easypay/notify`；`GET /api/payment/return` 只验签跳转，不发放权益。完整业务规则见 `docs/membership.md`。
+
 ## 通用约定
 
 - 管理接口使用 `Authorization: Bearer ss_session_...`。

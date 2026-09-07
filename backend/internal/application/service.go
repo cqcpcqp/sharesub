@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/sharesub/sharesub/backend/internal/domain"
+	"github.com/sharesub/sharesub/backend/internal/payment"
 	"github.com/sharesub/sharesub/backend/internal/security"
 )
 
@@ -15,6 +16,7 @@ const defaultEmailVerificationTTL = time.Hour
 const defaultEmailResendCooldown = time.Minute
 
 type Service struct {
+	paymentConfig        payment.Config
 	store                Store
 	security             *security.Manager
 	oauth                OpenAIOAuth

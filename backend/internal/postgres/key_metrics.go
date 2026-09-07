@@ -221,6 +221,13 @@ func (s *Store) ResolveGatewayRoutes(ctx context.Context, hash []byte, now time.
 		return out, mapError(err)
 	}
 	out.APIKey.Routes = make([]domain.APIKeyRoute, 0)
+	member, err := s.Membership(ctx, out.APIKey.UserID, now)
+	if err != nil {
+		return out, err
+	}
+	if member.BillingStarted && !member.Active {
+		return out, domain.ErrMembershipRequired
+	}
 	out.Candidates = make([]domain.GatewayCredential, 0)
 	rows, err := s.pool.Query(ctx, `
 		SELECT k.id,k.strategy,k.fast_policy,r.priority,

@@ -2,7 +2,7 @@
   <section class="view-content admin-view" aria-label="后台管理">
     <header class="admin-header">
       <div><h1>后台管理</h1><p>平台资源、运行状况与访问控制</p></div>
-      <NButton secondary size="small" :loading="loading" @click="loadAll"><template #icon><RefreshCw :size="15" /></template>刷新</NButton>
+      <div class="admin-header-actions"><NButton secondary size="small" @click="paymentSettingsVisible = true">支付设置</NButton><NButton secondary size="small" :loading="loading" @click="loadAll"><template #icon><RefreshCw :size="15" /></template>刷新</NButton></div>
     </header>
 
     <div v-if="overview" class="admin-overview-grid">
@@ -66,7 +66,7 @@
           <tbody><tr v-for="item in pagedUsers" :key="item.id">
             <td><div class="admin-primary"><strong>{{ item.username }}<em v-if="item.is_admin">管理员</em></strong><small>{{ item.email }}</small></div></td>
             <td><StatusBadge :value="item.status" /></td><td>{{ item.account_count }}</td><td>{{ item.plan_count }}</td><td>{{ item.api_key_count }}</td><td>{{ formatLastUsed(item.last_used_at) }}</td><td>{{ formatDate(item.created_at) }}</td>
-            <td><NPopconfirm :disabled="item.id === currentUser.id" :positive-text="item.status === 'active' ? '禁用用户' : '恢复用户'" negative-text="取消" @positive-click="toggleUser(item)"><template #trigger><NButton size="tiny" secondary :type="item.status === 'active' ? 'error' : 'primary'" :disabled="item.id === currentUser.id" :loading="actionID === item.id">{{ item.id === currentUser.id ? '当前账号' : item.status === 'active' ? '禁用' : '恢复' }}</NButton></template>{{ item.status === 'active' ? '禁用后该用户的所有登录会话将立即失效。' : '恢复后该用户可以重新登录。' }}</NPopconfirm></td>
+            <td><NButton size="tiny" secondary @click="membershipUser = item">会员与名额</NButton> <NPopconfirm :disabled="item.id === currentUser.id" :positive-text="item.status === 'active' ? '禁用用户' : '恢复用户'" negative-text="取消" @positive-click="toggleUser(item)"><template #trigger><NButton size="tiny" secondary :type="item.status === 'active' ? 'error' : 'primary'" :disabled="item.id === currentUser.id" :loading="actionID === item.id">{{ item.id === currentUser.id ? '当前账号' : item.status === 'active' ? '禁用' : '恢复' }}</NButton></template>{{ item.status === 'active' ? '禁用后该用户的所有登录会话将立即失效。' : '恢复后该用户可以重新登录。' }}</NPopconfirm></td>
           </tr></tbody>
         </table>
 
@@ -96,6 +96,8 @@
     </div>
   </section>
 
+  <PaymentSettingsDialog v-if="paymentSettingsVisible" @close="paymentSettingsVisible = false" />
+  <ModalShell v-if="membershipUser" :title="`${membershipUser.username} · 会员与房主名额`" wide @close="membershipUser = null"><MembershipPanel :key="membershipUser.id" :admin-user-id="membershipUser.id" /></ModalShell>
   <AccountConfigDialog
     :account="editingAccount"
     :subtitle="accountDialogSubtitle"
@@ -157,10 +159,14 @@ import type { Account, AccountConfigInput, AdminAPIKey, AdminAccount, AdminOverv
 import AccountConfigDialog from '../components/AccountConfigDialog.vue'
 import AppInput from '../components/AppInput.vue'
 import ModalShell from '../components/ModalShell.vue'
+import PaymentSettingsDialog from '../components/PaymentSettingsDialog.vue'
+import MembershipPanel from '../components/MembershipPanel.vue'
 import { formatPercent, formatTokens } from '../dashboardFormat'
 import StatusBadge from '../components/StatusBadge.vue'
 
 const props = withDefaults(defineProps<{ currentUser: User; initialAccountId?: string }>(), { initialAccountId: '' })
+const paymentSettingsVisible = ref(false)
+const membershipUser = ref<AdminUser | null>(null)
 const emit = defineEmits<{ message: [type: 'success' | 'error', text: string]; openPlan: [id: string]; openAccount: [id: string]; closeAccount: [] }>()
 const activeTab = defineModel<'users' | 'accounts' | 'plans' | 'keys'>('activeTab', { default: 'users' })
 const query = defineModel<string>('query', { default: '' })
@@ -375,6 +381,7 @@ watch(currentCount, count => {
 <style scoped>
 .admin-view { display: grid; gap: 16px; }
 .admin-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.admin-header-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .admin-header h1 { margin: 4px 0 0; color: var(--ink-strong); font-size: 20px; }
 .admin-header p { margin: 5px 0 0; color: var(--muted); font-size: 11px; }
 .admin-overview-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; }

@@ -523,6 +523,7 @@ async function openNotification(notification: UserNotification) {
     if (notification.type === 'application_approved' && usablePlanIDs.value.has(notification.resource_id)) openKeySetup(notification.resource_id)
   } else if (notification.resource_type === 'account') navigateToView('accounts')
   else if (notification.resource_type === 'api_key') navigateToView('keys')
+  else if (notification.resource_type === 'membership') navigateToView(notification.type === 'membership_review' && user.value?.is_admin ? 'admin' : 'profile')
 }
 
 function startNotificationPolling() {
