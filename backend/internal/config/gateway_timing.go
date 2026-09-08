@@ -14,7 +14,7 @@ type GatewayTiming struct {
 }
 
 func loadGatewayTiming() (GatewayTiming, error) {
-	enabled, err := boolEnv("SHARESUB_GATEWAY_TIMING_ENABLED", false)
+	enabled, err := boolEnv("SHARESUB_GATEWAY_TIMING_ENABLED", true)
 	if err != nil {
 		return GatewayTiming{}, err
 	}

@@ -2,7 +2,9 @@
 
 开启 `SHARESUB_GATEWAY_TIMING_ENABLED=true` 后，HTTP `/responses`、`/v1/responses` 及共用该处理器的 Responses/compact 路由，在请求结束时最多输出一条 `gateway request timing` JSON 日志。不新增数据库写入，不记录正文、请求头、密钥、邮箱、代理地址或原始错误文本。WebSocket、图片、搜索及模型列表不在本次范围内。
 
-默认关闭；正常快速请求每 100 次记录一次，耗时达到 30 秒或任何尝试的指标状态码达到 400 的请求始终保留。配置分别为 `SHARESUB_GATEWAY_TIMING_SAMPLE_EVERY` 和 `SHARESUB_GATEWAY_TIMING_SLOW_THRESHOLD`。设置采样间隔为 0 只保留慢请求和错误，为 1 保留全部。开关通过应用启动配置生效，调整配置需要重新启动应用；生产变更需另行授权。
+默认开启，可通过显式设置 `SHARESUB_GATEWAY_TIMING_ENABLED=false` 关闭；正常快速请求每 100 次记录一次，耗时达到 30 秒或任何尝试的指标状态码达到 400 的请求始终保留。配置分别为 `SHARESUB_GATEWAY_TIMING_SAMPLE_EVERY` 和 `SHARESUB_GATEWAY_TIMING_SLOW_THRESHOLD`。设置采样间隔为 0 只保留慢请求和错误，为 1 保留全部。开关通过应用启动配置生效，调整配置需要重新启动应用；生产变更需另行授权。
+
+升级注意：应用、Compose 和示例配置的默认值均为 `true`，但不会覆盖部署环境中已经显式设置的 `false`。如果现有 `.env`、宿主环境变量或 Compose override 保留了 `SHARESUB_GATEWAY_TIMING_ENABLED=false`，仅更新镜像或默认值不会开启诊断；需在后续授权的部署中将该显式配置改为 `true` 或移除，并重新创建 API 容器。
 
 ## 时间口径
 

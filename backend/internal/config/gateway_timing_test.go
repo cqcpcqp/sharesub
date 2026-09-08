@@ -14,7 +14,7 @@ func TestGatewayTimingConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.GatewayTiming != (GatewayTiming{SlowThreshold: 30 * time.Second, SampleEvery: 100}) {
+	if cfg.GatewayTiming != (GatewayTiming{Enabled: true, SlowThreshold: 30 * time.Second, SampleEvery: 100}) {
 		t.Fatalf("defaults = %+v", cfg.GatewayTiming)
 	}
 	t.Setenv("SHARESUB_GATEWAY_TIMING_ENABLED", "true")
@@ -23,6 +23,11 @@ func TestGatewayTimingConfig(t *testing.T) {
 	cfg, err = Load()
 	if err != nil || cfg.GatewayTiming != (GatewayTiming{Enabled: true, SlowThreshold: 5 * time.Second}) {
 		t.Fatalf("overrides = %+v, err = %v", cfg.GatewayTiming, err)
+	}
+	t.Setenv("SHARESUB_GATEWAY_TIMING_ENABLED", "false")
+	cfg, err = Load()
+	if err != nil || cfg.GatewayTiming.Enabled {
+		t.Fatalf("explicit disable = %+v, err = %v", cfg.GatewayTiming, err)
 	}
 }
 
