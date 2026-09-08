@@ -71,6 +71,10 @@ func main() {
 	}
 	oauthClient := openai.NewOAuthClient(cfg.OutboundProxy)
 	gateway := openai.NewGateway(httpClient)
+	gateway.ConfigureTiming(logger, openai.TimingOptions{
+		Enabled: cfg.GatewayTiming.Enabled, SlowThreshold: cfg.GatewayTiming.SlowThreshold,
+		SampleEvery: cfg.GatewayTiming.SampleEvery,
+	})
 	defer gateway.Close()
 	runtimeMonitor := operations.NewMonitor(store)
 	runtimeMonitor.RegisterJob("codex_version_sync", "Codex 版本同步", true)

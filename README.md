@@ -147,6 +147,9 @@ openssl rand -base64 32
 | `SHARESUB_GATEWAY_METRIC_RETENTION` | 网关请求明细保留期；至少 7 天，清理边界按 UTC 整日对齐，清理前会汇总 | `2160h`（90 天） |
 | `SHARESUB_GATEWAY_MAX_REQUESTS_PER_MINUTE_PER_API_KEY` | 每个 API Key 的网关请求分钟上限，用于抑制突发重试风暴 | `300` |
 | `SHARESUB_GATEWAY_FIRST_OUTPUT_TIMEOUT` | HTTP Responses 等待上游首个有效语义输出的最长时间 | `2m` |
+| `SHARESUB_GATEWAY_TIMING_ENABLED` | HTTP Responses 分阶段诊断日志开关，不改变转发和数据库指标 | `false` |
+| `SHARESUB_GATEWAY_TIMING_SLOW_THRESHOLD` | 请求总耗时达到此阈值时保留诊断日志 | `30s` |
+| `SHARESUB_GATEWAY_TIMING_SAMPLE_EVERY` | 正常快速请求每 N 次记录一次；0 不采样，1 全量；慢请求和有错误尝试的请求始终保留 | `100` |
 | `SHARESUB_AUDIT_EVENT_RETENTION` | 审计记录保留期 | `8760h`（365 天） |
 | `SHARESUB_READ_NOTIFICATION_RETENTION` | 已读通知保留期；未读通知不自动删除 | `2160h`（90 天） |
 | `SHARESUB_TERMINAL_RECORD_RETENTION` | 已结束邀请、申请及撤销 Key 保留期 | `2160h`（90 天） |

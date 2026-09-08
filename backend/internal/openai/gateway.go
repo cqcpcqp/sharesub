@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sharesub/sharesub/backend/internal/application"
@@ -61,6 +62,7 @@ var compactRequestFields = []string{
 var ErrIncompleteStream = errors.New("upstream stream ended before a terminal response event")
 
 type Gateway struct {
+	timing               atomic.Pointer[timingPolicy]
 	httpClient           *http.Client
 	proxyMu              sync.Mutex
 	proxyClients         map[string]*proxyClientEntry
@@ -500,9 +502,17 @@ func (g *Gateway) Forward(ctx context.Context, inbound *http.Request, body []byt
 	if err != nil {
 		return nil, fmt.Errorf("configure account proxy: %w", err)
 	}
+	req = traceTimingRequest(req, len(body))
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("forward Codex request: %w", err)
+	}
+	if timing, ok := req.Context().Value(attemptTimingKey{}).(*attemptTiming); ok {
+		resp.Request = req
+		timing.mu.Lock()
+		timing.status = resp.StatusCode
+		timing.marks["response_headers_ms"] = time.Now()
+		timing.mu.Unlock()
 	}
 	return resp, nil
 }

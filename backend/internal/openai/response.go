@@ -174,9 +174,13 @@ func copySSEWithPendingLimitAndTimeout(dst http.ResponseWriter, src *http.Respon
 	pendingTerminalComplete := false
 	pendingEndsAtEventBoundary := false
 	pending := make([]byte, 0, 4096)
+	timing := responseTiming(src)
 	writeClient := func(data []byte) bool {
 		if clientDisconnected || len(data) == 0 {
 			return false
+		}
+		if timing != nil && firstTokenAt.IsZero() {
+			defer timing.recordDownstreamBeforeContent(time.Now())
 		}
 		written, err := dst.Write(data)
 		if err != nil || written != len(data) {
@@ -236,10 +240,12 @@ func copySSEWithPendingLimitAndTimeout(dst http.ResponseWriter, src *http.Respon
 			now := time.Now()
 			if firstByteAt.IsZero() {
 				firstByteAt = now
+				responseTiming(src).mark("first_sse_line_ms", now)
 			}
 			startsOutput := isClientOutputEvent(line)
 			if firstTokenAt.IsZero() && isClientVisibleOutputEvent(line) {
 				firstTokenAt = now
+				responseTiming(src).mark("first_content_ms", now)
 			}
 			if parsed, ok := parseResponseUsage(line); ok {
 				if parsed.Error == nil && topLevelError != nil {
@@ -369,9 +375,11 @@ func copySSEAsJSON(dst http.ResponseWriter, src *http.Response, startedAt time.T
 			now := time.Now()
 			if firstByteAt.IsZero() {
 				firstByteAt = now
+				responseTiming(src).mark("first_sse_line_ms", now)
 			}
 			if firstTokenAt.IsZero() && isClientVisibleOutputEvent(line) {
 				firstTokenAt = now
+				responseTiming(src).mark("first_content_ms", now)
 			}
 			if isClientOutputEvent(line) {
 				outputSeen = true

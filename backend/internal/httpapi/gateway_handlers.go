@@ -107,7 +107,14 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	gatewayRequestID := gatewayRequestID(r)
+	timingCtx, timing := s.gateway.BeginRequestTiming(r.Context(), gatewayRequestID, r.URL.Path)
+	if timing != nil {
+		r = r.WithContext(timingCtx)
+		defer timing.Finish()
+	}
+	bodyReadStarted := time.Now()
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxGatewayBody))
+	timing.BodyRead(bodyReadStarted, len(body))
 	if err != nil {
 		status, code, message := gatewayBodyReadError(err)
 		if status != http.StatusRequestEntityTooLarge {
@@ -635,6 +642,11 @@ func metricContext(parent context.Context) (context.Context, context.CancelFunc)
 }
 
 func (s *Server) recordGatewayMetric(parent context.Context, access application.GatewayAccess, metric domain.GatewayMetric, recordedAt time.Time) error {
+	timingMetric := metric
+	timingMetric.PlanID = access.Credential.Plan.ID
+	timingMetric.APIKeyID = access.Credential.APIKeyID
+	timingMetric.AccountID = access.Credential.Account.ID
+	openai.RecordRequestTimingMetric(parent, timingMetric)
 	ctx, cancel := metricContext(parent)
 	defer cancel()
 	if err := s.app.RecordGatewayMetric(ctx, access, metric, recordedAt); err != nil {

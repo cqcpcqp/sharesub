@@ -12,6 +12,7 @@ import (
 const minimumGatewayMetricRetention = 7 * 24 * time.Hour
 
 type Config struct {
+	GatewayTiming                        GatewayTiming
 	HTTPAddr                             string
 	DatabaseURL                          string
 	PublicURL                            string
@@ -56,6 +57,10 @@ type Config struct {
 }
 
 func Load() (Config, error) {
+	gatewayTiming, err := loadGatewayTiming()
+	if err != nil {
+		return Config{}, err
+	}
 	ttl := 30 * 24 * time.Hour
 	if raw := os.Getenv("SHARESUB_SESSION_TTL"); raw != "" {
 		parsed, err := time.ParseDuration(raw)
@@ -232,6 +237,7 @@ func Load() (Config, error) {
 		ResponsesWSReplayMemoryLimitBytes:    responsesWSReplayMemoryLimitBytes,
 		GatewayMaxRequestsPerMinutePerAPIKey: gatewayMaxRequestsPerMinutePerAPIKey,
 		GatewayFirstOutputTimeout:            gatewayFirstOutputTimeout,
+		GatewayTiming:                        gatewayTiming,
 		EmailDeliveryProvider:                emailDeliveryProvider,
 		EmailVerificationTTL:                 emailVerificationTTL,
 		EmailResendCooldown:                  emailResendCooldown,
