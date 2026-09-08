@@ -385,6 +385,12 @@ server {
     ssl_certificate_key /etc/letsencrypt/live/sharesub.example.com/privkey.pem;
 
     client_max_body_size 256m;
+    gzip on;
+    gzip_comp_level 6;
+    gzip_min_length 256;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_types text/css text/csv text/javascript text/markdown text/plain text/xml application/json application/javascript application/xml application/rss+xml image/svg+xml;
 
     location ~ ^/(v1/alpha/search|alpha/search|backend-api/codex/alpha/search)$ {
         client_max_body_size 32m;
@@ -417,6 +423,10 @@ server {
 ```
 
 将示例域名和证书路径替换为实际值。流式响应路径需要关闭代理缓冲，并设置足够长的读取超时；Responses WebSocket v2 还要求外层代理透传 `Upgrade` 和 `Connection`。
+
+Web 容器和宿主机 Nginx 示例均使用 gzip 6、256 字节最小长度及显式 MIME 类型白名单，为普通 JSON、文本和静态资源压缩响应。`text/html` 由 Nginx 默认参与压缩，不需要重复列出。`gzip_vary on` 用于按客户端压缩能力区分缓存，`gzip_proxied any` 允许带 `Via` 的代理请求使用压缩。
+
+此策略与 sub2api 一样排除 SSE（`text/event-stream`），但使用现有 Nginx 支持的 gzip，不额外引入 zstd 或 Brotli 模块。不要将 `gzip_types` 改为 `*` 或加入 `text/event-stream`；`proxy_buffering off` 不能代替压缩类型限制。外部 CDN 或其他代理也需要保持 SSE 不压缩。最小长度依据响应 `Content-Length` 判断，未知长度的响应不保证按 256 字节阈值跳过压缩。修改仓库配置不会自动更新宿主机 Nginx，生产应用配置必须另行授权。
 
 ### 4. 升级与回滚准备
 

@@ -44,6 +44,8 @@ jobs:
         run: ../scripts/verify-version-test.sh
       - name: Test production deployment guard
         run: ../scripts/deploy-test.sh
+      - name: Test Nginx compression policy
+        run: bash ../scripts/nginx-compression-test.sh
       - uses: actions/setup-go@v5
         with:
           go-version-file: backend/go.mod

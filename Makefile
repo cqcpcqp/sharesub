@@ -40,6 +40,7 @@ quality: quality-structure
 	@./scripts/quality.sh
 
 test:
+	@bash ./scripts/nginx-compression-test.sh
 	@./scripts/verify-version.sh >/dev/null
 	@./scripts/verify-version-test.sh
 	@./scripts/deploy-test.sh
