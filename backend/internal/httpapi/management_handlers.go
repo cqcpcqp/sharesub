@@ -629,12 +629,13 @@ func (s *Server) revokeInvite(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) updateMember(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		ShareBasisPoints int `json:"share_basis_points"`
+		USDLimitMicros   *int64 `json:"usd_limit_micros"`
+		ShareBasisPoints int    `json:"share_basis_points"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	v, err := s.app.UpdateMemberShare(r.Context(), currentUser(r).ID, r.PathValue("planID"), r.PathValue("memberID"), input.ShareBasisPoints)
+	v, err := s.app.UpdateMemberShare(r.Context(), currentUser(r).ID, r.PathValue("planID"), r.PathValue("memberID"), input.ShareBasisPoints, input.USDLimitMicros)
 	writeResult(w, v, err)
 }
 func (s *Server) removeMember(w http.ResponseWriter, r *http.Request) {

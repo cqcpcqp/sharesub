@@ -106,7 +106,7 @@ type PlanCollaborationStore interface {
 	InvitePreview(context.Context, []byte, time.Time) (domain.InvitePreview, error)
 	AcceptInvite(context.Context, []byte, domain.User, string, time.Time, domain.AuditEvent) (domain.Member, error)
 	RevokeInvite(context.Context, string, string, string, domain.AuditEvent) (domain.Invite, error)
-	UpdateMemberShare(context.Context, string, string, string, int, domain.AuditEvent) (domain.Member, error)
+	UpdateMemberShare(context.Context, string, string, string, int, *int64, domain.AuditEvent) (domain.Member, error)
 	RemovePlanMember(context.Context, string, string, string, domain.AuditEvent) error
 	QuotaResetVote(context.Context, string, string, time.Time) (*domain.QuotaResetVote, error)
 	CreateQuotaResetVote(context.Context, domain.QuotaResetVote, string, domain.AuditEvent) (domain.QuotaResetVote, bool, error)

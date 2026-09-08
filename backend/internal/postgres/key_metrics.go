@@ -231,7 +231,7 @@ func (s *Store) ResolveGatewayRoutes(ctx context.Context, hash []byte, now time.
 	out.Candidates = make([]domain.GatewayCredential, 0)
 	rows, err := s.pool.Query(ctx, `
 		SELECT k.id,k.strategy,k.fast_policy,r.priority,
-			m.id,m.plan_id,m.user_id,u.username,u.email,m.role,m.status,m.share_basis_points,m.created_at,
+			m.id,m.plan_id,m.user_id,u.username,u.email,m.role,m.status,m.share_basis_points,m.usd_limit_micros,m.created_at,
 			p.id,p.owner_user_id,p.account_id,p.name,p.status,p.visibility,p.public_slots,p.public_share_basis_points,p.allocation_mode,p.created_at,p.account_binding_generation,
 			a.id,a.owner_user_id,a.name,a.notes,a.email,a.chatgpt_account_id,a.plan_type,a.subscription_expires_at,a.access_token_ciphertext,a.refresh_token_ciphertext,a.proxy_url_ciphertext,a.max_concurrency,a.rpm_limit,a.fast_policy,a.codex_fingerprint_mode,a.token_expires_at,a.status,a.last_error,a.created_at,
 			COALESCE((
@@ -269,7 +269,7 @@ func (s *Store) ResolveGatewayRoutes(ctx context.Context, hash []byte, now time.
 	for rows.Next() {
 		var credential domain.GatewayCredential
 		err := rows.Scan(&credential.APIKeyID, &credential.APIKeyStrategy, &credential.APIKeyFastPolicy, &credential.RoutePriority,
-			&credential.Member.ID, &credential.Member.PlanID, &credential.Member.UserID, &credential.Member.Username, &credential.Member.Email, &credential.Member.Role, &credential.Member.Status, &credential.Member.ShareBasisPoints, &credential.Member.CreatedAt,
+			&credential.Member.ID, &credential.Member.PlanID, &credential.Member.UserID, &credential.Member.Username, &credential.Member.Email, &credential.Member.Role, &credential.Member.Status, &credential.Member.ShareBasisPoints, &credential.Member.USDLimitMicros, &credential.Member.CreatedAt,
 			&credential.Plan.ID, &credential.Plan.OwnerUserID, &credential.Plan.AccountID, &credential.Plan.Name, &credential.Plan.Status, &credential.Plan.Visibility, &credential.Plan.PublicSlots, &credential.Plan.PublicShareBasisPoints, &credential.Plan.AllocationMode, &credential.Plan.CreatedAt, &credential.AccountBindingGeneration,
 			&credential.Account.ID, &credential.Account.OwnerUserID, &credential.Account.Name, &credential.Account.Notes, &credential.Account.Email, &credential.Account.ChatGPTAccountID, &credential.Account.PlanType, &credential.Account.SubscriptionExpiresAt, &credential.AccessTokenCiphertext, &credential.RefreshTokenCiphertext, &credential.ProxyURLCiphertext, &credential.Account.MaxConcurrency, &credential.Account.RPMLimit, &credential.Account.FastPolicy, &credential.Account.CodexFingerprintMode, &credential.TokenExpiresAt, &credential.Account.Status, &credential.Account.LastError, &credential.Account.CreatedAt,
 			&credential.UsageMicros, &credential.AccountUsageMicros)
@@ -312,6 +312,20 @@ func (s *Store) MemberQuotaExhausted(ctx context.Context, memberID, planID, acco
 			) costs
 			WHERE m.id=$1 AND m.plan_id=$2 AND costs.total_cost_micros>0
 				AND floor(costs.member_cost_micros::numeric*GREATEST(q.used_micros-b.baseline_used_micros,0)/costs.total_cost_micros)>=$6
+		) OR EXISTS(
+			SELECT 1 FROM plan_members m
+			JOIN account_quota_snapshots q ON q.account_id=$3 AND q.window_type='7d' AND q.reset_at>$5
+			JOIN plan_account_quota_baselines b ON b.plan_id=$2 AND b.account_id=q.account_id
+				AND b.account_binding_generation=$4 AND b.window_type=q.window_type
+				AND b.reset_at BETWEEN q.reset_at - INTERVAL '2 minutes' AND q.reset_at + INTERVAL '2 minutes'
+			WHERE m.id=$1 AND m.plan_id=$2 AND m.usd_limit_micros IS NOT NULL
+				AND (SELECT COALESCE(sum(g.estimated_cost_micros),0)
+					FROM gateway_request_metrics g
+					WHERE g.member_id=m.id AND g.plan_id=$2 AND g.account_id=$3
+						AND g.account_binding_generation=$4
+						AND g.created_at>=GREATEST(q.window_start,b.accounting_started_at)
+						AND g.created_at<LEAST($5,q.reset_at)
+				)>=m.usd_limit_micros
 		)`, memberID, planID, accountID, generation, now, limit).Scan(&exhausted)
 	return exhausted, err
 }

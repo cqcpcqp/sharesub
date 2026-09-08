@@ -33,6 +33,7 @@ export function createPlanViewState() {
   })
   const inviteForm = reactive({ share: 10 })
   const publication = reactive<{ visibility: 'private' | 'public'; slots: number | null; share: number }>({ visibility: 'private', slots: 1, share: 10 })
+  const usdLimitDrafts = reactive<Record<string, number | null>>({})
   const shareDrafts = reactive<Record<string, number>>({})
 
   return {
@@ -41,6 +42,6 @@ export function createPlanViewState() {
     performanceLoading, performancePeriod, actionLoading, activeTab, auditEvents, auditLoading,
     showCreate, showConnectAccount, showInviteComposer, inviteSecret, showDeleteConfirmOne, showDeleteConfirmTwo,
     deleteNameDraft, renameDraft, descriptionDraft, transferMemberID, rebindAccountID,
-    createForm, inviteForm, publication, shareDrafts,
+    createForm, inviteForm, publication, shareDrafts, usdLimitDrafts,
   }
 }

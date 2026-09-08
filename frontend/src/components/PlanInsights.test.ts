@@ -95,8 +95,8 @@ describe('PlanInsights performance period', () => {
           model_usage: [], token_trend: [], recent_usage: [],
         },
         members: [
-          { id: 'member-a', plan_id: 'plan', user_id: 'user-a', username: '成员 A', avatar_url: '', email: 'a@example.com', role: 'member', status: 'active', share_basis_points: 0, created_at: '2026-08-04T00:00:00Z' },
-          { id: 'member-b', plan_id: 'plan', user_id: 'user-b', username: '成员 B', avatar_url: '', email: 'b@example.com', role: 'member', status: 'active', share_basis_points: 0, created_at: '2026-08-04T00:00:00Z' },
+          { id: 'member-a', plan_id: 'plan', user_id: 'user-a', username: '成员 A', avatar_url: '', email: 'a@example.com', role: 'member', status: 'active', share_basis_points: 0, usd_limit_micros: null, created_at: '2026-08-04T00:00:00Z' },
+          { id: 'member-b', plan_id: 'plan', user_id: 'user-b', username: '成员 B', avatar_url: '', email: 'b@example.com', role: 'member', status: 'active', share_basis_points: 0, usd_limit_micros: null, created_at: '2026-08-04T00:00:00Z' },
         ],
         allocationMode: 'shared',
         theme: 'light',

@@ -7,6 +7,7 @@ import { usePlanConversion } from './usePlanConversion'
 import { formatPlanAuditDate, formatPlanAuditMetadata, planAuditActionLabels, planAuditMetadataLabels, planRequestErrorMessage } from './planViewPresentation'
 import { createPlanViewState } from './planViewState'
 import { useQuotaResetVoting } from './useQuotaResetVoting'
+import { memberUSDLimitMicros, restoreMemberQuotaDraft, syncMemberQuotaDrafts } from './memberQuotaDrafts'
 
 const automaticQuotaRefreshes = new Map<string, number>()
 const automaticQuotaRefreshTTL = 5 * 60 * 1000
@@ -26,7 +27,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
     performanceLoading, performancePeriod, actionLoading, activeTab, auditEvents, auditLoading,
     showCreate, showConnectAccount, showInviteComposer, inviteSecret, showDeleteConfirmOne, showDeleteConfirmTwo,
     deleteNameDraft, renameDraft, descriptionDraft, transferMemberID, rebindAccountID,
-    createForm, inviteForm, publication, shareDrafts,
+    createForm, inviteForm, publication, shareDrafts, usdLimitDrafts,
   } = createPlanViewState()
 
   const resourceOwnerID = computed(() => detail.value?.plan.owner_user_id ?? props.user.id)
@@ -242,8 +243,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
   }
 
   function syncDetail(value: PlanDetail) {
-    for (const memberID of Object.keys(shareDrafts)) delete shareDrafts[memberID]
-    for (const member of value.members) shareDrafts[member.id] = Math.round(member.share_basis_points / 100)
+    syncMemberQuotaDrafts(value.members, shareDrafts, usdLimitDrafts)
     publication.visibility = value.plan.visibility
     publication.slots = value.plan.visibility === 'private' ? 1 : value.plan.public_slots
     publication.share = value.plan.allocation_mode === 'shared' ? 0 : value.plan.visibility === 'private' ? 10 : Math.round(value.plan.public_share_basis_points / 100)
@@ -459,14 +459,14 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
   async function saveShare(member: Member) {
     if (!detail.value) return
     const planID = detail.value.plan.id
-    const original = Math.round(member.share_basis_points / 100)
     actionLoading.value = `share-${member.id}`
     try {
-      await managementAPI.updateMember(planID, member.id, Math.round(shareDrafts[member.id] * 100))
+      const usdLimitMicros = memberUSDLimitMicros(usdLimitDrafts[member.id])
+      await managementAPI.updateMember(planID, member.id, Math.round(shareDrafts[member.id] * 100), usdLimitMicros)
       await loadPlan(planID)
-      notifySuccess('成员份额已更新')
+      notifySuccess('成员额度设置已更新')
     } catch (error) {
-      shareDrafts[member.id] = original
+      restoreMemberQuotaDraft(member, shareDrafts, usdLimitDrafts)
       notifyError(error)
     } finally {
       actionLoading.value = ''
@@ -668,7 +668,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
   }
 
   function formatDate(value: string) { return formatPlanAuditDate(value) }
-  function formatMetadata(key: string | number, value: string | number) { return formatPlanAuditMetadata(key, value) }
+  function formatMetadata(key: string | number, value: string | number | null) { return formatPlanAuditMetadata(key, value) }
   function notifySuccess(message: string) { emit('message', 'success', message) }
   function notifyError(value: unknown) { emit('message', 'error', planRequestErrorMessage(value)) }
 
@@ -683,7 +683,7 @@ export function usePlansView(props: PlansViewProps, emit: PlansViewEmit) {
     availableAccounts, loadPlan, loadAudit, loadPerformance,
     showCreate, showConnectAccount, showInviteComposer, inviteSecret, showDeleteConfirmOne, showDeleteConfirmTwo,
     deleteNameDraft, renameDraft, descriptionDraft, transferMemberID, rebindAccountID, createForm, inviteForm,
-    publication, shareDrafts, accountOptions, planOptions, isActualOwner, canManage, isShared, isArchived, isAccountBound, owner,
+    publication, shareDrafts, usdLimitDrafts, accountOptions, planOptions, isActualOwner, canManage, isShared, isArchived, isAccountBound, owner,
     currentMember, allocatedShare, reservedShares, remainingInviteSharePercent, canCreateInvite, approvedPublicMembers, availablePublicSlots, publicationAvailablePublicSlots,
     canStartQuotaResetVote, quotaResetVoteDisabledReason, publicationReservedShares, maxPublicSeatSharePercent, publicationCapacityExceeded,
     canRename, canUpdateDescription, canSavePublication,

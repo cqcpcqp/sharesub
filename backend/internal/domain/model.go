@@ -227,6 +227,7 @@ type MemberShareAllocation struct {
 }
 
 type Member struct {
+	USDLimitMicros   *int64    `json:"usd_limit_micros"`
 	ID               string    `json:"id"`
 	PlanID           string    `json:"plan_id"`
 	UserID           string    `json:"user_id"`

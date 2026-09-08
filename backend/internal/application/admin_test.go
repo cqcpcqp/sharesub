@@ -111,9 +111,9 @@ func (s *adminStore) TransferPlanOwnership(_ context.Context, planID, ownerID, m
 	s.planOwnerID, s.planMemberID, s.planEvent = ownerID, memberID, event
 	return domain.Plan{ID: planID, OwnerUserID: "new-owner"}, nil
 }
-func (s *adminStore) UpdateMemberShare(_ context.Context, planID, ownerID, memberID string, share int, event domain.AuditEvent) (domain.Member, error) {
+func (s *adminStore) UpdateMemberShare(_ context.Context, planID, ownerID, memberID string, share int, usdLimitMicros *int64, event domain.AuditEvent) (domain.Member, error) {
 	s.planOwnerID, s.planMemberID, s.planEvent = ownerID, memberID, event
-	return domain.Member{ID: memberID, PlanID: planID, ShareBasisPoints: share}, nil
+	return domain.Member{ID: memberID, PlanID: planID, ShareBasisPoints: share, USDLimitMicros: usdLimitMicros}, nil
 }
 func (s *adminStore) ConvertPlanToFixed(_ context.Context, planID, ownerID string, allocations []domain.MemberShareAllocation, event domain.AuditEvent) (domain.Plan, error) {
 	s.planOwnerID, s.planAllocations, s.planEvent = ownerID, allocations, event
@@ -223,7 +223,7 @@ func TestAdminPlanAccessKeepsOwnerScopeAndAdminAuditActor(t *testing.T) {
 	if err != nil || updated.OwnerUserID != "new-owner" || store.planOwnerID != "owner" || store.planMemberID != "member" || store.planEvent.ActorUserID != admin.ID {
 		t.Fatalf("updated = %+v, owner = %q, member = %q, event = %+v, error = %v", updated, store.planOwnerID, store.planMemberID, store.planEvent, err)
 	}
-	member, err := service.AdminUpdateMemberShare(context.Background(), admin, "plan", "member", 2500)
+	member, err := service.AdminUpdateMemberShare(context.Background(), admin, "plan", "member", 2500, nil)
 	if err != nil || member.ShareBasisPoints != 2500 || store.planOwnerID != "owner" || store.planEvent.ActorUserID != admin.ID {
 		t.Fatalf("member = %+v, owner = %q, event = %+v, error = %v", member, store.planOwnerID, store.planEvent, err)
 	}

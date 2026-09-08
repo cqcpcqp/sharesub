@@ -4,7 +4,7 @@
       <div class="section-heading">
         <div>
           <h3>成员</h3>
-          <p>{{ isShared ? `${detail.members.length} 位成员共享账号额度，不设置个人上限` : `${detail.members.length} 位成员，固定份额合计 ${allocatedShare}` }}</p>
+          <p>{{ isShared ? `${detail.members.length} 位成员共享账号额度，不设置个人百分比上限` : `${detail.members.length} 位成员，固定份额合计 ${allocatedShare}` }}</p>
         </div>
         <NButton v-if="canManage && !isArchived" type="primary" @click="emit('openInvite')">
           <template #icon><UserPlus :size="16" /></template>
@@ -33,6 +33,7 @@
               <th>成员</th>
               <th>角色</th>
               <th>{{ isShared ? '额度方式' : '份额' }}</th>
+              <th>美元额度上限</th>
               <th v-if="canManage">操作</th>
             </tr>
           </thead>
@@ -55,13 +56,33 @@
               </td>
               <td>
                 <SharePicker
-                  v-if="canManage && !isShared"
+                  v-if="canManage && !isShared && !isArchived"
                   :model-value="shareDrafts[member.id]"
                   compact
                   :aria-label="`${member.username} 的份额`"
                   @update:model-value="emit('updateShareDraft', member.id, $event)"
                 />
                 <span v-else>{{ isShared ? '共享使用' : formatShareBasisPoints(member.share_basis_points) }}</span>
+              </td>
+              <td>
+                <div class="member-usd-limit">
+                  <NInputNumber
+                    v-if="canManage && !isArchived"
+                    :value="usdLimitDrafts[member.id]"
+                    :min="0.01"
+                    :max="9007199254.74"
+                    :precision="2"
+                    :show-button="false"
+                    clearable
+                    placeholder="不限制"
+                    :aria-label="`${member.username} 的美元额度上限`"
+                    @update:value="emit('updateUsdLimitDraft', member.id, $event)"
+                  >
+                    <template #prefix>$</template>
+                  </NInputNumber>
+                  <span v-else>{{ member.usd_limit_micros === null ? '不限制' : `$${(member.usd_limit_micros / 1_000_000).toFixed(2)}` }}</span>
+                  <small>{{ canManage && !isArchived ? '7 天窗口 · 清空表示不限制' : '跟随账号 7 天窗口' }}</small>
+                </div>
               </td>
               <td v-if="canManage">
                 <div class="member-actions">
@@ -72,19 +93,19 @@
                     @positive-click="emit('saveShare', member)"
                   >
                     <template #trigger>
-                      <NButton secondary class="icon-button" title="保存份额" aria-label="保存份额" :loading="actionLoading === `share-${member.id}`">
+                      <NButton secondary class="icon-button" title="保存额度设置" aria-label="保存额度设置" :loading="actionLoading === `share-${member.id}`" :disabled="isArchived">
                         <template #icon><Save :size="17" /></template>
                       </NButton>
                     </template>
                     设为 0% 后，{{ member.username }} 仍是 Plan 成员并可查看 Plan；{{ isPublicRecruitMember(member.id) ? '仍会占用 1 个公开招募名额。' : '不会再通过此 Plan 发起请求。' }}
                   </NPopconfirm>
                   <NButton
-                    v-else-if="!isShared"
+                    v-else
                     secondary
                     class="icon-button"
-                    title="保存份额"
-                    aria-label="保存份额"
-                    :loading="actionLoading === `share-${member.id}`"
+                    title="保存额度设置"
+                    aria-label="保存额度设置"
+                    :loading="actionLoading === `share-${member.id}`" :disabled="isArchived"
                     @click="emit('saveShare', member)"
                   >
                     <template #icon><Save :size="17" /></template>
@@ -181,7 +202,7 @@
 </template>
 
 <script setup lang="ts">
-import { NButton, NPopconfirm, NTag } from 'naive-ui'
+import { NButton, NInputNumber, NPopconfirm, NTag } from 'naive-ui'
 import { Check, Link2Off, LogOut, Save, UserMinus, UserPlus, X } from 'lucide-vue-next'
 import SharePicker from '../components/SharePicker.vue'
 import StatusBadge from '../components/StatusBadge.vue'
@@ -199,6 +220,7 @@ const props = defineProps<{
   currentMember?: Member
   actionLoading: string
   shareDrafts: Record<string, number>
+  usdLimitDrafts: Record<string, number | null>
   availablePublicSlots: number
 }>()
 
@@ -206,6 +228,7 @@ const emit = defineEmits<{
   openInvite: []
   leavePlan: []
   updateShareDraft: [memberID: string, value: number]
+  updateUsdLimitDraft: [memberID: string, value: number | null]
   saveShare: [member: Member]
   removeMember: [member: Member]
   review: [id: string, decision: 'approve' | 'reject']
@@ -228,3 +251,17 @@ function applicationReviewBusy(id: string) {
 </script>
 
 <style scoped src="./PlanMembersTab.css"></style>
+
+<style scoped>
+.member-usd-limit {
+  display: grid;
+  gap: 6px;
+  min-width: 180px;
+  max-width: 220px;
+}
+
+.member-usd-limit small {
+  color: var(--muted);
+  font-size: 12px;
+}
+</style>

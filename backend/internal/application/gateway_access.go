@@ -295,10 +295,17 @@ func sameGatewayAccessBinding(candidate, pinned domain.GatewayCredential) bool {
 
 func (s *Service) gatewayCredentialQuotaExhausted(ctx context.Context, credential domain.GatewayCredential) (bool, error) {
 	exhausted, err := s.store.AccountQuotaExhausted(ctx, credential.Account.ID, s.now())
-	if err != nil || exhausted || credential.Plan.AllocationMode == domain.AllocationShared {
+	if err != nil || exhausted {
 		return exhausted, err
 	}
-	if credential.Member.ShareBasisPoints == 0 {
+	shareBPS := credential.Member.ShareBasisPoints
+	if credential.Plan.AllocationMode == domain.AllocationShared {
+		if credential.Member.USDLimitMicros == nil {
+			return false, nil
+		}
+		shareBPS = domain.MaxShareBPS
+	}
+	if shareBPS == 0 {
 		return true, nil
 	}
 	return s.store.MemberQuotaExhausted(
@@ -307,7 +314,7 @@ func (s *Service) gatewayCredentialQuotaExhausted(ctx context.Context, credentia
 		credential.Plan.ID,
 		credential.Account.ID,
 		credential.AccountBindingGeneration,
-		credential.Member.ShareBasisPoints,
+		shareBPS,
 		s.now(),
 	)
 }

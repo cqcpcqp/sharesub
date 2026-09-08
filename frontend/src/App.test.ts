@@ -38,7 +38,7 @@ const invitePreview: InvitePreview = {
 }
 const invitedMember: Member = {
   id: 'joined-member', plan_id: approvedPlan.id, user_id: member.id, username: member.username,
-  avatar_url: '', email: member.email, role: 'member', status: 'active', share_basis_points: 0,
+  avatar_url: '', email: member.email, role: 'member', status: 'active', share_basis_points: 0, usd_limit_micros: null,
   created_at: '2026-08-07T00:00:00Z',
 }
 

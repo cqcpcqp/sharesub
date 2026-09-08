@@ -139,7 +139,7 @@ OAuth 开始接口返回 `authorization_url` 和 `flow_id`。完成授权后，�
 | `POST` | `/api/invites/preview` | 无 | `token` | 获取邀请链接的有限预览信息 |
 | `POST` | `/api/invites/accept` | 登录 Token | `token` | 接受邀请 Token |
 | `DELETE` | `/api/plans/{planID}/invites/{inviteID}` | 登录 Token | 无 | 房主撤销待接受邀请 |
-| `PATCH` | `/api/plans/{planID}/members/{memberID}` | 登录 Token | `share_basis_points` | 房主修改成员固定份额 |
+| `PATCH` | `/api/plans/{planID}/members/{memberID}` | 登录 Token | `share_basis_points`, `usd_limit_micros` | 房主修改成员份额与美元上限 |
 | `DELETE` | `/api/plans/{planID}/members/{memberID}` | 登录 Token | 无 | 房主移除成员或成员主动退出 |
 
 错误明细接口只允许 Plan 的有效成员访问。响应固定包含 `items`、`total`、`page` 和 `page_size`；每条记录包含请求 ID、端点、流式标记、状态码、错误来源、错误代码、错误消息、请求/上游模型、Service Tier、耗时、成员、账号、API Key 名称与前缀以及发生时间。`error_source` 固定为 `request`、`upstream`、`gateway` 或空字符串；空字符串表示结构化错误字段上线前的历史记录。接口不返回请求正文、完整响应体或完整 API Key。
@@ -229,7 +229,7 @@ Plan 详情的 `insights.window_usage` 按当前 OpenAI 账号实际返回的 5h
 | `POST` | `/api/admin/plans/{planID}/invites` | 管理员 Token | `share_basis_points` | 为任意 Plan 创建一次性邀请链接 |
 | `DELETE` | `/api/admin/plans/{planID}/invites/{inviteID}` | 管理员 Token | 无 | 撤销任意 Plan 的待接受邀请 |
 | `PATCH` | `/api/admin/plans/{planID}/applications/{applicationID}` | 管理员 Token | `decision` | 批准或拒绝任意 Plan 的公开加入申请 |
-| `PATCH` | `/api/admin/plans/{planID}/members/{memberID}` | 管理员 Token | `share_basis_points` | 修改任意 Plan 成员的固定份额 |
+| `PATCH` | `/api/admin/plans/{planID}/members/{memberID}` | 管理员 Token | `share_basis_points`, `usd_limit_micros` | 修改任意 Plan 成员的份额与美元上限 |
 | `DELETE` | `/api/admin/plans/{planID}/members/{memberID}` | 管理员 Token | 无 | 从任意 Plan 移除成员 |
 | `POST` | `/api/admin/plans/{planID}/quota/refresh` | 管理员 Token | 无 | 查询并更新任意 Plan 的账号额度窗口 |
 | `GET` | `/api/admin/plans/{planID}/quota/reset-credits` | 管理员 Token | 无 | 查询任意 Plan 的 Codex 额度重置机会 |
@@ -301,3 +301,13 @@ Responses 与图片端点的请求体上限为 256 MiB；纯文本 Alpha Search 
 | `502` | `upstream_unavailable` | OpenAI 上游请求失败 |
 | `503` | `account_unavailable` | 绑定账号不可用或刷新 Token 失败 |
 | `503` | `no_route_available` | API Key 没有仍然有效的 Plan 路由 |
+
+### 成员美元额度上限
+
+成员响应固定包含 `usd_limit_micros: number | null`。`null` 表示不限制美元额度，正整数表示微美元（1 美元 = 1,000,000 微美元），最大值为 `9007199254740991`；零和负数无效。成员编辑接口同时提交份额和美元上限，`null` 可取消金额限制。旧的仅提交份额请求将美元上限设为 `null`。
+
+已有成员、新建 Plan 的房主以及通过邀请或公开申请加入的成员默认均为 `null`，重新加入也恢复为 `null`；不按账号类型或份额自动分配金额。房主和管理员可修改，普通成员只读。修改记录在成员额度审计事件中。
+
+美元用量沿用网关估算成本口径，按当前 Plan、成员、绑定账号及绑定代次，在账号当前 `7d` 窗口中累计全部 API Key 的请求成本。统计起点取七天窗口开始时间和该绑定代次七天窗口基线的 `accounting_started_at` 两者中的较晚时间。金额修改不会清除本窗口历史用量；5 小时窗口重置不会重置美元用量，账号 7 天窗口切换后重新累计。官方额度重置同步成功后，即使七天窗口时间不变，也从新的记账基线开始累计，不再计入重置前的用量，配置的美元上限保持不变。使用当前已有七天额度快照确定窗口。
+
+请求前执行现有账号限制、固定份额限制和美元限制，任一达到即跳过该 Plan；无其他可用路由时沿用 `quota_exhausted`。共享模式没有个人百分比限制，但也可手动设置美元上限。取消美元限制不取消其他限制，固定模式的 0% 成员仍仅查看。HTTP 请求及 WebSocket 后续轮次使用同一额度检查。成本在请求完成后记账，已经放行的并发或流式请求不会被中途终止，因此最后一批请求可能超过配置金额。

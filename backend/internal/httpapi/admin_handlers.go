@@ -257,12 +257,13 @@ func (s *Server) adminReviewJoinApplication(w http.ResponseWriter, r *http.Reque
 
 func (s *Server) adminUpdateMember(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		ShareBasisPoints int `json:"share_basis_points"`
+		USDLimitMicros   *int64 `json:"usd_limit_micros"`
+		ShareBasisPoints int    `json:"share_basis_points"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	v, err := s.app.AdminUpdateMemberShare(r.Context(), currentUser(r), r.PathValue("planID"), r.PathValue("memberID"), input.ShareBasisPoints)
+	v, err := s.app.AdminUpdateMemberShare(r.Context(), currentUser(r), r.PathValue("planID"), r.PathValue("memberID"), input.ShareBasisPoints, input.USDLimitMicros)
 	writeResult(w, v, err)
 }
 

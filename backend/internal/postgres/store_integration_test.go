@@ -93,6 +93,10 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if err := store.Migrate(ctx); err != nil {
 		t.Fatalf("migrate legacy schema through 022: %v", err)
 	}
+	var migratedUSDLimit *int64
+	if err := pool.QueryRow(ctx, `SELECT usd_limit_micros FROM plan_members WHERE id='owner-member'`).Scan(&migratedUSDLimit); err != nil || migratedUSDLimit != nil {
+		t.Fatalf("existing member must default to unlimited: %v, %v", migratedUSDLimit, err)
+	}
 	if _, err := pool.Exec(ctx, `
 		DELETE FROM schema_migrations WHERE name IN (
 			'024_plan_account_quota_baselines.sql',
@@ -660,10 +664,10 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if err := store.CreateUser(ctx, domain.User{ID: "second", Username: "second", Email: "second@example.com", PasswordHash: "hash", Status: domain.StatusActive, CreatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
-	if updated, err := store.UpdateMemberShare(ctx, "plan", "owner", "owner-member", 0, audit("zero-owner-share", "owner", "plan")); err != nil || updated.ShareBasisPoints != 0 {
+	if updated, err := store.UpdateMemberShare(ctx, "plan", "owner", "owner-member", 0, nil, audit("zero-owner-share", "owner", "plan")); err != nil || updated.ShareBasisPoints != 0 {
 		t.Fatalf("set fixed owner share to zero = %+v, %v", updated, err)
 	}
-	if _, err := store.UpdateMemberShare(ctx, "plan", "owner", "owner-member", 6000, audit("restore-owner-share", "owner", "plan")); err != nil {
+	if _, err := store.UpdateMemberShare(ctx, "plan", "owner", "owner-member", 6000, nil, audit("restore-owner-share", "owner", "plan")); err != nil {
 		t.Fatal(err)
 	}
 	zeroInvite := domain.Invite{ID: "zero-fixed-invite", PlanID: "plan", TokenHash: []byte("zero-fixed-token"), ShareBasisPoints: 0, Status: "pending", ExpiresAt: now.Add(time.Hour), CreatedAt: now}
@@ -759,10 +763,10 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if sharedDetail.Plan.AllocationMode != domain.AllocationShared || sharedDetail.Members[1].ShareBasisPoints != 0 {
 		t.Fatalf("shared plan detail = %+v", sharedDetail)
 	}
-	if _, err := store.UpdateMemberShare(ctx, sharedPlan.ID, "owner", "shared-member", 0, audit("share-shared", "owner", sharedPlan.ID)); err != nil {
+	if _, err := store.UpdateMemberShare(ctx, sharedPlan.ID, "owner", "shared-member", 0, nil, audit("share-shared", "owner", sharedPlan.ID)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.UpdateMemberShare(ctx, sharedPlan.ID, "owner", "shared-member", 1, audit("invalid-share", "owner", sharedPlan.ID)); !errors.Is(err, domain.ErrInvalidInput) {
+	if _, err := store.UpdateMemberShare(ctx, sharedPlan.ID, "owner", "shared-member", 1, nil, audit("invalid-share", "owner", sharedPlan.ID)); !errors.Is(err, domain.ErrInvalidInput) {
 		t.Fatalf("shared member nonzero share error = %v, want invalid input", err)
 	}
 	sharedInvite := domain.Invite{ID: "shared-invite", PlanID: sharedPlan.ID, TokenHash: []byte("shared-token"), ShareBasisPoints: 0, Status: "pending", ExpiresAt: now.Add(time.Hour), CreatedAt: now}
@@ -1586,6 +1590,88 @@ func TestFixedQuotaUsesCurrentBindingCostsAfterAccountBaseline(t *testing.T) {
 			t.Fatalf("natural-window baseline = %d, window = %s..%s, accounting started = %s", baseline, storedWindowStart, storedResetAt, accountingStartedAt)
 		}
 	})
+	t.Run("member USD limit follows weekly window", func(t *testing.T) {
+		for _, member := range detail.Members {
+			if member.USDLimitMicros != nil {
+				t.Fatalf("new member limit = %v, want unlimited", member.USDLimitMicros)
+			}
+		}
+		for index, test := range []struct {
+			limit     int64
+			exhausted bool
+		}{
+			{0, false}, {101, false}, {100, true}, {99, true}, {200, false}, {0, false},
+		} {
+			var limit *int64
+			if test.limit != 0 {
+				limit = &test.limit
+			}
+			event := domain.AuditEvent{ID: fmt.Sprintf("usd-limit-%d", index), ActorUserID: "quota-owner", Action: "member.share_updated", ResourceType: "plan", ResourceID: "quota-plan", Metadata: json.RawMessage(`{}`), CreatedAt: now}
+			member, err := store.UpdateMemberShare(ctx, "quota-plan", "quota-owner", "quota-member-member", 1100, limit, event)
+			if err != nil || member.ShareBasisPoints != 1100 || (member.USDLimitMicros == nil) != (limit == nil) {
+				t.Fatalf("update USD limit = %+v, %v", member, err)
+			}
+			exhausted, err := store.MemberQuotaExhausted(ctx, member.ID, "quota-plan", "quota-account", 1, 1100, quotaCalculationAt)
+			if err != nil || exhausted != test.exhausted {
+				t.Fatalf("limit %d: exhausted = %v, %v", test.limit, exhausted, err)
+			}
+		}
+		limit := int64(100)
+		event := domain.AuditEvent{ID: "usd-owner-cap", ActorUserID: "quota-owner", Action: "member.share_updated", ResourceType: "plan", ResourceID: "quota-plan", Metadata: json.RawMessage(`{}`), CreatedAt: now}
+		if _, err := store.UpdateMemberShare(ctx, "quota-plan", "quota-member", "quota-owner-member", 3000, &limit, event); !errors.Is(err, domain.ErrForbidden) {
+			t.Fatalf("non-owner limit update = %v", err)
+		}
+		if _, err := store.UpdateMemberShare(ctx, "quota-plan", "quota-owner", "quota-owner-member", 3000, &limit, event); err != nil {
+			t.Fatal(err)
+		}
+		routes, err := store.ResolveGatewayRoutes(ctx, []byte("quota-hash"), quotaCalculationAt)
+		if err != nil || len(routes.Candidates) != 1 || routes.Candidates[0].Member.USDLimitMicros == nil || *routes.Candidates[0].Member.USDLimitMicros != limit {
+			t.Fatalf("route USD limit = %+v, %v", routes, err)
+		}
+		updatedDetail, err := store.PlanDetail(ctx, "quota-plan", "quota-owner", now.Truncate(24*time.Hour), quotaCalculationAt)
+		if err != nil || updatedDetail.Members[0].USDLimitMicros == nil || *updatedDetail.Members[0].USDLimitMicros != limit {
+			t.Fatalf("displayed USD limit = %+v, %v", updatedDetail.Members, err)
+		}
+		if exhausted, err := store.MemberQuotaExhausted(ctx, "quota-owner-member", "quota-plan", "quota-account", 1, 10000, now.Add(5*time.Hour)); err != nil || !exhausted {
+			t.Fatalf("five-hour reset must not clear USD usage: %v, %v", exhausted, err)
+		}
+		if exhausted, err := store.MemberQuotaExhausted(ctx, "quota-owner-member", "quota-plan", "quota-account", 2, 10000, quotaCalculationAt); err != nil || exhausted {
+			t.Fatalf("different binding must not inherit usage: %v, %v", exhausted, err)
+		}
+		t.Run("official reset with unchanged weekly window", func(t *testing.T) {
+			resetAt := now.Add(5*time.Hour + time.Minute)
+			if err := store.RecordQuotaResetSignals(ctx, "quota-plan", "quota-account", 1, []domain.QuotaSignal{{
+				WindowType: domain.Window7D, WindowStart: now.Add(-24 * time.Hour), ResetAt: now.Add(6 * 24 * time.Hour), AccountUsedMicros: 0,
+			}}, resetAt); err != nil {
+				t.Fatal(err)
+			}
+			if exhausted, err := store.MemberQuotaExhausted(ctx, "quota-owner-member", "quota-plan", "quota-account", 1, 10000, resetAt); err != nil || exhausted {
+				t.Fatalf("official reset must exclude pre-reset USD usage: %v, %v", exhausted, err)
+			}
+			for index, cost := range []int64{60, 40} {
+				createdAt := resetAt.Add(time.Duration(index) * time.Second)
+				if err := store.RecordGatewayMetric(ctx, domain.GatewayMetric{
+					RequestID: fmt.Sprintf("usd-after-reset-%d", index), APIKeyID: "quota-key",
+					PlanID: "quota-plan", AccountID: "quota-account", MemberID: "quota-owner-member", AccountBindingGeneration: 1,
+					Model: "gpt-5.6-sol", RequestedModel: "gpt-5.6-sol", UpstreamModel: "gpt-5.6-sol", BillingModel: "gpt-5.6-sol",
+					StatusCode: http.StatusOK, AccountCostMicros: cost, CreatedAt: createdAt,
+				}); err != nil {
+					t.Fatal(err)
+				}
+				if exhausted, err := store.MemberQuotaExhausted(ctx, "quota-owner-member", "quota-plan", "quota-account", 1, 10000, createdAt.Add(time.Second)); err != nil || exhausted != (index == 1) {
+					t.Fatalf("post-reset USD usage at request %d: exhausted=%v, error=%v", index, exhausted, err)
+				}
+			}
+		})
+		windowStart := now.Add(6 * 24 * time.Hour)
+		if err := store.RecordAccountQuotaSignals(ctx, "quota-plan", "quota-account", 1, []domain.QuotaSignal{{WindowType: domain.Window7D, WindowStart: windowStart, ResetAt: windowStart.Add(7 * 24 * time.Hour), AccountUsedMicros: 0}}, windowStart); err != nil {
+			t.Fatal(err)
+		}
+		if exhausted, err := store.MemberQuotaExhausted(ctx, "quota-owner-member", "quota-plan", "quota-account", 1, 10000, windowStart.Add(time.Second)); err != nil || exhausted {
+			t.Fatalf("weekly reset must clear USD usage: %v, %v", exhausted, err)
+		}
+	})
+
 }
 
 func TestQuotaResetSignalsRequireWeeklyAndRemainAtomic(t *testing.T) {

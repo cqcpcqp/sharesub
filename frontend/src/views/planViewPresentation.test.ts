@@ -9,6 +9,8 @@ describe('Plan view presentation', () => {
 
   it('formats fixed audit metadata units', () => {
     expect(formatPlanAuditMetadata('share_basis_points', 2500)).toBe('25%')
+    expect(formatPlanAuditMetadata('usd_limit_micros', 800_000_000)).toBe('$800.00')
+    expect(formatPlanAuditMetadata('usd_limit_micros', null)).toBe('不限制')
     expect(formatPlanAuditMetadata('visibility', 'public')).toBe('公开')
     expect(formatPlanAuditMetadata('allocation_mode', 'fixed')).toBe('固定分配')
   })

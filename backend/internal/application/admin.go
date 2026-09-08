@@ -403,19 +403,19 @@ func (s *Service) AdminReviewJoinApplication(ctx context.Context, admin domain.U
 	return s.store.ReviewJoinApplication(ctx, plan.OwnerUserID, planID, applicationID, approve, memberID, s.now(), event)
 }
 
-func (s *Service) AdminUpdateMemberShare(ctx context.Context, admin domain.User, planID, memberID string, shareBPS int) (domain.Member, error) {
-	if shareBPS < 0 || shareBPS > domain.MaxShareBPS {
+func (s *Service) AdminUpdateMemberShare(ctx context.Context, admin domain.User, planID, memberID string, shareBPS int, usdLimitMicros *int64) (domain.Member, error) {
+	if shareBPS < 0 || shareBPS > domain.MaxShareBPS || (usdLimitMicros != nil && (*usdLimitMicros <= 0 || *usdLimitMicros > 9_007_199_254_740_991)) {
 		return domain.Member{}, domain.ErrInvalidInput
 	}
 	plan, err := s.adminPlan(ctx, admin, planID)
 	if err != nil {
 		return domain.Member{}, err
 	}
-	event, err := s.newAuditEvent(admin.ID, "member.share_updated", "plan", planID, map[string]any{"member_id": memberID, "share_basis_points": shareBPS})
+	event, err := s.newAuditEvent(admin.ID, "member.share_updated", "plan", planID, map[string]any{"member_id": memberID, "share_basis_points": shareBPS, "usd_limit_micros": usdLimitMicros})
 	if err != nil {
 		return domain.Member{}, err
 	}
-	return s.store.UpdateMemberShare(ctx, planID, plan.OwnerUserID, memberID, shareBPS, event)
+	return s.store.UpdateMemberShare(ctx, planID, plan.OwnerUserID, memberID, shareBPS, usdLimitMicros, event)
 }
 
 func (s *Service) AdminRemovePlanMember(ctx context.Context, admin domain.User, planID, memberID string) error {

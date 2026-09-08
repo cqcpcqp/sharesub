@@ -2,7 +2,7 @@
 
 import { flushPromises, mount } from '@vue/test-utils'
 import { effectScope, reactive } from 'vue'
-import { NSelect } from 'naive-ui'
+import { NInputNumber, NSelect } from 'naive-ui'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { APIRequestError, api } from './api'
 import { adminAPI } from './api/admin'
@@ -14,6 +14,7 @@ import AuthView from './views/AuthView.vue'
 import KeysView from './views/KeysView.vue'
 import LobbyView from './views/LobbyView.vue'
 import PlansView from './views/PlansView.vue'
+import PlanMembersTab from './views/PlanMembersTab.vue'
 import ProfileView from './views/ProfileView.vue'
 import { usePlansView } from './views/usePlansView'
 
@@ -88,6 +89,7 @@ const detail: PlanDetail = {
     username: owner.username,
     avatar_url: '',
     email: owner.email,
+    usd_limit_micros: null,
     role: 'owner',
     status: 'active',
     share_basis_points: 0,
@@ -167,6 +169,7 @@ const memberDetail: PlanDetail = {
       username: member.username,
       avatar_url: '',
       email: member.email,
+      usd_limit_micros: null,
       role: 'member',
       status: 'active',
       share_basis_points: 0,
@@ -189,6 +192,55 @@ afterEach(() => {
 })
 
 describe('form interactions', () => {
+  it('allows managers to edit or clear USD limits while members stay read-only', async () => {
+    const wrapper = mount(PlanMembersTab, {
+      props: {
+        detail: memberDetail, canManage: true, isArchived: false, isShared: false,
+        allocatedShare: '33%', actionLoading: '', availablePublicSlots: 0,
+        shareDrafts: Object.fromEntries(memberDetail.members.map(member => [member.id, 33])),
+        usdLimitDrafts: Object.fromEntries(memberDetail.members.map(member => [member.id, null])),
+      },
+    })
+    expect(wrapper.text()).toContain('美元额度上限')
+    const input = wrapper.findComponent(NInputNumber)
+    expect(input.props('value')).toBeNull()
+    input.vm.$emit('update:value', 800)
+    expect(wrapper.emitted('updateUsdLimitDraft')?.[0]).toEqual([memberDetail.members[0].id, 800])
+    input.vm.$emit('update:value', null)
+    expect(wrapper.emitted('updateUsdLimitDraft')?.[1]).toEqual([memberDetail.members[0].id, null])
+    await wrapper.setProps({ canManage: false })
+    expect(wrapper.findComponent(NInputNumber).exists()).toBe(false)
+    expect(wrapper.text()).toContain('不限制')
+    await wrapper.setProps({ canManage: true, isArchived: true })
+    expect(wrapper.findComponent(NInputNumber).exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it.each([false, true])('saves and clears a manually configured USD limit (admin=%s)', async (adminMode) => {
+    const detail = { ...memberDetail, account: null, plan: { ...memberDetail.plan, account_id: '', allocation_mode: 'fixed' as const } }
+    if (adminMode) vi.spyOn(adminAPI, 'adminPlan').mockResolvedValue(detail)
+    else vi.spyOn(api, 'plan').mockResolvedValue(detail)
+    const update = adminMode
+      ? vi.spyOn(adminAPI, 'adminUpdateMember').mockResolvedValue(detail.members[0])
+      : vi.spyOn(api, 'updateMember').mockResolvedValue(detail.members[0])
+    const scope = effectScope()
+    const view = scope.run(() => usePlansView(reactive({ accounts: [account], plans: [detail.plan], user: adminMode ? administrator : owner, initialPlanId: '', invitePlanId: '', adminMode }), vi.fn()))!
+    await flushPromises()
+    const member = detail.members[0]
+    expect(view.usdLimitDrafts[member.id]).toBeNull()
+    view.usdLimitDrafts[member.id] = 800
+    await view.saveShare(member)
+    expect(update).toHaveBeenLastCalledWith(detail.plan.id, member.id, member.share_basis_points, 800_000_000)
+    view.usdLimitDrafts[member.id] = null
+    await view.saveShare(member)
+    expect(update).toHaveBeenLastCalledWith(detail.plan.id, member.id, member.share_basis_points, null)
+    update.mockClear()
+    view.usdLimitDrafts[member.id] = 0
+    await view.saveShare(member)
+    expect(update).not.toHaveBeenCalled()
+    scope.stop()
+  })
+
   it('creates a Plan without requiring an OpenAI account', async () => {
     const createPlan = vi.spyOn(api, 'createPlan').mockResolvedValue(unboundDetail)
     const wrapper = mount(PlansView, {

@@ -25,7 +25,7 @@ export const planAuditActionLabels: Record<string, string> = {
   'invite.created': '创建了邀请链接',
   'invite.accepted': '接受邀请并加入',
   'invite.revoked': '撤销了邀请链接',
-  'member.share_updated': '更新了成员份额',
+  'member.share_updated': '更新了成员额度设置',
   'member.removed': '移除了成员',
   'member.left': '退出了 Plan',
 }
@@ -41,6 +41,7 @@ export const planAuditMetadataLabels: Record<string, string> = {
   public_slots: '公开招募名额',
   public_share_basis_points: '每人份额',
   share_basis_points: '成员份额',
+  usd_limit_micros: '美元额度上限',
   allocation_mode: '额度方式',
 }
 
@@ -57,8 +58,9 @@ export function formatPlanAuditDate(value: string) {
   return dateFormatter.format(new Date(value))
 }
 
-export function formatPlanAuditMetadata(key: string | number, value: string | number) {
+export function formatPlanAuditMetadata(key: string | number, value: string | number | null) {
   if (key === 'share_basis_points' || key === 'public_share_basis_points') return formatShareBasisPoints(Number(value))
+  if (key === 'usd_limit_micros') return value === null ? '不限制' : `$${(Number(value) / 1_000_000).toFixed(2)}`
   if (key === 'visibility') return value === 'public' ? '公开' : '私密'
   if (key === 'allocation_mode') return value === 'fixed' ? '固定分配' : '共享使用'
   return String(value)

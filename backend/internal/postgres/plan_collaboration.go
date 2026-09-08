@@ -200,7 +200,7 @@ func (s *Store) ReviewJoinApplication(ctx context.Context, ownerID, expectedPlan
 		err = tx.QueryRow(ctx, `
 			INSERT INTO plan_members(id,plan_id,user_id,role,status,share_basis_points,created_at,updated_at,removed_at)
 			VALUES($1,$2,$3,$4,$5,$6,$7,$7,NULL)
-			ON CONFLICT(plan_id,user_id) DO UPDATE SET role='member',status='active',share_basis_points=EXCLUDED.share_basis_points,removed_at=NULL,updated_at=EXCLUDED.updated_at
+			ON CONFLICT(plan_id,user_id) DO UPDATE SET role='member',status='active',share_basis_points=EXCLUDED.share_basis_points,usd_limit_micros=NULL,removed_at=NULL,updated_at=EXCLUDED.updated_at
 			RETURNING id`, memberID, application.PlanID, application.UserID, domain.RoleMember, domain.StatusActive, share, now).Scan(&actualMemberID)
 		if err != nil {
 			return domain.JoinApplication{}, mapError(err)
@@ -327,7 +327,7 @@ func (s *Store) AcceptInvite(ctx context.Context, tokenHash []byte, user domain.
 	err = tx.QueryRow(ctx, `
 		INSERT INTO plan_members(id,plan_id,user_id,role,status,share_basis_points,created_at,updated_at,removed_at)
 		VALUES($1,$2,$3,$4,$5,$6,$7,$7,NULL)
-		ON CONFLICT(plan_id,user_id) DO UPDATE SET role='member',status='active',share_basis_points=EXCLUDED.share_basis_points,removed_at=NULL,updated_at=EXCLUDED.updated_at
+		ON CONFLICT(plan_id,user_id) DO UPDATE SET role='member',status='active',share_basis_points=EXCLUDED.share_basis_points,usd_limit_micros=NULL,removed_at=NULL,updated_at=EXCLUDED.updated_at
 		RETURNING id,created_at`, member.ID, member.PlanID, member.UserID, member.Role, member.Status, member.ShareBasisPoints, member.CreatedAt).Scan(&member.ID, &member.CreatedAt)
 	if err != nil {
 		return domain.Member{}, mapError(err)
@@ -354,7 +354,7 @@ func (s *Store) AcceptInvite(ctx context.Context, tokenHash []byte, user domain.
 	return member, tx.Commit(ctx)
 }
 
-func (s *Store) UpdateMemberShare(ctx context.Context, planID, ownerID, memberID string, share int, event domain.AuditEvent) (domain.Member, error) {
+func (s *Store) UpdateMemberShare(ctx context.Context, planID, ownerID, memberID string, share int, usdLimitMicros *int64, event domain.AuditEvent) (domain.Member, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
 	if err != nil {
 		return domain.Member{}, err
@@ -385,7 +385,7 @@ func (s *Store) UpdateMemberShare(ctx context.Context, planID, ownerID, memberID
 	}
 	var m domain.Member
 	var avatarUpdatedAt *time.Time
-	err = tx.QueryRow(ctx, `UPDATE plan_members m SET share_basis_points=$3,updated_at=now() FROM users u WHERE m.id=$2 AND m.plan_id=$1 AND m.status='active' AND u.id=m.user_id RETURNING m.id,m.plan_id,m.user_id,u.username,u.email,u.avatar_updated_at,m.role,m.status,m.share_basis_points,m.created_at`, planID, memberID, share).Scan(&m.ID, &m.PlanID, &m.UserID, &m.Username, &m.Email, &avatarUpdatedAt, &m.Role, &m.Status, &m.ShareBasisPoints, &m.CreatedAt)
+	err = tx.QueryRow(ctx, `UPDATE plan_members m SET share_basis_points=$3,usd_limit_micros=$4,updated_at=now() FROM users u WHERE m.id=$2 AND m.plan_id=$1 AND m.status='active' AND u.id=m.user_id RETURNING m.id,m.plan_id,m.user_id,u.username,u.email,u.avatar_updated_at,m.role,m.status,m.share_basis_points,m.usd_limit_micros,m.created_at`, planID, memberID, share, usdLimitMicros).Scan(&m.ID, &m.PlanID, &m.UserID, &m.Username, &m.Email, &avatarUpdatedAt, &m.Role, &m.Status, &m.ShareBasisPoints, &m.USDLimitMicros, &m.CreatedAt)
 	if err != nil {
 		return domain.Member{}, mapError(err)
 	}
@@ -394,7 +394,7 @@ func (s *Store) UpdateMemberShare(ctx context.Context, planID, ownerID, memberID
 		return domain.Member{}, err
 	}
 	if m.UserID != ownerID {
-		if err := insertNotification(ctx, tx, event.ID+":member", m.UserID, "member_share_updated", "额度份额已更新", "房主调整了你在 Plan 中的额度份额", "plan", planID, event.CreatedAt); err != nil {
+		if err := insertNotification(ctx, tx, event.ID+":member", m.UserID, "member_share_updated", "额度设置已更新", "房主或管理员调整了你在 Plan 中的额度设置，请查看当前份额和美元额度上限", "plan", planID, event.CreatedAt); err != nil {
 			return domain.Member{}, err
 		}
 	}

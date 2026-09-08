@@ -22,7 +22,7 @@ const account: Account = {
 
 const member: Member = {
   id: 'plan-member', plan_id: 'plan', user_id: 'member', username: 'alice', email: 'alice@example.com',
-  avatar_url: '', role: 'member', status: 'active', share_basis_points: 5000, created_at: '2026-08-01T00:00:00Z',
+  avatar_url: '', role: 'member', status: 'active', share_basis_points: 5000, usd_limit_micros: null, created_at: '2026-08-01T00:00:00Z',
 }
 
 describe('AccountConfigSummary', () => {

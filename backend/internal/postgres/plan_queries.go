@@ -131,14 +131,14 @@ func (s *Store) PlanDetail(ctx context.Context, planID, userID string, todayStar
 		out.Account = &account
 	}
 	isOwner := out.Plan.OwnerUserID == userID
-	rows, err := s.pool.Query(ctx, `SELECT m.id,m.plan_id,m.user_id,u.username,u.email,u.avatar_updated_at,m.role,m.status,m.share_basis_points,m.created_at FROM plan_members m JOIN users u ON u.id=m.user_id WHERE m.plan_id=$1 AND m.status='active' ORDER BY CASE WHEN m.role='owner' THEN 0 ELSE 1 END,m.created_at`, planID)
+	rows, err := s.pool.Query(ctx, `SELECT m.id,m.plan_id,m.user_id,u.username,u.email,u.avatar_updated_at,m.role,m.status,m.share_basis_points,m.usd_limit_micros,m.created_at FROM plan_members m JOIN users u ON u.id=m.user_id WHERE m.plan_id=$1 AND m.status='active' ORDER BY CASE WHEN m.role='owner' THEN 0 ELSE 1 END,m.created_at`, planID)
 	if err != nil {
 		return out, err
 	}
 	for rows.Next() {
 		var m domain.Member
 		var avatarUpdatedAt *time.Time
-		if err := rows.Scan(&m.ID, &m.PlanID, &m.UserID, &m.Username, &m.Email, &avatarUpdatedAt, &m.Role, &m.Status, &m.ShareBasisPoints, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.PlanID, &m.UserID, &m.Username, &m.Email, &avatarUpdatedAt, &m.Role, &m.Status, &m.ShareBasisPoints, &m.USDLimitMicros, &m.CreatedAt); err != nil {
 			rows.Close()
 			return out, err
 		}

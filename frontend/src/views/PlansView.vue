@@ -172,10 +172,12 @@
               :current-member="currentMember"
               :action-loading="actionLoading"
               :share-drafts="shareDrafts"
+              :usd-limit-drafts="usdLimitDrafts"
               :available-public-slots="availablePublicSlots"
               @open-invite="showInviteComposer = true"
               @leave-plan="leavePlan"
               @update-share-draft="(memberID, value) => shareDrafts[memberID] = value"
+              @update-usd-limit-draft="(memberID, value) => usdLimitDrafts[memberID] = value"
               @save-share="saveShare"
               @remove-member="removeMember"
               @review="review"
@@ -577,7 +579,7 @@ const {
   loadPlan, loadAudit, loadPerformance,
   showCreate, showConnectAccount, showInviteComposer, showConvertToFixed, inviteSecret, showDeleteConfirmOne, showDeleteConfirmTwo,
   deleteNameDraft, renameDraft, descriptionDraft, transferMemberID, rebindAccountID, createForm, inviteForm,
-  publication, shareDrafts, conversionShareDrafts, accountOptions, planOptions, isActualOwner, canManage, isShared, isArchived, isAccountBound, owner, currentMember,
+  publication, shareDrafts, usdLimitDrafts, conversionShareDrafts, accountOptions, planOptions, isActualOwner, canManage, isShared, isArchived, isAccountBound, owner, currentMember,
   allocatedShare, reservedShares, remainingInviteSharePercent, canCreateInvite, approvedPublicMembers, availablePublicSlots, publicationAvailablePublicSlots,
   canStartQuotaResetVote, quotaResetVoteDisabledReason,
   publicationReservedShares, maxPublicSeatSharePercent, publicationCapacityExceeded,

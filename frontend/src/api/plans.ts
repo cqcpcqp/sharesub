@@ -52,6 +52,6 @@ export const planAPI = {
   invitePreview: (token: string) => request<InvitePreview>('/api/invites/preview', { method: 'POST', body: JSON.stringify({ token }) }),
   acceptInvite: (token: string) => request<Member>('/api/invites/accept', { method: 'POST', body: JSON.stringify({ token }) }),
   revokeInvite: (planID: string, inviteID: string) => request<CreatedInvite['invite']>(`/api/plans/${planID}/invites/${inviteID}`, { method: 'DELETE' }),
-  updateMember: (planID: string, memberID: string, share_basis_points: number) => request<Member>(`/api/plans/${planID}/members/${memberID}`, { method: 'PATCH', body: JSON.stringify({ share_basis_points }) }),
+  updateMember: (planID: string, memberID: string, share_basis_points: number, usd_limit_micros: number | null) => request<Member>(`/api/plans/${planID}/members/${memberID}`, { method: 'PATCH', body: JSON.stringify({ share_basis_points, usd_limit_micros }) }),
   removeMember: (planID: string, memberID: string) => request<{ removed: boolean }>(`/api/plans/${planID}/members/${memberID}`, { method: 'DELETE' }),
 }

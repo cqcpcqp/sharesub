@@ -173,6 +173,7 @@ export interface Plan {
 }
 
 export interface Member {
+  usd_limit_micros: number | null
   id: string
   plan_id: string
   user_id: string
@@ -524,7 +525,7 @@ export interface AuditEvent {
   action: string
   resource_type: string
   resource_id: string
-  metadata: Record<string, string | number>
+  metadata: Record<string, string | number | null>
   created_at: string
 }
 

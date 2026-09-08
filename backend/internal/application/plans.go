@@ -287,13 +287,13 @@ func (s *Service) RevokeInvite(ctx context.Context, ownerID, planID, inviteID st
 	return s.store.RevokeInvite(ctx, planID, ownerID, inviteID, event)
 }
 
-func (s *Service) UpdateMemberShare(ctx context.Context, ownerID, planID, memberID string, shareBPS int) (domain.Member, error) {
-	if shareBPS < 0 || shareBPS > domain.MaxShareBPS {
+func (s *Service) UpdateMemberShare(ctx context.Context, ownerID, planID, memberID string, shareBPS int, usdLimitMicros *int64) (domain.Member, error) {
+	if shareBPS < 0 || shareBPS > domain.MaxShareBPS || (usdLimitMicros != nil && (*usdLimitMicros <= 0 || *usdLimitMicros > 9_007_199_254_740_991)) {
 		return domain.Member{}, domain.ErrInvalidInput
 	}
-	event, err := s.newAuditEvent(ownerID, "member.share_updated", "plan", planID, map[string]any{"member_id": memberID, "share_basis_points": shareBPS})
+	event, err := s.newAuditEvent(ownerID, "member.share_updated", "plan", planID, map[string]any{"member_id": memberID, "share_basis_points": shareBPS, "usd_limit_micros": usdLimitMicros})
 	if err != nil {
 		return domain.Member{}, err
 	}
-	return s.store.UpdateMemberShare(ctx, planID, ownerID, memberID, shareBPS, event)
+	return s.store.UpdateMemberShare(ctx, planID, ownerID, memberID, shareBPS, usdLimitMicros, event)
 }
