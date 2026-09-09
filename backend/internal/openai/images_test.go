@@ -43,7 +43,7 @@ func TestPrepareImagesGenerationRequest(t *testing.T) {
 	if err := json.Unmarshal(forward, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload.Model != imagesResponsesModel || !payload.Stream || payload.ToolChoice.Type != "image_generation" || len(payload.Tools) != 1 {
+	if payload.Model != "gpt-5.6-luna" || !payload.Stream || payload.ToolChoice.Type != "image_generation" || len(payload.Tools) != 1 {
 		t.Fatalf("forward payload = %+v", payload)
 	}
 	tool := payload.Tools[0]
@@ -70,6 +70,7 @@ func TestPrepareImagesMultipartEditRequest(t *testing.T) {
 		t.Fatalf("request = %+v", request)
 	}
 	var payload struct {
+		Model string `json:"model"`
 		Tools []struct {
 			Action string `json:"action"`
 			Mask   struct {
@@ -79,6 +80,9 @@ func TestPrepareImagesMultipartEditRequest(t *testing.T) {
 	}
 	if err := json.Unmarshal(forward, &payload); err != nil {
 		t.Fatal(err)
+	}
+	if payload.Model != "gpt-5.6-luna" {
+		t.Fatalf("forward model = %q, want gpt-5.6-luna", payload.Model)
 	}
 	if payload.Tools[0].Action != "edit" || !strings.HasPrefix(payload.Tools[0].Mask.ImageURL, "data:") {
 		t.Fatalf("tool = %+v", payload.Tools[0])

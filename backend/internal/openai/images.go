@@ -18,7 +18,7 @@ import (
 const (
 	imagesGenerationsEndpoint = "/v1/images/generations"
 	imagesEditsEndpoint       = "/v1/images/edits"
-	imagesResponsesModel      = "gpt-5.4-mini"
+	imagesResponsesModel      = "gpt-5.6-luna"
 	maxImageUploadBytes       = 20 << 20
 )
 
