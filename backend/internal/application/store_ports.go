@@ -19,6 +19,14 @@ type Store interface {
 	AdminStore
 	GatewayStore
 	MembershipStore
+	PricingStore
+}
+
+type PricingStore interface {
+	CurrentPricingID(context.Context) (int64, error)
+	PricingVersion(context.Context, int64) (domain.PricingVersion, error)
+	PricingHistory(context.Context, int64) ([]domain.PricingVersionSummary, error)
+	PublishPricing(context.Context, domain.PublishPricingInput, domain.AuditEvent) (domain.PricingVersion, error)
 }
 
 type MembershipStore interface {

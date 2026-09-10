@@ -101,6 +101,7 @@ func (s *Service) RevokeAPIKey(ctx context.Context, userID, keyID string) error 
 }
 
 type GatewayAccess struct {
+	Pricing     *domain.PricingVersion
 	Credential  domain.GatewayCredential
 	AccessToken string
 	ProxyURL    string
@@ -428,10 +429,18 @@ func (s *Service) RecordGatewayMetric(ctx context.Context, access GatewayAccess,
 	metric.Endpoint = truncateGatewayMetricText(metric.Endpoint, 160)
 	metric.ErrorCode = truncateGatewayMetricText(metric.ErrorCode, 120)
 	metric.ErrorMessage = truncateGatewayErrorMessage(metric.ErrorMessage, 2000)
-	if len(metric.BillingSegments) > 0 {
-		metric.CostBreakdown = billing.AccountCostForSegments(metric.BillingModel, metric.ServiceTier, metric.BillingSegments)
-	} else {
-		metric.CostBreakdown = billing.AccountCostForImageSize(metric.BillingModel, metric.ServiceTier, metric.TokenUsage, metric.WebSearchCalls, metric.ImageSize)
+	if access.Pricing == nil {
+		return errors.New("gateway pricing version was not pinned")
+	}
+	metric.PricingVersionID = &access.Pricing.ID
+	segments := metric.BillingSegments
+	if len(segments) == 0 {
+		segments = []domain.GatewayBillingSegment{{TokenUsage: metric.TokenUsage, WebSearchCalls: metric.WebSearchCalls, ImageSize: metric.ImageSize}}
+	}
+	var err error
+	metric.CostBreakdown, err = billing.VersionedCost(access.Pricing.Config, metric.BillingModel, metric.ServiceTier, segments)
+	if err != nil {
+		return err
 	}
 	metric.AccountCostMicros = metric.CostBreakdown.TotalMicros
 	metric.CreatedAt = recordedAt

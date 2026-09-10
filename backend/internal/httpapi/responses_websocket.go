@@ -164,7 +164,10 @@ func (s *Server) responsesWebSocketHandler(w http.ResponseWriter, r *http.Reques
 	turnAttempt := 0
 	authRefreshed := make(map[string]bool)
 	replacePinnedAfterTurn := false
+	var turnPricing domain.PricingVersion
 	setTurnAccess := func(access application.GatewayAccess, request openai.ResponsesWebSocketTurnRequest) (openai.ResponsesWebSocketTurnConfig, error) {
+		pricing := turnPricing
+		access.Pricing = &pricing
 		turnAccess = access
 		policyStartedAt := time.Now()
 		policyFrame, policyBilling, policyErr := openai.ApplyFastPolicy(
@@ -255,6 +258,12 @@ func (s *Server) responsesWebSocketHandler(w http.ResponseWriter, r *http.Reques
 				}
 			}
 			turnAccess = application.GatewayAccess{}
+			var pricingErr error
+			turnPricing, pricingErr = s.app.CurrentPricing(ctx)
+			if pricingErr != nil {
+				s.logger.Error("load WebSocket turn pricing", "error", pricingErr)
+				return openai.ResponsesWebSocketTurnConfig{}, openai.NewResponsesWebSocketCloseError(websocket.StatusTryAgainLater, "platform pricing is temporarily unavailable", pricingErr)
+			}
 			if firstTurn {
 				access, resolveErr := s.app.ResolveGatewayAccess(ctx, apiKey, failedFirstAccountIDs...)
 				if resolveErr != nil {

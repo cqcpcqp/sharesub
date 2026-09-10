@@ -190,6 +190,10 @@ func (s *Server) routes() {
 	s.mux.Handle("PATCH /api/notifications/{notificationID}", s.requireUser(http.HandlerFunc(s.updateNotification)))
 	s.mux.Handle("POST /api/notifications/read-all", s.requireUser(http.HandlerFunc(s.readAllNotifications)))
 	admin := func(handler http.HandlerFunc) http.Handler { return s.requireUser(s.requireAdmin(handler)) }
+	s.mux.Handle("GET /api/pricing", s.requireUser(http.HandlerFunc(s.currentPricing)))
+	s.mux.Handle("GET /api/pricing/versions", s.requireUser(http.HandlerFunc(s.pricingHistory)))
+	s.mux.Handle("GET /api/pricing/versions/{versionID}", s.requireUser(http.HandlerFunc(s.pricingVersion)))
+	s.mux.Handle("POST /api/admin/pricing/versions", admin(s.publishPricing))
 	s.mux.Handle("GET /api/admin/overview", admin(s.adminOverview))
 	s.mux.Handle("GET /api/admin/payment-settings", admin(s.paymentSettings))
 	s.mux.Handle("PUT /api/admin/payment-settings", admin(s.savePaymentSettings))

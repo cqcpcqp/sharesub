@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sharesub/sharesub/backend/internal/billing"
 	"github.com/sharesub/sharesub/backend/internal/domain"
 	"github.com/sharesub/sharesub/backend/internal/security"
 )
@@ -1236,6 +1237,7 @@ func TestRecordGatewayMetricKeepsResolvedBindingAndRequestStart(t *testing.T) {
 		AccountBindingGeneration: 9,
 	}}
 
+	access.Pricing = &domain.PricingVersion{PricingVersionSummary: domain.PricingVersionSummary{ID: 1}, Config: billing.EmbeddedPricingConfig()}
 	if err := service.RecordGatewayMetric(context.Background(), access, domain.GatewayMetric{
 		RequestID: "request",
 		CreatedAt: serviceNow.Add(time.Hour),
@@ -1262,7 +1264,8 @@ func TestRecordGatewayMetricPricesWebSocketResponsesSeparately(t *testing.T) {
 			{TokenUsage: domain.TokenUsage{InputTokens: 150_000}},
 		},
 	}
-	if err := service.RecordGatewayMetric(context.Background(), GatewayAccess{}, metric, time.Now()); err != nil {
+	pricing := &domain.PricingVersion{PricingVersionSummary: domain.PricingVersionSummary{ID: 1}, Config: billing.EmbeddedPricingConfig()}
+	if err := service.RecordGatewayMetric(context.Background(), GatewayAccess{Pricing: pricing}, metric, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if got, want := store.recordedMetric.AccountCostMicros, int64(3_000_000); got != want {

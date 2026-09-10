@@ -159,10 +159,11 @@
               <dd>{{ item.usage ? formatNumber(item.usage.request_count) : '--' }}</dd>
             </div>
             <div class="cost-summary">
-              <dt>账号计费</dt>
+              <dt>账号计费 <a href="/pricing" aria-label="查看全局模型计价">查看计价</a></dt>
               <dd>{{ item.usage ? formatUSD(item.usage.estimated_cost_micros) : '--' }}</dd>
             </div>
           </dl>
+          <p class="pricing-window-note">按请求适用的价格版本累计，不是订阅套餐的固定美元额度。</p>
           <dl class="token-grid">
             <div class="token-total"><dt>Total Token</dt><dd>{{ item.usage ? formatTokens(item.usage.token_usage.total_tokens) : '--' }}</dd></div>
             <div><dt>Input</dt><dd>{{ item.usage ? formatTokens(item.usage.token_usage.input_tokens) : '--' }}</dd></div>

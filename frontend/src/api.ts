@@ -4,6 +4,7 @@ import { identityAPI } from './api/identity'
 import { keyAPI } from './api/keys'
 import { notificationAPI } from './api/notifications'
 import { planAPI } from './api/plans'
+import { pricingAPI } from './api/pricing'
 
 export { APIRequestError, clearSessionToken, sessionToken, setSessionToken } from './api/client'
 export { parseOAuthCallback } from './api/accounts'
@@ -19,4 +20,5 @@ export const api = {
   ...keyAPI,
   ...notificationAPI,
   ...adminAPI,
+  ...pricingAPI,
 }

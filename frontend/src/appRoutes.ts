@@ -1,4 +1,4 @@
-export type ViewID = 'dashboard' | 'lobby' | 'plans' | 'accounts' | 'keys' | 'admin' | 'profile'
+export type ViewID = 'dashboard' | 'lobby' | 'plans' | 'accounts' | 'keys' | 'pricing' | 'admin' | 'profile'
 export type PublicPageID = 'home' | 'terms' | 'privacy' | 'acceptable-use'
 
 export type AppRoute =
@@ -22,6 +22,7 @@ export const viewPaths: Record<ViewID, string> = {
   plans: '/plans',
   accounts: '/accounts',
   keys: '/keys',
+  pricing: '/pricing',
   admin: '/admin',
   profile: '/profile',
 }

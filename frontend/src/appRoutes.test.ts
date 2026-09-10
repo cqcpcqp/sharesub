@@ -9,6 +9,7 @@ describe('app routes', () => {
       plans: '/plans',
       accounts: '/accounts',
       keys: '/keys',
+      pricing: '/pricing',
       admin: '/admin',
       profile: '/profile',
     })

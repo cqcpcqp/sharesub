@@ -1,0 +1,61 @@
+.pricing-page { max-width: 1280px; margin: 0 auto; color: var(--ink); }
+.pricing-heading, .pricing-version-bar, .pricing-toolbar, .pricing-pagination, .pricing-actions { display: flex; align-items: center; gap: 12px; }
+.pricing-heading, .pricing-version-bar, .pricing-pagination { justify-content: space-between; }
+.pricing-heading { margin-bottom: 24px; align-items: flex-start; }
+.pricing-heading h1 { margin: 0 0 8px; font-size: 26px; font-weight: 650; letter-spacing: -.025em; }
+.pricing-heading p, .pricing-addons p, .pricing-publish p, .pricing-explanation p, .pricing-drawer-intro, .pricing-example p, .pricing-comparison p { margin: 0; color: var(--muted); line-height: 1.75; }
+.pricing-actions { flex-wrap: wrap; justify-content: flex-end; }
+.pricing-feedback { margin-bottom: 16px; }
+.pricing-version-bar { padding: 14px 0; border-top: 1px solid var(--line); font-size: 13px; color: var(--muted); flex-wrap: wrap; }
+.pricing-version-bar strong { color: var(--ink); }
+.pricing-toolbar { padding: 14px 0 18px; flex-wrap: wrap; }
+.pricing-toolbar > .n-input { width: min(340px, 100%); }
+.pricing-toolbar > .n-select { width: 190px; }
+.pricing-toolbar > span { margin-left: auto; font-size: 12px; color: var(--muted); }
+.pricing-table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.pricing-table { width: 100%; border-collapse: collapse; white-space: nowrap; font-size: 13px; font-variant-numeric: tabular-nums; }
+.pricing-table th, .pricing-table td { padding: 14px 18px; text-align: right; border-bottom: 1px solid var(--line-soft); }
+.pricing-table thead th { background: var(--surface-soft); color: var(--muted); font-weight: 500; }
+.pricing-table th:first-child { text-align: left; }
+.pricing-table tbody th { font-weight: 550; }
+.pricing-table small { display: block; color: var(--muted); font-size: 11px; font-weight: 400; padding-top: 4px; }
+.pricing-table tbody tr:last-child > * { border-bottom: 0; }
+.pricing-table tbody tr:hover { background: var(--surface-hover); }
+.pricing-table td.pricing-empty { padding: 36px; text-align: center; color: var(--muted); }
+.pricing-pagination { padding: 16px 0; font-size: 12px; color: var(--muted); }
+.pricing-addons, .pricing-publish, .pricing-explanation { margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--line); }
+.pricing-page h2 { font-size: 17px; margin: 0 0 10px; }
+.pricing-addon-fields { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 24px; margin-top: 20px; }
+.pricing-addon-fields label, .pricing-editor-grid label, .pricing-long-fields label { display: flex; flex-direction: column; gap: 9px; font-size: 13px; }
+.pricing-addon-fields small { display: block; color: var(--muted); margin-top: 4px; }
+.pricing-addon-fields strong { font-size: 20px; font-weight: 550; font-variant-numeric: tabular-nums; }
+.pricing-publish > .n-input { margin: 16px 0; }
+.pricing-explanation { margin-bottom: 32px; }
+.pricing-explanation p { max-width: 85ch; font-size: 13px; margin-bottom: 10px; }
+.pricing-editor-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; margin: 24px 0 32px; }
+.pricing-drawer-intro { margin-bottom: 16px; font-size: 13px; }
+.pricing-long-fields { display: grid; gap: 18px; }
+.pricing-example { margin-top: 32px; padding-top: 20px; border-top: 1px solid var(--line); }
+.pricing-example p { font-size: 13px; margin-bottom: 12px; }
+.pricing-preview-modal { width: min(1000px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); overflow-y: auto; }
+.pricing-preview-modal .pricing-table-wrap { max-height: 360px; }
+.pricing-diff-table { white-space: normal; min-width: 650px; }
+.pricing-comparison { margin: 24px 0; font-size: 13px; }
+.pricing-comparison ul { max-height: 160px; overflow: auto; padding-left: 18px; line-height: 1.8; }
+.pricing-history-item { padding: 18px 0; border-bottom: 1px solid var(--line); }
+.pricing-history-item > div:first-child { display: flex; justify-content: space-between; gap: 12px; }
+.pricing-history-item time, .pricing-history-item small { color: var(--muted); font-size: 12px; }
+.pricing-history-item p { overflow-wrap: anywhere; }
+.pricing-history-item .pricing-actions { margin-top: 12px; }
+.pricing-history-detail { margin-top: 24px; }
+.pricing-history-detail > .n-input, .pricing-history-detail > .n-select { margin-bottom: 12px; }
+.pricing-loading { display: flex; gap: 12px; align-items: center; padding: 40px 0; color: var(--muted); }
+.pricing-window-note { color: var(--muted); font-size: 11px; line-height: 1.6; }
+@media (max-width: 700px) {
+  .pricing-heading { flex-direction: column; }
+  .pricing-toolbar > .n-input { width: 100%; }
+  .pricing-addon-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+  .pricing-table th, .pricing-table td { padding: 12px; }
+  .pricing-pagination { flex-wrap: wrap; }
+  .pricing-history-item > div:first-child { flex-direction: column; }
+}

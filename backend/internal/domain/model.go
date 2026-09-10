@@ -526,6 +526,7 @@ type GatewayRouteSet struct {
 }
 
 type GatewayMetric struct {
+	PricingVersionID         *int64
 	RequestID                string
 	APIKeyID                 string
 	PlanID                   string

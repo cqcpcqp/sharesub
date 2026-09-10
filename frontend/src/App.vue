@@ -151,6 +151,7 @@
           <PlansView v-else-if="activeView === 'plans'" :accounts="accounts" :plans="plans" :user="user" :theme="resolvedTheme" :initial-plan-id="selectedPlanID" :invite-plan-id="invitePlanID" @invite-opened="invitePlanID = ''" @changed="refreshAll" @message="showMessage" />
           <AccountsView v-else-if="activeView === 'accounts'" :accounts="accounts" :plans="plans" @changed="refreshAll" @message="showMessage" />
           <KeysView v-else-if="activeView === 'keys'" :keys="keys" :plans="plans" @changed="refreshAll" @message="showMessage" />
+          <PricingView v-else-if="activeView === 'pricing'" :user="user" />
           <AdminPlanDetailView v-else-if="activeView === 'admin' && user.is_admin && adminResource?.type === 'plan'" :plan-id="adminResource.id" :current-user="user" :theme="resolvedTheme" @back="navigateToView('admin')" @changed="refreshAll" @message="showMessage" />
           <AdminView
             v-else-if="activeView === 'admin' && user.is_admin"
@@ -191,7 +192,7 @@
 <script setup lang="ts">
 import { darkTheme, NAlert, NButton, NConfigProvider, NPopover, NSpin, NTooltip } from 'naive-ui'
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch, type Component } from 'vue'
-import { ChevronRight, Compass, Ellipsis, KeyRound, Layers3, LayoutDashboard, LogOut, PanelLeftClose, PanelLeftOpen, Settings, ShieldCheck, UsersRound } from 'lucide-vue-next'
+import { ChevronRight, Coins, Compass, Ellipsis, KeyRound, Layers3, LayoutDashboard, LogOut, PanelLeftClose, PanelLeftOpen, Settings, ShieldCheck, UsersRound } from 'lucide-vue-next'
 import { api, clearSessionToken, sessionToken } from './api'
 import type { Account, APIKey, Dashboard, InvitePreview, Notification as UserNotification, Plan, PublicPlan, User } from './types'
 import APIKeySetupWizard from './components/APIKeySetupWizard.vue'
@@ -236,6 +237,7 @@ const KeysView = defineAsyncView(() => import('./views/KeysView.vue'))
 const LobbyView = defineAsyncView(() => import('./views/LobbyView.vue'))
 const PlansView = defineAsyncView(() => import('./views/PlansView.vue'))
 const ProfileView = defineAsyncView(() => import('./views/ProfileView.vue'))
+const PricingView = defineAsyncView(() => import('./views/PricingView.vue'))
 
 const nav = [
   { id: 'dashboard' as const, label: '仪表盘', shortLabel: '仪表盘', icon: LayoutDashboard },
@@ -243,6 +245,7 @@ const nav = [
   { id: 'plans' as const, label: '我的 Plans', shortLabel: 'Plans', icon: Layers3 },
   { id: 'accounts' as const, label: 'OpenAI 账号', shortLabel: '账号', icon: UsersRound },
   { id: 'keys' as const, label: 'API Keys', shortLabel: '密钥', icon: KeyRound },
+  { id: 'pricing' as const, label: '模型计价', shortLabel: '计价', icon: Coins },
   { id: 'profile' as const, label: '个人设置', shortLabel: '设置', icon: Settings },
 ]
 const adminNav = { id: 'admin' as const, label: '后台管理', shortLabel: '管理', icon: ShieldCheck }

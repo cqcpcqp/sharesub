@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/sharesub/sharesub/backend/internal/domain"
@@ -16,6 +17,7 @@ const defaultEmailVerificationTTL = time.Hour
 const defaultEmailResendCooldown = time.Minute
 
 type Service struct {
+	pricingCache         sync.Map
 	paymentConfig        payment.Config
 	store                Store
 	security             *security.Manager

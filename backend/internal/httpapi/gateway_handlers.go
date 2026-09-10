@@ -106,6 +106,9 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 	if !s.admitGatewayAPIKey(w, access.Credential.APIKeyID) {
 		return
 	}
+	if !s.requireGatewayPricing(w, r.Context(), &access) {
+		return
+	}
 	gatewayRequestID := gatewayRequestID(r)
 	timingCtx, timing := s.gateway.BeginRequestTiming(r.Context(), gatewayRequestID, r.URL.Path)
 	if timing != nil {
@@ -145,6 +148,7 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 				writeGatewayErrorStatus(w, http.StatusBadRequest, "model_not_available", "model is temporarily unavailable for the configured Plan")
 				return
 			}
+			next.Pricing = access.Pricing
 			access = next
 			continue
 		}
@@ -187,6 +191,7 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 				releaseGatewayAccess(&access)
 				next, resolveErr := s.app.ResolveGatewayAccess(r.Context(), apiKey, excludedAccountIDs...)
 				if resolveErr == nil {
+					next.Pricing = access.Pricing
 					access = next
 					switches++
 					continue
@@ -257,6 +262,7 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 				}
 				return
 			}
+			next.Pricing = access.Pricing
 			access = next
 			switches++
 			continue
@@ -301,6 +307,7 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 			releaseGatewayAccess(&access)
 			next, resolveErr := s.app.ResolveGatewayAccess(r.Context(), apiKey, excludedAccountIDs...)
 			if resolveErr == nil {
+				next.Pricing = access.Pricing
 				access = next
 				switches++
 				continue
@@ -359,6 +366,9 @@ func (s *Server) images(w http.ResponseWriter, r *http.Request) {
 	if !s.admitGatewayAPIKey(w, access.Credential.APIKeyID) {
 		return
 	}
+	if !s.requireGatewayPricing(w, r.Context(), &access) {
+		return
+	}
 	gatewayRequestID := gatewayRequestID(r)
 
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxGatewayBody))
@@ -389,6 +399,7 @@ func (s *Server) images(w http.ResponseWriter, r *http.Request) {
 				writeGatewayErrorStatus(w, http.StatusBadRequest, "model_not_available", "image model is temporarily unavailable for the configured Plan")
 				return
 			}
+			next.Pricing = access.Pricing
 			access = next
 			continue
 		}
@@ -417,6 +428,7 @@ func (s *Server) images(w http.ResponseWriter, r *http.Request) {
 				releaseGatewayAccess(&access)
 				next, resolveErr := s.app.ResolveGatewayAccess(r.Context(), apiKey, excludedAccountIDs...)
 				if resolveErr == nil {
+					next.Pricing = access.Pricing
 					access = next
 					switches++
 					continue
@@ -478,6 +490,7 @@ func (s *Server) images(w http.ResponseWriter, r *http.Request) {
 				_ = openai.WriteDrainedResponse(w, upstream, rejectedBody)
 				return
 			}
+			next.Pricing = access.Pricing
 			access = next
 			switches++
 			continue
@@ -510,6 +523,7 @@ func (s *Server) images(w http.ResponseWriter, r *http.Request) {
 			releaseGatewayAccess(&access)
 			next, resolveErr := s.app.ResolveGatewayAccess(r.Context(), apiKey, excludedAccountIDs...)
 			if resolveErr == nil {
+				next.Pricing = access.Pricing
 				access = next
 				switches++
 				continue
