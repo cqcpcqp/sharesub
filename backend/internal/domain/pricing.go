@@ -20,13 +20,13 @@ type ModelPrice struct {
 }
 
 type PricingConfig struct {
-	Models          []ModelPrice `json:"models"`
-	FastMultiplierBPS int64      `json:"fast_multiplier_bps"`
-	FlexMultiplierBPS int64      `json:"flex_multiplier_bps"`
-	WebSearchMicros int64        `json:"web_search_micros"`
-	Image1KMicros   int64        `json:"image_1k_micros"`
-	Image2KMicros   int64        `json:"image_2k_micros"`
-	Image4KMicros   int64        `json:"image_4k_micros"`
+	Models            []ModelPrice `json:"models"`
+	FastMultiplierBPS int64        `json:"fast_multiplier_bps"`
+	FlexMultiplierBPS int64        `json:"flex_multiplier_bps"`
+	WebSearchMicros   int64        `json:"web_search_micros"`
+	Image1KMicros     int64        `json:"image_1k_micros"`
+	Image2KMicros     int64        `json:"image_2k_micros"`
+	Image4KMicros     int64        `json:"image_4k_micros"`
 }
 
 type PricingVersionSummary struct {
