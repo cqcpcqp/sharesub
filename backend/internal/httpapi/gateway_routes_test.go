@@ -349,6 +349,60 @@ func TestSuccessfulGatewayResponseRecordsMetricBeforeQuotaWithFrozenTimes(t *tes
 	}
 }
 
+func TestSuccessfulAlphaSearchRecordsPinnedPricingBeforeQuota(t *testing.T) {
+	manager, err := security.New(make([]byte, 32), make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	credential := domain.GatewayCredential{
+		APIKeyID: "key", Member: domain.Member{ID: "member", UserID: "user", ShareBasisPoints: 10_000},
+		Plan:           domain.Plan{ID: "plan", AllocationMode: domain.AllocationFixed},
+		Account:        domain.Account{ID: "account", OwnerUserID: "owner", ChatGPTAccountID: "chatgpt"},
+		TokenExpiresAt: time.Now().Add(time.Hour), AccountBindingGeneration: 7,
+	}
+	credential.AccessTokenCiphertext, err = manager.Encrypt("access", []byte("owner:chatgpt:access"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &gatewayHandlerStore{credential: credential}
+	client := &http.Client{Transport: gatewayTestRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		headers := make(http.Header)
+		headers.Set("Content-Type", "application/json")
+		headers.Set("X-Request-Id", "alpha-search-request")
+		headers.Set("X-Codex-Primary-Used-Percent", "25")
+		headers.Set("X-Codex-Primary-Reset-After-Seconds", "600")
+		headers.Set("X-Codex-Primary-Window-Minutes", "300")
+		return &http.Response{StatusCode: http.StatusOK, Header: headers, Body: io.NopCloser(strings.NewReader(`{"results":[]}`))}, nil
+	})}
+	service := application.NewService(store, manager, nil, 0, "", "")
+	server := New(service, openai.NewGateway(client), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	request := httptest.NewRequest(http.MethodPost, "/v1/alpha/search", strings.NewReader(`{"model":"gpt-5.4","commands":{"search_query":[{"q":"news"}]}}`))
+	request.Header.Set("Authorization", "Bearer sk-sharesub-test")
+	recorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK || recorder.Body.String() != `{"results":[]}` {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	store.mu.Lock()
+	calls := append([]string(nil), store.calls...)
+	metric := store.metric
+	quotaSignals := append([]domain.QuotaSignal(nil), store.quotaSignals...)
+	store.mu.Unlock()
+	if strings.Join(calls, ",") != "metric,quota" {
+		t.Fatalf("store calls = %v, want metric before quota", calls)
+	}
+	if metric.RequestID != "alpha-search-request" || metric.PricingVersionID == nil || *metric.PricingVersionID != 1 {
+		t.Fatalf("alpha search metric did not pin pricing version: %+v", metric)
+	}
+	if metric.WebSearchCalls != 1 || metric.CostBreakdown.WebSearchMicros != 10_000 || metric.AccountCostMicros != 10_000 {
+		t.Fatalf("alpha search metric cost = %+v", metric)
+	}
+	if len(quotaSignals) != 1 {
+		t.Fatalf("alpha search quota signals = %+v", quotaSignals)
+	}
+}
+
 func TestResponsesRetriesRequestScopedCapacityOnSameAccountWithoutKeyBackoff(t *testing.T) {
 	manager, err := security.New(make([]byte, 32), make([]byte, 32))
 	if err != nil {

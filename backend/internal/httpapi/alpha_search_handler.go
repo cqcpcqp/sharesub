@@ -21,6 +21,9 @@ func (s *Server) alphaSearch(w http.ResponseWriter, r *http.Request) {
 	if !s.admitGatewayAPIKey(w, access.Credential.APIKeyID) {
 		return
 	}
+	if !s.requireGatewayPricing(w, r.Context(), &access) {
+		return
+	}
 	requestID := gatewayRequestID(r)
 
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxTextGatewayBody))
@@ -66,6 +69,7 @@ func (s *Server) alphaSearch(w http.ResponseWriter, r *http.Request) {
 				releaseGatewayAccess(&access)
 				next, resolveErr := s.app.ResolveGatewayAccess(r.Context(), apiKey, excludedAccountIDs...)
 				if resolveErr == nil {
+					next.Pricing = access.Pricing
 					access = next
 					switches++
 					continue
@@ -123,6 +127,7 @@ func (s *Server) alphaSearch(w http.ResponseWriter, r *http.Request) {
 				_ = openai.WriteDrainedResponse(w, upstream, rejectedBody)
 				return
 			}
+			next.Pricing = access.Pricing
 			access = next
 			switches++
 			continue
