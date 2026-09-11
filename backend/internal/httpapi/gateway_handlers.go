@@ -116,7 +116,7 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		defer timing.Finish()
 	}
 	bodyReadStarted := time.Now()
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxGatewayBody))
+	body, err := s.readGatewayBody(w, r, maxGatewayBody)
 	timing.BodyRead(bodyReadStarted, len(body))
 	if err != nil {
 		status, code, message := gatewayBodyReadError(err)
@@ -371,7 +371,7 @@ func (s *Server) images(w http.ResponseWriter, r *http.Request) {
 	}
 	gatewayRequestID := gatewayRequestID(r)
 
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxGatewayBody))
+	body, err := s.readGatewayBody(w, r, maxGatewayBody)
 	if err != nil {
 		status, code, message := gatewayBodyReadError(err)
 		if status != http.StatusRequestEntityTooLarge {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -175,6 +176,21 @@ func writeGatewayErrorStatus(w http.ResponseWriter, status int, code, message st
 	}})
 }
 
+// readGatewayBody extends only the gateway upload deadline and clears it after
+// a complete upload. Failed reads retain the deadline so net/http cannot block
+// indefinitely draining an incomplete body before sending the error response.
+func (s *Server) readGatewayBody(w http.ResponseWriter, r *http.Request, limit int64) ([]byte, error) {
+	controller := http.NewResponseController(w)
+	if err := controller.SetReadDeadline(time.Now().Add(s.gatewayBodyReadTimeout)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		return nil, err
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
+	if err == nil {
+		_ = controller.SetReadDeadline(time.Time{})
+	}
+	return body, err
+}
+
 // gatewayBodyReadError distinguishes an actual MaxBytesReader limit breach
 // from other failures while consuming the client request stream.  The latter
 // can be caused by a disconnect or truncated/invalid transfer and must not be
@@ -187,6 +203,10 @@ func gatewayBodyReadError(err error) (status int, code, message string) {
 			limitMessage = textGatewayBodyTooLargeMessage
 		}
 		return http.StatusRequestEntityTooLarge, "request_too_large", limitMessage
+	}
+	var timeoutErr net.Error
+	if errors.As(err, &timeoutErr) && timeoutErr.Timeout() {
+		return http.StatusRequestTimeout, "request_body_timeout", "Timed out receiving request body; the request has not been forwarded upstream. Check your upload connection or reduce images and attachments in the conversation, then retry."
 	}
 	return http.StatusBadRequest, "invalid_request_error", "failed to read request body"
 }

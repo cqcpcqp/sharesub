@@ -156,3 +156,28 @@ func TestLoadRequiresCompleteTencentSESConfiguration(t *testing.T) {
 		t.Fatalf("Load() error = %v", err)
 	}
 }
+
+func TestGatewayBodyReadTimeout(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  time.Duration
+	}{{"", 5 * time.Minute}, {"8m", 8 * time.Minute}, {"0s", 0}, {"-1s", 0}, {"invalid", 0}} {
+		t.Run(tc.value, func(t *testing.T) {
+			setRequiredEnvironment(t)
+			t.Setenv("SHARESUB_GATEWAY_BODY_READ_TIMEOUT", tc.value)
+			cfg, err := Load()
+			if tc.want == 0 {
+				if err == nil || !strings.Contains(err.Error(), "SHARESUB_GATEWAY_BODY_READ_TIMEOUT") {
+					t.Fatalf("error = %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.GatewayBodyReadTimeout != tc.want {
+				t.Fatalf("timeout = %v", cfg.GatewayBodyReadTimeout)
+			}
+		})
+	}
+}

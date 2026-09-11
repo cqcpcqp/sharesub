@@ -12,6 +12,7 @@ import (
 const minimumGatewayMetricRetention = 7 * 24 * time.Hour
 
 type Config struct {
+	GatewayBodyReadTimeout               time.Duration
 	GatewayTiming                        GatewayTiming
 	HTTPAddr                             string
 	DatabaseURL                          string
@@ -128,6 +129,10 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	gatewayBodyReadTimeout, err := positiveDurationEnv("SHARESUB_GATEWAY_BODY_READ_TIMEOUT", 5*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
 	responsesWSFirstMessageTimeout, err := positiveDurationEnv("SHARESUB_RESPONSES_WS_FIRST_MESSAGE_TIMEOUT", 30*time.Second)
 	if err != nil {
 		return Config{}, err
@@ -205,6 +210,7 @@ func Load() (Config, error) {
 		}
 	}
 	return Config{
+		GatewayBodyReadTimeout:               gatewayBodyReadTimeout,
 		HTTPAddr:                             envOr("SHARESUB_HTTP_ADDR", "127.0.0.1:8080"),
 		DatabaseURL:                          databaseURL,
 		PublicURL:                            envOr("SHARESUB_PUBLIC_URL", "http://127.0.0.1:5173"),

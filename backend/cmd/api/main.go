@@ -131,6 +131,7 @@ func main() {
 		MaxRequestsPerMinutePerAPIKey: cfg.GatewayMaxRequestsPerMinutePerAPIKey,
 		FirstOutputTimeout:            cfg.GatewayFirstOutputTimeout,
 	})
+	api.SetGatewayBodyReadTimeout(cfg.GatewayBodyReadTimeout)
 	defer api.Close()
 	server := &http.Server{
 		Addr: cfg.HTTPAddr, Handler: api.Handler(),

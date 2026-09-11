@@ -146,6 +146,7 @@ openssl rand -base64 32
 | `SHARESUB_CLEANUP_INTERVAL` | 过期资源清理周期 | `6h` |
 | `SHARESUB_GATEWAY_METRIC_RETENTION` | 网关请求明细保留期；至少 7 天，清理边界按 UTC 整日对齐，清理前会汇总 | `2160h`（90 天） |
 | `SHARESUB_GATEWAY_MAX_REQUESTS_PER_MINUTE_PER_API_KEY` | 每个 API Key 的网关请求分钟上限，用于抑制突发重试风暴 | `300` |
+| `SHARESUB_GATEWAY_BODY_READ_TIMEOUT` | 网关请求体读取超时；正数时长，超时返回 408 / `request_body_timeout`，尚未转发上游；不影响响应流或 WebSocket 超时 | `5m` |
 | `SHARESUB_GATEWAY_FIRST_OUTPUT_TIMEOUT` | HTTP Responses 等待上游首个有效语义输出的最长时间 | `2m` |
 | `SHARESUB_GATEWAY_TIMING_ENABLED` | HTTP Responses 分阶段诊断日志开关，不改变转发和数据库指标；显式 `false` 可关闭 | `true` |
 | `SHARESUB_GATEWAY_TIMING_SLOW_THRESHOLD` | 请求总耗时达到此阈值时保留诊断日志 | `30s` |

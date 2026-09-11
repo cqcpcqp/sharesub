@@ -24,6 +24,7 @@ const gatewayBodyTooLargeMessage = "request body exceeds 256 MiB"
 const textGatewayBodyTooLargeMessage = "request body exceeds 32 MiB"
 
 type Server struct {
+	gatewayBodyReadTimeout  time.Duration
 	app                     *application.Service
 	gateway                 *openai.Gateway
 	responsesWebSocket      *openai.ResponsesWebSocketSession
@@ -64,6 +65,7 @@ func New(app *application.Service, gateway *openai.Gateway, logger *slog.Logger,
 	}
 	s := &Server{
 		app: app, gateway: gateway, logger: logger, mux: http.NewServeMux(),
+		gatewayBodyReadTimeout:  5 * time.Minute,
 		webSocketConfig:         config,
 		webSocketIngress:        newResponsesWebSocketIngressLimiter(config.MaxConnectionsPerAPIKey),
 		webSocketSessions:       newResponsesWebSocketSessionRegistry(),
@@ -79,6 +81,11 @@ func New(app *application.Service, gateway *openai.Gateway, logger *slog.Logger,
 	})
 	s.routes()
 	return s
+}
+
+// SetGatewayBodyReadTimeout configures the upload deadline before serving requests.
+func (s *Server) SetGatewayBodyReadTimeout(timeout time.Duration) {
+	s.gatewayBodyReadTimeout = timeout
 }
 
 func (s *Server) Handler() http.Handler {

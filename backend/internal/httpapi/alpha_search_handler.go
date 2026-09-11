@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"errors"
-	"io"
 	"net/http"
 	"time"
 
@@ -26,7 +25,7 @@ func (s *Server) alphaSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	requestID := gatewayRequestID(r)
 
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxTextGatewayBody))
+	body, err := s.readGatewayBody(w, r, maxTextGatewayBody)
 	if err != nil {
 		status, code, message := gatewayBodyReadError(err)
 		if status != http.StatusRequestEntityTooLarge {
