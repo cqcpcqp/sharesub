@@ -172,12 +172,12 @@ func (s *Service) AdminPlanPerformance(ctx context.Context, admin domain.User, p
 	return s.PlanPerformance(ctx, plan.OwnerUserID, planID, period, timezone)
 }
 
-func (s *Service) AdminPlanRequestErrors(ctx context.Context, admin domain.User, planID, period, timezone string, page, pageSize int) (domain.PlanRequestErrorList, error) {
+func (s *Service) AdminPlanRequestErrors(ctx context.Context, admin domain.User, planID, period, timezone string, page, pageSize int, username string) (domain.PlanRequestErrorList, error) {
 	plan, err := s.adminPlan(ctx, admin, planID)
 	if err != nil {
 		return domain.PlanRequestErrorList{}, err
 	}
-	return s.PlanRequestErrors(ctx, plan.OwnerUserID, planID, period, timezone, page, pageSize)
+	return s.PlanRequestErrors(ctx, plan.OwnerUserID, planID, period, timezone, page, pageSize, username)
 }
 
 func (s *Service) AdminListPlanAuditEvents(ctx context.Context, admin domain.User, planID string) ([]domain.AuditEvent, error) {

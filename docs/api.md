@@ -118,7 +118,7 @@ OAuth 开始接口返回 `authorization_url` 和 `flow_id`。完成授权后，�
 | `POST` | `/api/plans` | 登录 Token | `account_id`（可为空字符串）, `name`, `allocation_mode`, `owner_share_basis_points` | 创建方案；空账号可稍后绑定 |
 | `GET` | `/api/plans/{planID}` | 登录 Token | 无 | 获取当前成员可见的方案详情 |
 | `GET` | `/api/plans/{planID}/performance` | 登录 Token | `period`, `timezone` | 获取当前成员可见的性能、模型分布、Token 趋势及最近使用汇总；`period` 固定为 `today`、`30m`、`6h`、`12h` 或 `24h`；本日边界按 IANA 时区计算 |
-| `GET` | `/api/plans/{planID}/errors` | 登录 Token | `period`, `timezone`, `page`, `page_size` | 分页获取与成功率同口径的非 2xx 请求明细；`page_size` 为 `1..100` |
+| `GET` | `/api/plans/{planID}/errors` | 登录 Token | `period`, `timezone`, `page`, `page_size`, `username` | 分页获取与成功率同口径的非 2xx 请求明细；可选 `username` 按用户名不区分大小写的包含匹配筛选，空值表示全部，总数和分页使用相同筛选条件；`page_size` 为 `1..100` |
 | `PATCH` | `/api/plans/{planID}` | 登录 Token | `name`、`description`，或 `allocation_mode` + `member_allocations`（三种操作只传一种） | 房主修改名称/描述，或将共享 Plan 转为固定分配 |
 | `PATCH` | `/api/plans/{planID}/status` | 登录 Token | `status` | 房主归档或恢复 Plan |
 | `DELETE` | `/api/plans/{planID}` | 登录 Token | 无 | 删除已经归档的 Plan |
@@ -218,7 +218,7 @@ Plan 详情的 `insights.window_usage` 按当前 OpenAI 账号实际返回的 5h
 | `GET` | `/api/admin/plans` | 管理员 Token | 无 | 列出全部 Plan 及最近 24 小时用量 |
 | `GET` | `/api/admin/plans/{planID}` | 管理员 Token | 无 | 以管理员权限获取任意 Plan 的完整详情 |
 | `GET` | `/api/admin/plans/{planID}/performance` | 管理员 Token | `period`, `timezone` | 获取任意 Plan 的性能与用量汇总 |
-| `GET` | `/api/admin/plans/{planID}/errors` | 管理员 Token | `period`, `timezone`, `page`, `page_size` | 获取任意 Plan 的非 2xx 请求明细 |
+| `GET` | `/api/admin/plans/{planID}/errors` | 管理员 Token | `period`, `timezone`, `page`, `page_size`, `username` | 获取任意 Plan 的非 2xx 请求明细；可选 `username` 按用户名不区分大小写的包含匹配筛选，空值表示全部，总数和分页使用相同筛选条件 |
 | `GET` | `/api/admin/plans/{planID}/audit-events` | 管理员 Token | 无 | 获取任意 Plan 的活动记录 |
 | `PATCH` | `/api/admin/plans/{planID}` | 管理员 Token | `name`、`description`，或 `allocation_mode` + `member_allocations`（三种操作只传一种） | 修改名称/描述，或将任意共享 Plan 转为固定分配 |
 | `PATCH` | `/api/admin/plans/{planID}/status` | 管理员 Token | `status` | 归档或恢复任意 Plan |

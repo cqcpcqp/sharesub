@@ -487,7 +487,7 @@ func (s *Store) PlanPerformance(ctx context.Context, planID, userID string, wind
 	return out, nil
 }
 
-func (s *Store) PlanRequestErrors(ctx context.Context, planID, userID string, windowStart, windowEnd time.Time, page, pageSize int) (domain.PlanRequestErrorList, error) {
+func (s *Store) PlanRequestErrors(ctx context.Context, planID, userID string, windowStart, windowEnd time.Time, page, pageSize int, username string) (domain.PlanRequestErrorList, error) {
 	out := domain.PlanRequestErrorList{
 		Items: make([]domain.PlanRequestError, 0),
 		Page:  page, PageSize: pageSize,
@@ -504,7 +504,11 @@ func (s *Store) PlanRequestErrors(ctx context.Context, planID, userID string, wi
 		LEFT JOIN gateway_request_metrics g ON g.plan_id=a.id
 			AND g.created_at>=$3 AND g.created_at<=$4
 			AND (g.status_code<200 OR g.status_code>=300)
-		GROUP BY a.id`, planID, userID, windowStart, windowEnd).Scan(&out.Total)
+			AND ($5='' OR EXISTS (
+				SELECT 1 FROM plan_members m JOIN users u ON u.id=m.user_id
+				WHERE m.id=g.member_id AND strpos(lower(u.username),lower($5))>0
+			))
+		GROUP BY a.id`, planID, userID, windowStart, windowEnd, username).Scan(&out.Total)
 	if err != nil {
 		return domain.PlanRequestErrorList{}, mapError(err)
 	}
@@ -520,8 +524,9 @@ func (s *Store) PlanRequestErrors(ctx context.Context, planID, userID string, wi
 		JOIN api_keys k ON k.id=g.api_key_id
 		WHERE g.plan_id=$1 AND g.created_at>=$3 AND g.created_at<=$4
 			AND (g.status_code<200 OR g.status_code>=300)
+			AND ($7='' OR strpos(lower(u.username),lower($7))>0)
 		ORDER BY g.created_at DESC,g.id DESC
-		LIMIT $5 OFFSET $6`, planID, userID, windowStart, windowEnd, pageSize, (page-1)*pageSize)
+		LIMIT $5 OFFSET $6`, planID, userID, windowStart, windowEnd, pageSize, (page-1)*pageSize, username)
 	if err != nil {
 		return domain.PlanRequestErrorList{}, err
 	}

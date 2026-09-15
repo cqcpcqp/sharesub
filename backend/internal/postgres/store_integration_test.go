@@ -825,7 +825,7 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	errorsPage, err := store.PlanRequestErrors(ctx, "plan", "applicant", now.Add(-time.Hour), now.Add(time.Minute), 1, 10)
+	errorsPage, err := store.PlanRequestErrors(ctx, "plan", "applicant", now.Add(-time.Hour), now.Add(time.Minute), 1, 10, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -836,6 +836,23 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 	if errorItem.RequestID != "owner-request" || errorItem.StatusCode != http.StatusInternalServerError || errorItem.ErrorSource != domain.GatewayErrorSourceUpstream || errorItem.ErrorCode != "server_error" || errorItem.ErrorMessage != "upstream temporarily unavailable" || errorItem.Endpoint != "/v1/responses" || !errorItem.IsStream || errorItem.MemberUsername == "" || errorItem.APIKeyPrefix != "sk-sharesub-old" {
 		t.Fatalf("plan error item = %+v", errorItem)
 	}
+	for _, tc := range []struct {
+		username string
+		total    int64
+	}{
+		{strings.ToUpper(string([]rune(errorItem.MemberUsername)[:2])), 1},
+		{"no-such-member", 0}, {"%", 0}, {"_", 0},
+	} {
+		filtered, err := store.PlanRequestErrors(ctx, "plan", "applicant", now.Add(-time.Hour), now.Add(time.Minute), 1, 10, tc.username)
+		if err != nil || int64(filtered.Total) != tc.total || int64(len(filtered.Items)) != tc.total {
+			t.Fatalf("username %q: result=%+v, err=%v", tc.username, filtered, err)
+		}
+	}
+	filteredPage, err := store.PlanRequestErrors(ctx, "plan", "applicant", now.Add(-time.Hour), now.Add(time.Minute), 2, 1, errorItem.MemberUsername)
+	if err != nil || filteredPage.Total != 1 || len(filteredPage.Items) != 0 {
+		t.Fatalf("filtered pagination=%+v, err=%v", filteredPage, err)
+	}
+
 	dashboard, err := store.Dashboard(ctx, "applicant", now.Add(-12*time.Hour), now.Add(-23*time.Hour), now.AddDate(0, 0, -364), now.Add(time.Minute), "UTC")
 	if err != nil {
 		t.Fatal(err)

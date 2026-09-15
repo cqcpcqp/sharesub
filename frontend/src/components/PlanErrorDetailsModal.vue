@@ -13,6 +13,13 @@
       <p>仅保存结构化错误信息，不保存请求正文或完整响应体。</p>
     </div>
 
+    <form class="error-filters" @submit.prevent="applyFilter">
+      <label for="error-username">用户名</label>
+      <NInput id="error-username" v-model:value="usernameInput" placeholder="输入用户名，支持部分匹配" clearable />
+      <NButton attr-type="submit" type="primary" size="small">查询</NButton>
+      <NButton size="small" :disabled="usernameInput === '' && username === ''" @click="resetFilter">重置</NButton>
+    </form>
+
     <div v-if="loading" class="error-modal-state" aria-live="polite">
       <NSpin size="small" />
       <span>正在加载错误明细…</span>
@@ -26,7 +33,8 @@
 
     <div v-else-if="items.length === 0" class="error-modal-state error-modal-empty">
       <CircleCheck :size="22" />
-      <div><strong>这个时间段没有错误</strong><span>当前所有已记录请求都返回了 2xx。</span></div>
+      <div v-if="username"><strong>没有匹配的错误记录</strong><span>当前时间段内没有用户名包含“{{ username }}”的错误记录，请修改用户名或重置筛选。</span></div>
+      <div v-else><strong>这个时间段没有错误</strong><span>当前所有已记录请求都返回了 2xx。</span></div>
     </div>
 
     <template v-else>
@@ -95,7 +103,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { NButton, NPagination, NSpin } from 'naive-ui'
+import { NButton, NInput, NPagination, NSpin } from 'naive-ui'
 import { CircleCheck, TriangleAlert } from 'lucide-vue-next'
 import { api } from '../api'
 import { adminAPI } from '../api/admin'
@@ -108,6 +116,8 @@ const emit = defineEmits<{ close: [] }>()
 
 const pageSize = 20
 const page = ref(1)
+const usernameInput = ref('')
+const username = ref('')
 const items = ref<PlanRequestError[]>([])
 const total = ref(0)
 const loading = ref(true)
@@ -148,8 +158,9 @@ async function loadPage(nextPage: number) {
   loadError.value = ''
   try {
     const result = props.adminMode
-      ? await adminAPI.adminPlanRequestErrors(props.planId, props.period, nextPage, pageSize, controller.signal)
-      : await api.planRequestErrors(props.planId, props.period, nextPage, pageSize, controller.signal)
+      ? await adminAPI.adminPlanRequestErrors(props.planId, props.period, nextPage, pageSize, controller.signal, username.value)
+      : await api.planRequestErrors(props.planId, props.period, nextPage, pageSize, controller.signal, username.value)
+    if (controller.signal.aborted) return
     items.value = result.items
     total.value = result.total
   } catch (error) {
@@ -158,6 +169,17 @@ async function loadPage(nextPage: number) {
   } finally {
     if (!controller.signal.aborted) loading.value = false
   }
+}
+
+function applyFilter() {
+  username.value = usernameInput.value.trim()
+  usernameInput.value = username.value
+  void loadPage(1)
+}
+
+function resetFilter() {
+  usernameInput.value = ''
+  applyFilter()
 }
 
 function toggleDetails(id: number) {
@@ -183,6 +205,9 @@ onBeforeUnmount(() => requestController?.abort())
 .error-modal-toolbar strong { color: var(--red); font-size: 18px; font-variant-numeric: tabular-nums; }
 .error-modal-toolbar span, .error-modal-toolbar p { color: var(--muted); font-size: 11px; }
 .error-modal-toolbar p { margin: 0; text-align: right; }
+.error-filters { display: flex; align-items: center; gap: 10px; }
+.error-filters label { flex-shrink: 0; color: var(--ink); font-size: 12px; }
+.error-filters .n-input { width: 280px; max-width: 100%; }
 .error-modal-state { min-height: 260px; display: flex; align-items: center; justify-content: center; gap: 10px; color: var(--muted); font-size: 12px; }
 .error-modal-state > div { display: grid; gap: 4px; }
 .error-modal-state strong { color: var(--ink-strong); font-size: 12px; }
@@ -224,6 +249,8 @@ onBeforeUnmount(() => requestController?.abort())
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
 
 @media (max-width: 720px) {
+  .error-filters { flex-wrap: wrap; }
+  .error-filters .n-input { flex: 1; min-width: 160px; }
   .error-modal-toolbar { align-items: flex-start; flex-direction: column; gap: 5px; }
   .error-modal-toolbar p { text-align: left; }
   .error-detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

@@ -19,16 +19,13 @@ import type {
   PlanDetail,
   PlanPerformance,
   PlanQuotaResetResult,
-  PlanRequestErrorList,
   QuotaRefreshResult,
   QuotaResetCredits,
   User,
 } from '../types'
 import { request } from './client'
-
-function browserTimezone() {
-  return Intl.DateTimeFormat().resolvedOptions().timeZone
-}
+import { browserTimezone } from './timezone'
+import { requestPlanErrors } from './planErrors'
 
 export const adminAPI = {
   adminPlanConcurrency: (id: string, signal?: AbortSignal) => request<PlanConcurrency>(`/api/admin/plans/${id}/concurrency`, { signal }),
@@ -46,7 +43,7 @@ export const adminAPI = {
   adminPlans: () => request<AdminPlan[]>('/api/admin/plans'),
   adminPlan: (id: string) => request<PlanDetail>(`/api/admin/plans/${id}?timezone=${encodeURIComponent(browserTimezone())}`),
   adminPlanPerformance: (id: string, period: PerformancePeriod) => request<PlanPerformance>(`/api/admin/plans/${id}/performance?period=${period}&timezone=${encodeURIComponent(browserTimezone())}`),
-  adminPlanRequestErrors: (id: string, period: PerformancePeriod, page: number, pageSize: number, signal?: AbortSignal) => request<PlanRequestErrorList>(`/api/admin/plans/${id}/errors?period=${period}&timezone=${encodeURIComponent(browserTimezone())}&page=${page}&page_size=${pageSize}`, { signal }),
+  adminPlanRequestErrors: (id: string, period: PerformancePeriod, page: number, pageSize: number, signal?: AbortSignal, username?: string) => requestPlanErrors(`/api/admin/plans/${id}/errors`, period, page, pageSize, signal, username),
   adminPlanAuditEvents: (id: string) => request<AuditEvent[]>(`/api/admin/plans/${id}/audit-events`),
   adminUpdatePlan: (id: string, payload: { name: string } | { description: string }) => request<Plan>(`/api/admin/plans/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
   adminConvertPlanToFixed: (id: string, memberAllocations: MemberShareAllocation[]) => request<Plan>(`/api/admin/plans/${id}`, { method: 'PATCH', body: JSON.stringify({ allocation_mode: 'fixed', member_allocations: memberAllocations }) }),

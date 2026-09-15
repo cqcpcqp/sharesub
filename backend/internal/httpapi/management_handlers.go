@@ -249,7 +249,7 @@ func (s *Server) planRequestErrors(w http.ResponseWriter, r *http.Request) {
 	}
 	v, err := s.app.PlanRequestErrors(
 		r.Context(), currentUser(r).ID, r.PathValue("planID"),
-		r.URL.Query().Get("period"), r.URL.Query().Get("timezone"), page, pageSize,
+		r.URL.Query().Get("period"), r.URL.Query().Get("timezone"), page, pageSize, r.URL.Query().Get("username"),
 	)
 	writeResult(w, v, err)
 }

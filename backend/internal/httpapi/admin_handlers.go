@@ -123,7 +123,7 @@ func (s *Server) adminPlanRequestErrors(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
-	v, err := s.app.AdminPlanRequestErrors(r.Context(), currentUser(r), r.PathValue("planID"), r.URL.Query().Get("period"), r.URL.Query().Get("timezone"), page, pageSize)
+	v, err := s.app.AdminPlanRequestErrors(r.Context(), currentUser(r), r.PathValue("planID"), r.URL.Query().Get("period"), r.URL.Query().Get("timezone"), page, pageSize, r.URL.Query().Get("username"))
 	writeResult(w, v, err)
 }
 

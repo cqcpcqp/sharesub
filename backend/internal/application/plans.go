@@ -166,7 +166,7 @@ func (s *Service) PlanPerformance(ctx context.Context, userID, planID, period, t
 	return s.store.PlanPerformance(ctx, planID, userID, windowStart, windowEnd, bucketSize, bucketOrigin)
 }
 
-func (s *Service) PlanRequestErrors(ctx context.Context, userID, planID, period, timezone string, page, pageSize int) (domain.PlanRequestErrorList, error) {
+func (s *Service) PlanRequestErrors(ctx context.Context, userID, planID, period, timezone string, page, pageSize int, username string) (domain.PlanRequestErrorList, error) {
 	if page < 1 || pageSize < 1 || pageSize > 100 {
 		return domain.PlanRequestErrorList{}, domain.ErrInvalidInput
 	}
@@ -178,7 +178,7 @@ func (s *Service) PlanRequestErrors(ctx context.Context, userID, planID, period,
 	if err != nil {
 		return domain.PlanRequestErrorList{}, err
 	}
-	return s.store.PlanRequestErrors(ctx, planID, userID, windowStart, windowEnd, page, pageSize)
+	return s.store.PlanRequestErrors(ctx, planID, userID, windowStart, windowEnd, page, pageSize, strings.TrimSpace(username))
 }
 
 func (s *Service) ListPublicPlans(ctx context.Context, userID string) ([]domain.PublicPlan, error) {

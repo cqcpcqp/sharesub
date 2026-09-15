@@ -2,6 +2,8 @@
 
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { NButton, NPagination } from 'naive-ui'
+import { adminAPI } from '../api/admin'
 import { api } from '../api'
 import PlanErrorDetailsModal from './PlanErrorDetailsModal.vue'
 
@@ -44,7 +46,7 @@ describe('PlanErrorDetailsModal', () => {
     })
     await flushPromises()
 
-    expect(request).toHaveBeenCalledWith('plan-1', '24h', 1, 20, expect.any(AbortSignal))
+    expect(request).toHaveBeenCalledWith('plan-1', '24h', 1, 20, expect.any(AbortSignal), '')
     expect(wrapper.text()).toContain('1条错误')
     expect(wrapper.text()).toContain('server_error')
     expect(wrapper.text()).toContain('upstream temporarily unavailable')
@@ -52,6 +54,38 @@ describe('PlanErrorDetailsModal', () => {
     expect(wrapper.text()).toContain('/v1/responses')
     expect(wrapper.text()).toContain('团队账号')
     expect(wrapper.text()).toContain('Codex Key')
+  })
+
+  it.each([false, true])('filters all pages and resets the filter (admin=%s)', async (adminMode) => {
+    const request = adminMode
+      ? vi.spyOn(adminAPI, 'adminPlanRequestErrors')
+      : vi.spyOn(api, 'planRequestErrors')
+    request.mockResolvedValue({ items: [errorItem], total: 43, page: 1, page_size: 20 })
+    const wrapper = mount(PlanErrorDetailsModal, {
+      props: { planId: 'plan-1', period: '24h', adminMode },
+      global: { stubs: { ModalShell: modalStub } },
+    })
+    await flushPromises()
+    wrapper.getComponent(NPagination).vm.$emit('update:page', 2)
+    await flushPromises()
+    await wrapper.get('input').setValue('  成员一  ')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(request).toHaveBeenLastCalledWith('plan-1', '24h', 1, 20, expect.any(AbortSignal), '成员一')
+    wrapper.getComponent(NPagination).vm.$emit('update:page', 2)
+    await flushPromises()
+    expect(request).toHaveBeenLastCalledWith('plan-1', '24h', 2, 20, expect.any(AbortSignal), '成员一')
+    request.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20 })
+    await wrapper.get('input').setValue('不存在')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(wrapper.text()).toContain('没有匹配的错误记录')
+    expect(wrapper.text()).not.toContain('当前所有已记录请求都返回了 2xx')
+    await wrapper.findAllComponents(NButton).find(button => button.text() === '重置')!.trigger('click')
+    await flushPromises()
+    expect(request).toHaveBeenLastCalledWith('plan-1', '24h', 1, 20, expect.any(AbortSignal), '')
+    expect(wrapper.get('input').element.value).toBe('')
+    wrapper.unmount()
   })
 
   it('shows an explicit empty state when the period has no errors', async () => {
@@ -76,6 +110,6 @@ describe('PlanErrorDetailsModal', () => {
 
     expect(wrapper.text()).toContain('错误明细加载失败')
     expect(wrapper.text()).toContain('数据库暂时不可用')
-    expect(wrapper.get('button').text()).toContain('重试')
+    expect(wrapper.text()).toContain('重试')
   })
 })

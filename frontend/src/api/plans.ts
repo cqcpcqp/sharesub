@@ -13,7 +13,6 @@ import type {
   PlanDetail,
   PlanPerformance,
   PlanQuotaResetResult,
-  PlanRequestErrorList,
   PublicPlan,
   QuotaRefreshResult,
   QuotaResetCredits,
@@ -21,10 +20,8 @@ import type {
   QuotaResetVoteState,
 } from '../types'
 import { request } from './client'
-
-function browserTimezone() {
-  return Intl.DateTimeFormat().resolvedOptions().timeZone
-}
+import { browserTimezone } from './timezone'
+import { requestPlanErrors } from './planErrors'
 
 export const planAPI = {
   planConcurrency: (id: string, signal?: AbortSignal) => request<PlanConcurrency>(`/api/plans/${id}/concurrency`, { signal }),
@@ -33,7 +30,7 @@ export const planAPI = {
   createPlan: (payload: { account_id: string; name: string; allocation_mode: PlanAllocationMode; owner_share_basis_points: number }) => request<PlanDetail>('/api/plans', { method: 'POST', body: JSON.stringify(payload) }),
   plan: (id: string) => request<PlanDetail>(`/api/plans/${id}?timezone=${encodeURIComponent(browserTimezone())}`),
   planPerformance: (id: string, period: PerformancePeriod) => request<PlanPerformance>(`/api/plans/${id}/performance?period=${period}&timezone=${encodeURIComponent(browserTimezone())}`),
-  planRequestErrors: (id: string, period: PerformancePeriod, page: number, pageSize: number, signal?: AbortSignal) => request<PlanRequestErrorList>(`/api/plans/${id}/errors?period=${period}&timezone=${encodeURIComponent(browserTimezone())}&page=${page}&page_size=${pageSize}`, { signal }),
+  planRequestErrors: (id: string, period: PerformancePeriod, page: number, pageSize: number, signal?: AbortSignal, username?: string) => requestPlanErrors(`/api/plans/${id}/errors`, period, page, pageSize, signal, username),
   renamePlan: (id: string, name: string) => request<Plan>(`/api/plans/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) }),
   updatePlanDescription: (id: string, description: string) => request<Plan>(`/api/plans/${id}`, { method: 'PATCH', body: JSON.stringify({ description }) }),
   convertPlanToFixed: (id: string, memberAllocations: MemberShareAllocation[]) => request<Plan>(`/api/plans/${id}`, { method: 'PATCH', body: JSON.stringify({ allocation_mode: 'fixed', member_allocations: memberAllocations }) }),
