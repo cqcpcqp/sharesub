@@ -123,6 +123,15 @@ func normalizeFastPolicy(policy []domain.FastPolicyRule, allowUserScope bool) ([
 
 func (s *Service) setAccountProxy(account *domain.Account, proxyURL string) error {
 	account.ProxyURL = proxyURL
+	if len(account.ProxyURLCiphertext) > 0 && proxyURL != "" {
+		existing, err := s.security.Decrypt(account.ProxyURLCiphertext, []byte(account.OwnerUserID+":"+account.ChatGPTAccountID+":proxy"))
+		if err != nil {
+			return err
+		}
+		if existing == proxyURL {
+			return nil
+		}
+	}
 	account.ProxyURLCiphertext = nil
 	if proxyURL == "" {
 		return nil

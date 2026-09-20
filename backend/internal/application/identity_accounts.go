@@ -344,6 +344,7 @@ func (s *Service) CompleteOpenAIConnect(ctx context.Context, userID, state, code
 		PlanType: token.PlanType, AccessTokenCiphertext: access, RefreshTokenCiphertext: refresh,
 		MaxConcurrency: config.MaxConcurrency, RPMLimit: config.RPMLimit, FastPolicy: config.FastPolicy,
 		CodexFingerprintMode: config.CodexFingerprintMode,
+		StateEnabled:         config.StateEnabled,
 		TokenExpiresAt:       token.ExpiresAt, Status: config.Status, CreatedAt: s.now(),
 	}
 	if err := s.setAccountProxy(&account, config.ProxyURL); err != nil {
@@ -476,6 +477,7 @@ func (s *Service) updateAccountConfig(ctx context.Context, actorUserID, ownerUse
 	account.RPMLimit = config.RPMLimit
 	account.FastPolicy = config.FastPolicy
 	account.CodexFingerprintMode = config.CodexFingerprintMode
+	account.StateEnabled = config.StateEnabled
 	account.Status = config.Status
 	if err := s.setAccountProxy(&account, config.ProxyURL); err != nil {
 		return domain.Account{}, err

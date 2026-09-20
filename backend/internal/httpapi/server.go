@@ -148,6 +148,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/users/{userID}/avatar", s.userAvatar)
 	s.mux.Handle("GET /api/dashboard", s.requireUser(http.HandlerFunc(s.dashboard)))
 	s.mux.Handle("GET /api/accounts", s.requireUser(http.HandlerFunc(s.listAccounts)))
+	s.mux.Handle("GET /api/accounts/{accountID}/state", s.requireUser(http.HandlerFunc(s.accountCodexState)))
+	s.mux.Handle("POST /api/accounts/{accountID}/state/refresh", s.requireUser(http.HandlerFunc(s.accountCodexState)))
 	s.mux.Handle("PATCH /api/accounts/{accountID}", s.requireUser(http.HandlerFunc(s.updateAccount)))
 	s.mux.Handle("POST /api/accounts/{accountID}/token/refresh", s.requireUser(http.HandlerFunc(s.manualAccountTokenRefresh)))
 	s.mux.Handle("POST /api/accounts/openai/oauth/start", s.requireUser(http.HandlerFunc(s.oauthStart)))

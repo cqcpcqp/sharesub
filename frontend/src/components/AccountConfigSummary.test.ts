@@ -16,7 +16,7 @@ const account: Account = {
     service_tier: 'priority', action: 'filter', user_ids: ['member'], error_message: '',
     model_whitelist: ['gpt-5.5*'], fallback_action: 'pass', fallback_error_message: '',
   }],
-  codex_fingerprint_mode: 'session',
+  codex_fingerprint_mode: 'session', state_enabled: false,
   subscription_expires_at: '2026-09-06T10:00:00Z', token_expires_at: '2026-08-13T02:46:00Z', status: 'active', created_at: '2026-08-01T00:00:00Z',
 }
 

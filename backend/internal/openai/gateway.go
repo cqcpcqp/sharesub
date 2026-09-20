@@ -71,6 +71,7 @@ type Gateway struct {
 	now                  func() time.Time
 	quotaResetCreditsURL string
 	quotaResetConsumeURL string
+	state                application.CodexStateController
 }
 
 type proxyClientEntry struct {
@@ -415,8 +416,10 @@ func hasRequiredQuotaWindows(signals []domain.QuotaSignal) bool {
 }
 
 type CodexFingerprintContext struct {
-	AccountID string
-	Mode      string
+	AccountID    string
+	Mode         string
+	StateEnabled bool
+	StateScope   string
 }
 
 func (g *Gateway) Forward(ctx context.Context, inbound *http.Request, body []byte, metadata RequestBilling, accessToken, chatGPTAccountID, apiKeyID, proxyURL string, fingerprintContext ...CodexFingerprintContext) (*http.Response, error) {
@@ -502,11 +505,13 @@ func (g *Gateway) Forward(ctx context.Context, inbound *http.Request, body []byt
 	if err != nil {
 		return nil, fmt.Errorf("configure account proxy: %w", err)
 	}
+	stateReceipt := g.prepareState(ctx, req, metadata.Model, compact || images, fingerprintContext)
 	req = traceTimingRequest(req, len(body))
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("forward Codex request: %w", err)
 	}
+	g.watchState(resp, metadata.Model, stateReceipt, compact || images, fingerprintContext)
 	if timing, ok := req.Context().Value(attemptTimingKey{}).(*attemptTiming); ok {
 		resp.Request = req
 		timing.mu.Lock()

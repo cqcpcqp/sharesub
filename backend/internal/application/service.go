@@ -18,6 +18,7 @@ const defaultEmailVerificationTTL = time.Hour
 const defaultEmailResendCooldown = time.Minute
 
 type Service struct {
+	codexState           *CodexStateService
 	logger               *slog.Logger
 	pricingCache         sync.Map
 	paymentConfig        payment.Config
@@ -73,6 +74,7 @@ type AccountConfigInput struct {
 	RPMLimit             int                     `json:"rpm_limit"`
 	FastPolicy           []domain.FastPolicyRule `json:"fast_policy"`
 	CodexFingerprintMode string                  `json:"codex_fingerprint_mode"`
+	StateEnabled         bool                    `json:"state_enabled"`
 	Status               string                  `json:"status"`
 }
 

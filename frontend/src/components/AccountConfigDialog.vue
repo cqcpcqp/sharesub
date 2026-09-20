@@ -7,6 +7,7 @@
     @close="emit('close')"
   >
     <AccountConfigFields v-model="config" :show-status="true" :policy-user-options="policyUserOptions" />
+    <CodexStatePanel v-if="account.state_enabled" :account-id="account.id" />
     <template #footer>
       <div class="account-dialog-footer">
         <NButton secondary @click="emit('reauthorize', account)">
@@ -28,9 +29,10 @@
 <script setup lang="ts">
 import { NButton } from 'naive-ui'
 import { RotateCw, Save } from 'lucide-vue-next'
-import { ref, watch } from 'vue'
+import { defineAsyncComponent, ref, watch } from 'vue'
 import type { Account, AccountConfigInput } from '../types'
 import AccountConfigFields from './AccountConfigFields.vue'
+const CodexStatePanel = defineAsyncComponent(() => import('./CodexStatePanel.vue'))
 import ModalShell from './ModalShell.vue'
 
 const props = withDefaults(defineProps<{
@@ -51,7 +53,7 @@ const emit = defineEmits<{
 const config = ref<AccountConfigInput>(emptyConfig())
 
 function emptyConfig(): AccountConfigInput {
-  return { name: '', notes: '', proxy_url: '', max_concurrency: 0, rpm_limit: 0, fast_policy: [], codex_fingerprint_mode: 'session', status: 'active' }
+  return { name: '', notes: '', proxy_url: '', max_concurrency: 0, rpm_limit: 0, fast_policy: [], codex_fingerprint_mode: 'session', state_enabled: false, status: 'active' }
 }
 
 watch(() => props.account, (account) => {
@@ -67,6 +69,7 @@ watch(() => props.account, (account) => {
     rpm_limit: account.rpm_limit,
     fast_policy: account.fast_policy.map(rule => ({ ...rule, user_ids: [...rule.user_ids], model_whitelist: [...rule.model_whitelist] })),
     codex_fingerprint_mode: account.codex_fingerprint_mode,
+    state_enabled: account.state_enabled,
     status: account.status,
   }
 }, { immediate: true })

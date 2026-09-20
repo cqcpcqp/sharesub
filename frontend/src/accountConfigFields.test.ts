@@ -8,7 +8,7 @@ import AccountConfigFields from './components/AccountConfigFields.vue'
 
 const modelValue: AccountConfigInput = {
   name: '团队主账号', notes: '共享账号', proxy_url: 'http://127.0.0.1:7890',
-  max_concurrency: 2, rpm_limit: 60, fast_policy: [], codex_fingerprint_mode: 'session', status: 'active',
+  max_concurrency: 2, rpm_limit: 60, fast_policy: [], codex_fingerprint_mode: 'session', state_enabled: false, status: 'active',
 }
 
 describe('AccountConfigFields', () => {
@@ -42,4 +42,13 @@ describe('AccountConfigFields', () => {
       }],
     })
   })
+})
+
+it('keeps STATE off by default and emits an explicit opt-in', async () => {
+  const wrapper = mount(AccountConfigFields, { props: { modelValue } })
+  const control = wrapper.get('[role="switch"]')
+  expect(control.attributes('aria-checked')).toBe('false')
+  await control.trigger('click')
+  expect(wrapper.emitted('update:modelValue')?.at(-1)).toEqual([{ ...modelValue, state_enabled: true }])
+  expect(wrapper.text()).toContain('探测会消耗账号额度')
 })

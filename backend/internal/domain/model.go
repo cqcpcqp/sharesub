@@ -188,6 +188,7 @@ type Account struct {
 	RPMLimit               int              `json:"rpm_limit"`
 	FastPolicy             []FastPolicyRule `json:"fast_policy"`
 	CodexFingerprintMode   string           `json:"codex_fingerprint_mode"`
+	StateEnabled           bool             `json:"state_enabled"`
 	TokenExpiresAt         time.Time        `json:"token_expires_at"`
 	Status                 string           `json:"status"`
 	LastError              string           `json:"last_error,omitempty"`

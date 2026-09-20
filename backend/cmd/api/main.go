@@ -101,6 +101,10 @@ func main() {
 		}
 	}
 	app := application.NewServiceWithEmailVerification(store, securityManager, oauthClient, cfg.SessionTTL, cfg.OAuthRedirect, cfg.PublicURL, emailSender, cfg.EmailVerificationTTL, cfg.EmailResendCooldown, gateway)
+	stateService := application.NewCodexStateService(store, store, securityManager, gateway, cfg.OutboundProxy+"|"+os.Getenv("HTTPS_PROXY")+"|"+os.Getenv("https_proxy")+"|"+os.Getenv("NO_PROXY")+"|"+os.Getenv("no_proxy"))
+	app.SetCodexStateService(stateService)
+	gateway.SetStateController(stateService)
+	go stateService.Run(ctx)
 	app.SetLogger(logger)
 	app.SetRuntimeStatusProvider(runtimeMonitor)
 	if err := app.InitializePayments(ctx, config.EasyPay()); err != nil {

@@ -335,3 +335,18 @@ GET 返回固定字段：
 历史中有占用的已退出成员仍可出现在时间序列中；分配配置仅列出当前有效成员。所有时刻使用 RFC 3339，分钟以 UTC 对齐，前端按本地时区显示。平均值可以是小数，`observed_seconds=0` 时 `average=0` 是数值占位，图表应显示采集空白而非零并发。账号上限是当前配置，不代表历史上限。
 
 网关成员个人上限或共享池满时返回 `429 member_concurrency_limited`，账号总上限满仍返回 `429 account_concurrency_limited`；HTTP 路由继续使用现有其他候选 Plan 选择逻辑。WebSocket 后续轮次保持已绑定路由，容量不足以可重试关闭码 1013 结束连接。RPM 控制保持独立，不使用按时间补充的令牌桶代替并发归还。
+
+### Codex STATE（固定出口实验功能）
+
+账号响应和账号配置输入新增固定布尔字段 `state_enabled`，默认 `false`。
+新账号保存输入值，重新授权保留开关但撤销已有票据。
+
+| 方法 | 路径 | 权限 | 行为 |
+| --- | --- | --- | --- |
+| GET | `/api/accounts/{accountID}/state` | 账号所有者或管理员 | 查看运行状态 |
+| POST | `/api/accounts/{accountID}/state/refresh` | 账号所有者或管理员 | 提前重新验证可用票据；不绕过失败冷却；返回运行状态 |
+
+固定响应：`{enabled: boolean, supported: boolean, models: [{model: string, status: "pending" | "ready" | "unavailable", result: string, expires_at: string | null, next_attempt_at: string, attempts: number}]}`。
+`models` 始终为数组；时间为 RFC3339，`attempts` 为该模型任务累计采集轮数。`result` 是脱敏原因码，见 STATE 运行文档及前端标签映射。不会返回票据、密文、代理密码、指纹或 OAuth 凭据。
+
+当前仅普通 HTTP Responses 使用 STATE；无票据继续普通转发。详细流程、探测额度消耗和 WS 边界见 `codex-state-integration.md`。

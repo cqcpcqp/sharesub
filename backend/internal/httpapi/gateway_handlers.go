@@ -171,7 +171,7 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		}
 		attemptCtx, cancelAttempt, acceptUpstream := upstreamAttemptContext(r.Context())
 		upstream, err := s.gateway.Forward(attemptCtx, r, policyBody, policyMetadata, access.AccessToken, access.Credential.Account.ChatGPTAccountID, access.Credential.APIKeyID, access.ProxyURL, openai.CodexFingerprintContext{
-			AccountID: access.Credential.Account.ID, Mode: access.Credential.Account.CodexFingerprintMode,
+			AccountID: access.Credential.Account.ID, Mode: access.Credential.Account.CodexFingerprintMode, StateEnabled: access.Credential.Account.StateEnabled, StateScope: application.CodexStateAccessScope(access),
 		})
 		if err != nil {
 			cancelAttempt()
@@ -406,7 +406,7 @@ func (s *Server) images(w http.ResponseWriter, r *http.Request) {
 		attemptStartedAt := time.Now()
 		attemptCtx, cancelAttempt, acceptUpstream := upstreamAttemptContext(r.Context())
 		upstream, forwardErr := s.gateway.Forward(attemptCtx, r, forwardBody, billingMetadata, access.AccessToken, access.Credential.Account.ChatGPTAccountID, access.Credential.APIKeyID, access.ProxyURL, openai.CodexFingerprintContext{
-			AccountID: access.Credential.Account.ID, Mode: access.Credential.Account.CodexFingerprintMode,
+			AccountID: access.Credential.Account.ID, Mode: access.Credential.Account.CodexFingerprintMode, StateEnabled: access.Credential.Account.StateEnabled, StateScope: application.CodexStateAccessScope(access),
 		})
 		if forwardErr != nil {
 			cancelAttempt()

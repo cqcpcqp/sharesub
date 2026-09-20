@@ -19,6 +19,10 @@
           <label>Codex 指纹收敛<NSelect :value="modelValue.codex_fingerprint_mode" :options="codexFingerprintOptions" to="body" @update:value="updateFingerprintMode" /></label>
           <CodexFingerprintGuide :model-value="modelValue.codex_fingerprint_mode" />
         </div>
+        <div class="account-form-full account-form-state-toggle">
+          <div><strong>启用 Codex 状态票据</strong><small>实验功能，仅 HTTP Responses：通过当前出口探测并验证 Pro / Team 状态票据。探测会消耗账号额度；失败时仍正常转发，不保证恢复模型能力。</small></div>
+          <NSwitch aria-label="启用 Codex 状态票据" :value="modelValue.state_enabled" @update:value="updateStateEnabled" />
+        </div>
       </div>
     </section>
 
@@ -27,7 +31,7 @@
 </template>
 
 <script setup lang="ts">
-import { NInputNumber, NSelect } from 'naive-ui'
+import { NInputNumber, NSelect, NSwitch } from 'naive-ui'
 import { BadgeInfo, Gauge } from 'lucide-vue-next'
 import { updateAccountText, type AccountTextField } from '../accountConfigForm'
 import { codexFingerprintOptions, type CodexFingerprintMode } from '../codexFingerprint'
@@ -61,7 +65,17 @@ function updateFingerprintMode(value: CodexFingerprintMode) {
   emit('update:modelValue', { ...props.modelValue, codex_fingerprint_mode: value })
 }
 
+function updateStateEnabled(value: boolean) {
+  emit('update:modelValue', { ...props.modelValue, state_enabled: value })
+}
+
 function updateFastPolicy(fastPolicy: FastPolicyRule[]) {
   emit('update:modelValue', { ...props.modelValue, fast_policy: fastPolicy })
 }
 </script>
+
+<style scoped>
+.account-form-state-toggle { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.account-form-state-toggle > div { display: grid; gap: 6px; }
+.account-form-state-toggle small { color: var(--muted); line-height: 1.6; }
+</style>

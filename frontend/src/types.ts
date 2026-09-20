@@ -127,6 +127,7 @@ export interface Account {
   rpm_limit: number
   fast_policy: FastPolicyRule[]
   codex_fingerprint_mode: 'off' | 'device' | 'session' | 'full'
+  state_enabled: boolean
   token_expires_at: string
   status: AccountStatus
   last_error?: string
@@ -154,6 +155,7 @@ export interface AccountConfigInput {
   rpm_limit: number
   fast_policy: FastPolicyRule[]
   codex_fingerprint_mode: 'off' | 'device' | 'session' | 'full'
+  state_enabled: boolean
   status: AccountStatus
 }
 
@@ -569,4 +571,17 @@ export interface PlanConcurrency {
   updated_at: string
   points: { bucket_start: string; observed_seconds: number; average: number; peak: number }[]
   members: { user_id: string; username: string; current: number; average: number[] }[]
+}
+
+export interface CodexStateStatus {
+  enabled: boolean
+  supported: boolean
+  models: Array<{
+    model: string
+    status: 'pending' | 'ready' | 'unavailable'
+    result: string
+    expires_at: string | null
+    next_attempt_at: string
+    attempts: number
+  }>
 }
