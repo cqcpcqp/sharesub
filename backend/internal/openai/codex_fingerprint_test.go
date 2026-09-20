@@ -147,7 +147,7 @@ func TestCodexFingerprintOffLeavesRequestUntouched(t *testing.T) {
 	}
 }
 
-func TestResponsesWebSocketOffPreservesClientSessionHeaders(t *testing.T) {
+func TestResponsesWebSocketOffIsolatesClientSessionHeaders(t *testing.T) {
 	inbound := make(http.Header)
 	inbound.Set("session_id", "client-session")
 	inbound.Set("conversation_id", "client-conversation")
@@ -158,7 +158,8 @@ func TestResponsesWebSocketOffPreservesClientSessionHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if headers.Get("session_id") != "client-session" || headers.Get("conversation_id") != "client-conversation" {
-		t.Fatalf("off mode did not preserve client session headers: %v", headers)
+	identity := codexAccountIdentity{accountID: "account", apiKeyID: "key"}
+	if headers.Get("session_id") != identity.scope("session", "client-session") || headers.Get("conversation_id") != identity.scope("thread", "client-conversation") {
+		t.Fatalf("off mode did not isolate client session headers: %v", headers)
 	}
 }

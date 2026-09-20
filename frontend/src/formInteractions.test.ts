@@ -10,6 +10,8 @@ import { agreementVersions } from './agreements'
 import type { APIKey, Account, Plan, PlanDetail, PlanPerformance, PublicPlan, QuotaResetVote, User } from './types'
 import APIKeySetupWizard from './components/APIKeySetupWizard.vue'
 import AccountsView from './views/AccountsView.vue'
+import AccountConfigFields from './components/AccountConfigFields.vue'
+import AccountConfigDialog from './components/AccountConfigDialog.vue'
 import AuthView from './views/AuthView.vue'
 import KeysView from './views/KeysView.vue'
 import LobbyView from './views/LobbyView.vue'
@@ -977,6 +979,17 @@ describe('form interactions', () => {
     expect(wrapper.text()).toContain('批准加入后需等待房主接入账号，才能开始使用')
   })
 
+  it('preserves an existing account fingerprint mode when saving other settings', async () => {
+    const wrapper = mount(AccountConfigDialog, {
+      props: { account },
+      global: { stubs: { teleport: true } },
+    })
+    expect(wrapper.getComponent(AccountConfigFields).props('modelValue').codex_fingerprint_mode).toBe('session')
+    await findButton(wrapper, '保存配置')!.trigger('click')
+    expect(wrapper.emitted('save')?.[0]?.[0]).toMatchObject({ codex_fingerprint_mode: 'session' })
+    wrapper.unmount()
+  })
+
   it('edits and clears OAuth callback inputs', async () => {
     vi.spyOn(api, 'oauthStart').mockResolvedValue({ authorization_url: 'https://example.com/oauth', flow_id: 'flow' })
     const wrapper = mount(AccountsView, {
@@ -986,6 +999,7 @@ describe('form interactions', () => {
     })
     await findButton(wrapper, '接入账号')!.trigger('click')
     await flushPromises()
+    expect(wrapper.getComponent(AccountConfigFields).props('modelValue').codex_fingerprint_mode).toBe('off')
     const callback = wrapper.get('input[placeholder="http://localhost:1455/auth/callback?..."]')
     await callback.setValue('http://localhost:1455/auth/callback?code=test&state=flow')
     expect(callback.element).toHaveProperty('value', 'http://localhost:1455/auth/callback?code=test&state=flow')

@@ -310,6 +310,13 @@ func PrepareResponsesWebSocketFingerprint(config *ResponsesWebSocketDialConfig, 
 		return nil, err
 	}
 	config.Fingerprint = fingerprint
+	config.identityClientSession = sessionID
+	config.identityPrepared = true
+	identity := codexAccountIdentity{accountID: config.InternalAccountID, apiKeyID: config.APIKeyID}
+	frame, err = identity.body(frame, sessionID, fingerprint)
+	if err != nil {
+		return nil, err
+	}
 	return ApplyCodexFingerprintBody(frame, fingerprint)
 }
 
@@ -322,7 +329,7 @@ func responsesWebSocketHeaders(config ResponsesWebSocketDialConfig, promptCacheK
 	headers.Set("OpenAI-Beta", responsesWebSocketBetaV2)
 	applyCodexOAuthIdentity(headers, "")
 	applyCodexRoutingHint(headers, config.Model, config.ServiceTier)
-	for _, name := range []string{"Accept-Language", "X-Codex-Beta-Features", "X-Codex-Window-Id", "X-Codex-Installation-Id", "X-Codex-Turn-State", "X-Codex-Turn-Metadata"} {
+	for _, name := range []string{"Accept-Language", "Session-Id", "Conversation-Id", "Thread-Id", "X-Client-Request-Id", "X-Codex-Beta-Features", "X-Codex-Window-Id", "X-Codex-Installation-Id", "X-Codex-Turn-State", "X-Codex-Turn-Metadata"} {
 		for _, value := range config.InboundHeader.Values(name) {
 			if strings.TrimSpace(value) != "" {
 				headers.Add(name, value)
@@ -336,6 +343,15 @@ func responsesWebSocketHeaders(config ResponsesWebSocketDialConfig, promptCacheK
 	}
 	if sessionID == "" {
 		sessionID = strings.TrimSpace(promptCacheKey)
+	}
+	if config.InternalAccountID != "" {
+		sessionID = ClientCodexSessionID(config.InboundHeader, promptCacheKey)
+		if config.identityPrepared {
+			sessionID = config.identityClientSession
+		}
+		if conversationID == "" {
+			conversationID = strings.TrimSpace(config.InboundHeader.Get("Conversation-Id"))
+		}
 	}
 	fingerprint := config.Fingerprint
 	var err error
@@ -362,6 +378,10 @@ func responsesWebSocketHeaders(config ResponsesWebSocketDialConfig, promptCacheK
 		if conversationID != "" {
 			headers.Set("conversation_id", conversationID)
 		}
+	}
+	identity := codexAccountIdentity{accountID: config.InternalAccountID, apiKeyID: config.APIKeyID}
+	if err := identity.headers(headers); err != nil {
+		return nil, err
 	}
 	if err := ApplyCodexFingerprintHeaders(headers, fingerprint); err != nil {
 		return nil, err

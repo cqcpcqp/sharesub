@@ -9,8 +9,8 @@ export const codexFingerprintModes: Array<{
 }> = [
   {
     value: 'off',
-    label: '关闭（透传）',
-    description: '不改写标识，保留各客户端原本的设备、会话和对话身份。',
+    label: '关闭（默认）',
+    description: '保留各客户端的设备、会话和对话区别；标识仍按账号与 API Key 隔离。',
   },
   {
     value: 'device',
@@ -19,8 +19,8 @@ export const codexFingerprintModes: Array<{
   },
   {
     value: 'session',
-    label: '设备 + 会话（推荐）',
-    description: '统一设备和会话；按 API Key 与客户端会话隔离对话，适合共享账号。',
+    label: '设备 + 会话',
+    description: '统一设备和会话；按 API Key 与客户端会话隔离对话。',
   },
   {
     value: 'full',

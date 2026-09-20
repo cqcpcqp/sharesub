@@ -53,7 +53,7 @@ const emit = defineEmits<{
 const config = ref<AccountConfigInput>(emptyConfig())
 
 function emptyConfig(): AccountConfigInput {
-  return { name: '', notes: '', proxy_url: '', max_concurrency: 0, rpm_limit: 0, fast_policy: [], codex_fingerprint_mode: 'session', state_enabled: false, status: 'active' }
+  return { name: '', notes: '', proxy_url: '', max_concurrency: 0, rpm_limit: 0, fast_policy: [], codex_fingerprint_mode: 'off', state_enabled: false, status: 'active' }
 }
 
 watch(() => props.account, (account) => {

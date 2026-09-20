@@ -60,6 +60,10 @@ type ResponsesWebSocketDialConfig struct {
 	InboundHeader     http.Header
 	Model             string
 	ServiceTier       string
+
+	// Keep the original session: the relay parses billing again after body isolation.
+	identityClientSession string
+	identityPrepared      bool
 }
 
 type ResponsesWebSocketTurnRequest struct {

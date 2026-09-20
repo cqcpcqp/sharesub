@@ -660,7 +660,7 @@ func TestResponsesWebSocketHTTPFirstUpstreamRateLimitErrorSwitchesBeforeDownstre
 		t.Fatalf("dial Responses WebSocket: %v", err)
 	}
 	defer client.CloseNow()
-	firstFrame := `{"type":"response.create","model":"gpt-5.6-sol","input":"one"}`
+	firstFrame := `{"type":"response.create","model":"gpt-5.6-sol","input":"one","client_metadata":{"session_id":"client-session","x-codex-installation-id":"client-device"}}`
 	writeResponsesWebSocketHTTP(t, client, firstFrame)
 	gotFailedRequest := waitResponsesWebSocketHTTPWrite(t, firstUpstream)
 	firstUpstream.send(`{"type":"error","error":{"type":"usage_limit_error","code":"insufficient_quota","message":"usage limit reached"}}`)
@@ -683,7 +683,7 @@ func TestResponsesWebSocketHTTPFirstUpstreamRateLimitErrorSwitchesBeforeDownstre
 		failedMetadata["session_id"] == "" || successfulMetadata["session_id"] == "" ||
 		failedMetadata["session_id"] == successfulMetadata["session_id"] ||
 		failedMetadata["x-codex-installation-id"] == successfulMetadata["x-codex-installation-id"] {
-		t.Fatalf("account-specific fingerprints were not switched:\nfailed=%v\nsuccess=%v", failedMetadata, successfulMetadata)
+		t.Fatalf("account-specific identities were not switched:\nfailed=%v\nsuccess=%v", failedMetadata, successfulMetadata)
 	}
 	if dialer.dialCount() != 2 {
 		t.Fatalf("upstream dial count = %d, want 2", dialer.dialCount())

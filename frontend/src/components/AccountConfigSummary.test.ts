@@ -35,7 +35,7 @@ describe('AccountConfigSummary', () => {
         },
       },
     })
-    expect(wrapper.text()).toContain('设备 + 会话（推荐）')
+    expect(wrapper.text()).toContain('设备 + 会话')
     expect(wrapper.text()).toContain('按 API Key 与客户端会话隔离对话')
     expect(wrapper.text()).toContain('查看四种模式区别')
     expect(wrapper.text()).toContain('不会改变账号、模型或额度')

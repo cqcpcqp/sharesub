@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-const DefaultCodexFingerprintMode = "session"
+const DefaultCodexFingerprintMode = "off"
 
 type CodexFingerprintRequestError struct {
 	message string

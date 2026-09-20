@@ -434,8 +434,10 @@ func (g *Gateway) Forward(ctx context.Context, inbound *http.Request, body []byt
 		}
 	}
 	var fingerprint *CodexFingerprint
+	var identity codexAccountIdentity
 	fingerprintConfigured := len(fingerprintContext) > 0
 	if fingerprintConfigured {
+		identity = codexAccountIdentity{accountID: fingerprintContext[0].AccountID, apiKeyID: apiKeyID}
 		fingerprint, err = ResolveCodexFingerprint(CodexFingerprintConfig{
 			AccountID: fingerprintContext[0].AccountID, APIKeyID: apiKeyID, Mode: fingerprintContext[0].Mode, ClientSessionID: clientSessionID,
 		})
@@ -444,6 +446,10 @@ func (g *Gateway) Forward(ctx context.Context, inbound *http.Request, body []byt
 		return nil, err
 	}
 	if !compact {
+		body, err = identity.body(body, clientSessionID, fingerprint)
+		if err != nil {
+			return nil, err
+		}
 		body, err = ApplyCodexFingerprintBody(body, fingerprint)
 		if err != nil {
 			return nil, err
@@ -497,6 +503,17 @@ func (g *Gateway) Forward(ctx context.Context, inbound *http.Request, body []byt
 		if clientConversationID != "" {
 			req.Header.Set("Conversation_Id", isolateSession(apiKeyID, clientConversationID))
 		}
+	}
+	if fingerprintConfigured {
+		if req.Header.Get("Session-Id") == "" && req.Header.Get("Session_Id") == "" && clientSessionID != "" {
+			req.Header.Set("Session_Id", clientSessionID)
+		}
+		if req.Header.Get("Conversation-Id") == "" && req.Header.Get("Conversation_Id") == "" && clientConversationID != "" {
+			req.Header.Set("Conversation_Id", clientConversationID)
+		}
+	}
+	if err := identity.headers(req.Header); err != nil {
+		return nil, err
 	}
 	if err := ApplyCodexFingerprintHeaders(req.Header, fingerprint); err != nil {
 		return nil, err

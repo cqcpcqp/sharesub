@@ -99,8 +99,11 @@ OAuth 开始接口返回 `authorization_url` 和 `flow_id`。完成授权后，�
 | `proxy_url` | 空字符串，或 `http://`、`https://`、`socks5://` URL | 该账号的独立出站代理 |
 | `max_concurrency` | `0..100` | 最大并发请求数，`0` 表示不限制 |
 | `rpm_limit` | `0..10000` | 每分钟请求上限，`0` 表示不限制 |
+| `codex_fingerprint_mode` | `off`、`device`、`session`、`full` | 指纹收敛模式；新建账号默认 `off`，关闭收敛仍执行账号与 API Key 身份隔离 |
 | `fast_policy` | 规则数组，最多 50 条 | 当前账号的 OpenAI Fast/Flex 策略；账号层优先于成员 API Key 层 |
 | `status` | `active`、`disabled`、`refresh_required` | 调度状态；OAuth 接入时固定保存为 `active` |
+
+已有账号的指纹模式不会因默认值变化而改写；重新授权保留原配置。`off` 保留客户端标识之间的区别，`device` 统一设备，`session` 统一设备和会话并按 API Key 与客户端会话区分对话，`full` 统一设备、会话和对话。
 
 `fast_policy` 规则按顺序首条命中，指定成员规则优先于全局规则。每条规则包含 `service_tier`（`all`、`priority`、`flex`）、`action`（`pass`、`filter`、`force_priority`、`block`）、`user_ids`、`error_message`、`model_whitelist`、`fallback_action` 和 `fallback_error_message`。`priority` 在规则中表示 Fast 模式并同时匹配请求值 `fast` 与兼容别名 `priority`。`model_whitelist` 支持精确模型名与末尾 `*` 通配符；未命中白名单时执行 fallback 动作。
 

@@ -377,8 +377,8 @@ func TestNormalizeAccountConfigRejectsUnsupportedValues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("valid config rejected: %v", err)
 	}
-	if normalized.CodexFingerprintMode != "session" {
-		t.Fatalf("default fingerprint mode = %q, want session", normalized.CodexFingerprintMode)
+	if normalized.CodexFingerprintMode != "off" {
+		t.Fatalf("default fingerprint mode = %q, want off", normalized.CodexFingerprintMode)
 	}
 	for _, config := range tests {
 		if _, err := normalizeAccountConfig(config); err != domain.ErrInvalidInput {

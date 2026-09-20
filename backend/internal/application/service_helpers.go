@@ -36,7 +36,7 @@ func normalizeAccountConfig(config AccountConfigInput) (AccountConfigInput, erro
 		config.FastPolicy = make([]domain.FastPolicyRule, 0)
 	}
 	if config.CodexFingerprintMode == "" {
-		config.CodexFingerprintMode = "session"
+		config.CodexFingerprintMode = "off"
 	}
 	switch config.CodexFingerprintMode {
 	case "off", "device", "session", "full":
