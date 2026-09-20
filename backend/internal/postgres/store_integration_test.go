@@ -841,7 +841,9 @@ func TestMigrationAndPublicPlanWorkflow(t *testing.T) {
 		total    int64
 	}{
 		{strings.ToUpper(string([]rune(errorItem.MemberUsername)[:2])), 1},
-		{"no-such-member", 0}, {"%", 0}, {"_", 0},
+		{"no-such-member", 0}, {"%", 0},
+		// The migrated username user_owner contains one literal underscore.
+		{"_", 1}, {"__", 0},
 	} {
 		filtered, err := store.PlanRequestErrors(ctx, "plan", "applicant", now.Add(-time.Hour), now.Add(time.Minute), 1, 10, tc.username)
 		if err != nil || int64(filtered.Total) != tc.total || int64(len(filtered.Items)) != tc.total {
