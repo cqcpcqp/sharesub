@@ -13,7 +13,7 @@ ShareSub 是一个仅支持 OpenAI Codex 的账号共享平台。房主可以先
 - API Key 归用户所有，一个 Key 可以绑定用户已加入的多个 Plan。
 - 个人会员通过易支付开通：VIP ¥9.9 / 30 天、SVIP ¥19.9 / 30 天；VIP 补 ¥10 升级、到期时间不变。SVIP 默认 2 个未归档 Plan 房主名额，管理员可覆盖。Plus、Pro 均按调用用户的会员资格授权，不另收 Plan 服务费。规则见 [会员文档](docs/membership.md)。
 - API Key 支持按优先级故障转移，或按可用额度均衡选路。
-- OpenAI 网关支持流式和非流式 Responses、GPT-6 Astra、远程 compact、Codex 独立联网检索、模型列表，以及兼容 OpenAI Images 的图片生成和编辑接口。
+- OpenAI 网关支持流式和非流式 Responses、GPT-6 Astra / Sol / Luna、远程 compact、Codex 独立联网检索、模型列表，以及兼容 OpenAI Images 的图片生成和编辑接口。
 - Plan 创建时选择额度方式：`fixed` 按成员固定分配份额，`shared` 由所有成员共享账号总额度；共享模式可由房主单向转换为固定分配，转换后不可改回共享模式。
 - 固定分配 Plan 中，房主、成员、待接受邀请和公开席位的份额可以为 0%；0% 成员仍可查看 Plan，但不能通过该 Plan 发起请求。所有预留份额之和不能超过 100%。共享使用 Plan 不设置个人份额或个人额度上限。
 - 公开 Plan 上架时必须预留席位；固定分配模式需设置每席份额（允许为 `0`），共享模式的每席份额固定为 `0`。

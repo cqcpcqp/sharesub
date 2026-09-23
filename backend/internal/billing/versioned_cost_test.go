@@ -25,7 +25,16 @@ func TestInitialPricingMigrationMatchesEmbeddedCatalog(t *testing.T) {
 	}
 	config.FastMultiplierBPS = 20_000
 	config.FlexMultiplierBPS = 5_000
-	if !reflect.DeepEqual(config, EmbeddedPricingConfig()) {
+	// The original migration is immutable. Later model additions have their own migration.
+	embedded := EmbeddedPricingConfig()
+	var initialModels []domain.ModelPrice
+	for _, model := range embedded.Models {
+		if model.Model != "gpt-6-sol" && model.Model != "gpt-6-luna" {
+			initialModels = append(initialModels, model)
+		}
+	}
+	embedded.Models = initialModels
+	if !reflect.DeepEqual(config, embedded) {
 		t.Fatal("migration changed the embedded initial pricing")
 	}
 	if err := ValidateConfig(config); err != nil {
@@ -36,7 +45,7 @@ func TestInitialPricingMigrationMatchesEmbeddedCatalog(t *testing.T) {
 func TestVersionedCostMatchesExistingPricing(t *testing.T) {
 	config := EmbeddedPricingConfig()
 	for _, model := range config.Models {
-		if model.Model != "gpt-6-astra" && model.Model != "gpt-5.6-sol" {
+		if model.Model != "gpt-6-astra" && model.Model != "gpt-5.6-sol" && model.Model != "gpt-6-sol" && model.Model != "gpt-6-luna" {
 			continue
 		}
 		for _, tier := range []string{"", "standard", "priority", "fast", "flex"} {

@@ -249,6 +249,10 @@ func canonicalModel(model string) string {
 
 func knownCodexFamily(model string) string {
 	switch {
+	case model == "gpt-6-sol" || strings.HasPrefix(model, "gpt-6-sol-"):
+		return "gpt-6-sol"
+	case model == "gpt-6-luna" || strings.HasPrefix(model, "gpt-6-luna-"):
+		return "gpt-6-luna"
 	case strings.Contains(model, "gpt-6-astra"):
 		return "gpt-6-astra"
 	case strings.Contains(model, "gpt-5.6-terra"):

@@ -4,6 +4,15 @@ export interface PricingConfig { models:ModelPrice[]; fast_multiplier_bps:number
 export interface PricingVersionSummary { id:number; published_at:string; published_by:string; reason:string }
 export interface PricingVersion extends PricingVersionSummary { config:PricingConfig }
 export interface PublishPricingInput { base_version_id:number; reason:string; config:PricingConfig }
+export function restorePricingConfig(current: PricingConfig, historical: PricingConfig): PricingConfig {
+  const historicalModels = new Map(historical.models.map(model => [model.model, model]))
+  // Restore prices within the current catalog; newly introduced models keep their current prices.
+  const models = current.models.map(model => {
+    const source = historicalModels.has(model.model) ? historicalModels.get(model.model)! : model
+    return { ...source, standard: { ...source.standard } }
+  })
+  return { ...historical, models }
+}
 export type PricingTier = 'standard'
 export const pricingTiers = [{ value:'standard' as const, label:'Standard' }]
 export const tokenPriceFields:{key:keyof TokenPrices;label:string}[] = [

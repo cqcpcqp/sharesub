@@ -101,7 +101,7 @@
 
     <NDrawer v-model:show="historyVisible" width="min(640px, 100vw)" placement="right">
       <NDrawerContent title="计价版本历史" closable>
-        <p>恢复历史价格会生成一个新版本，不覆盖旧版本，也不重算历史费用。</p>
+        <p>恢复历史价格会生成一个新版本，不覆盖旧版本，也不重算历史费用。历史版本中已有模型及全局配置使用历史值，之后新增的模型保留当前价格。</p>
         <NAlert v-if="historyError" type="error">{{ historyError }} <NButton text @click="loadHistory(false)">重试</NButton></NAlert>
         <div v-for="version in history" :key="version.id" class="pricing-history-item"><div><strong>版本 {{ version.id }}{{ version.id === current?.id ? ' · 当前' : '' }}</strong><time>{{ dateTime(version.published_at) }}</time></div><p>{{ version.reason }}</p><small>发布人：{{ version.published_by }}</small><div class="pricing-actions"><NButton size="small" :loading="historyLoading" @click="viewHistoryVersion(version.id)">查看价格</NButton><NButton v-if="user.is_admin && version.id !== current?.id" size="small" :disabled="editing || historyLoading" @click="restoreVersion(version.id)">恢复为草稿</NButton></div></div>
         <NButton v-if="hasMoreHistory" :loading="historyLoading" @click="loadHistory(true)">加载更早版本</NButton>
@@ -117,7 +117,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { NAlert, NButton, NDrawer, NDrawerContent, NInput, NInputNumber, NModal, NPagination, NSpin } from 'naive-ui'
 import { api, APIRequestError } from '../api'
 import type { User } from '../types'
-import { addonPriceFields, exampleCost, formatPrice, priceChangePercent, pricingChanges, tokenPriceFields, type PricingConfig, type PricingVersion, type PricingVersionSummary, type TokenPrices } from '../pricing'
+import { addonPriceFields, exampleCost, formatPrice, priceChangePercent, pricingChanges, restorePricingConfig, tokenPriceFields, type PricingConfig, type PricingVersion, type PricingVersionSummary, type TokenPrices } from '../pricing'
 import './PricingView.css'
 
 defineProps<{ user: User }>()
@@ -143,7 +143,7 @@ const historySearch = ref('')
 const editing = computed(() => draft.value !== null)
 const displayed = computed(() => draft.value || current.value?.config)
 const primaryFields = tokenPriceFields.slice(0, 4)
-const featuredModels = ['gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex', 'gpt-5.3-codex-spark', 'codex-auto-review', 'gpt-5.2', 'gpt-image-1', 'gpt-image-1.5', 'gpt-image-2']
+const featuredModels = ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex', 'gpt-5.3-codex-spark', 'codex-auto-review', 'gpt-5.2', 'gpt-image-1', 'gpt-image-1.5', 'gpt-image-2']
 const filteredModels = computed(() => {
   if (!displayed.value) return []
   return displayed.value.models.filter(model => model.model.includes(search.value.trim().toLowerCase())).slice().sort((left, right) => {
@@ -224,7 +224,7 @@ async function restoreVersion(id: number) {
   try {
     const version = await api.pricingVersion(id)
     current.value = await api.pricing()
-    draft.value = cloneConfig(version.config)
+    draft.value = restorePricingConfig(current.value.config, version.config)
     reason.value = `恢复版本 ${id} 的价格`
     historyVisible.value = false
     publishError.value = ''

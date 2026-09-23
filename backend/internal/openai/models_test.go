@@ -5,6 +5,8 @@ import "testing"
 func TestCodexModelsIncludeCurrentTextModels(t *testing.T) {
 	want := map[string]bool{
 		"gpt-6-astra":   false,
+		"gpt-6-sol":     false,
+		"gpt-6-luna":    false,
 		"gpt-5.6-sol":   false,
 		"gpt-5.6":       false,
 		"gpt-5.6-terra": false,

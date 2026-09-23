@@ -14,10 +14,14 @@ func TestPricingPublishTransactionHistoryAndRollback(t *testing.T) {
 	store := membershipTestStore(t)
 	ctx := context.Background()
 	id, err := store.CurrentPricingID(ctx)
-	if err != nil || id != 1 {
+	if err != nil || id <= 0 {
 		t.Fatalf("initial pointer=%d err=%v", id, err)
 	}
 	initial, err := store.PricingVersion(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baselineHistory, err := store.PricingHistory(ctx, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,11 +50,11 @@ func TestPricingPublishTransactionHistoryAndRollback(t *testing.T) {
 		t.Fatal("failed audit changed active pointer")
 	}
 	history, err := store.PricingHistory(ctx, 0)
-	if err != nil || len(history) != 2 || history[0].ID != next.ID {
+	if err != nil || len(history) != len(baselineHistory)+1 || history[0].ID != next.ID {
 		t.Fatalf("history=%+v err=%v", history, err)
 	}
 	history, err = store.PricingHistory(ctx, next.ID)
-	if err != nil || len(history) != 1 || history[0].ID != initial.ID {
+	if err != nil || len(history) != len(baselineHistory) || history[0].ID != initial.ID {
 		t.Fatalf("history cursor=%+v err=%v", history, err)
 	}
 	input.Config = initial.Config
@@ -68,7 +72,11 @@ func TestPricingPublishTransactionHistoryAndRollback(t *testing.T) {
 func TestPricingConcurrentPublishHasOneWinner(t *testing.T) {
 	store := membershipTestStore(t)
 	ctx := context.Background()
-	initial, err := store.PricingVersion(ctx, 1)
+	currentID, err := store.CurrentPricingID(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial, err := store.PricingVersion(ctx, currentID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +86,7 @@ func TestPricingConcurrentPublishHasOneWinner(t *testing.T) {
 		group.Add(1)
 		go func(id string) {
 			defer group.Done()
-			_, err := store.PublishPricing(ctx, domain.PublishPricingInput{BaseVersionID: 1, Reason: id, Config: initial.Config}, domain.AuditEvent{ID: id, ActorUserID: "admin", Action: "pricing.published", ResourceType: "pricing", CreatedAt: time.Now()})
+			_, err := store.PublishPricing(ctx, domain.PublishPricingInput{BaseVersionID: currentID, Reason: id, Config: initial.Config}, domain.AuditEvent{ID: id, ActorUserID: "admin", Action: "pricing.published", ResourceType: "pricing", CreatedAt: time.Now()})
 			results <- err
 		}(id)
 	}
