@@ -147,7 +147,7 @@ func versionedSegmentCost(config domain.PricingConfig, model, serviceTier string
 		cost.OutputMicros = calculate(max(0, usage.OutputTokens-usage.ImageOutputTokens), prices.Output, outputFactor*tierMultiplier/10_000, 10_000)
 		cost.CacheReadMicros = calculate(usage.CachedTokens, prices.CacheRead, inputFactor*tierMultiplier/10_000, 10_000)
 		cost.CacheCreationMicros = calculate(usage.CacheCreationTokens, prices.CacheWrite, inputFactor*tierMultiplier/10_000, 10_000)
-		cost.ImageInputMicros = calculate(usage.ImageInputTokens, prices.ImageInput, tierMultiplier, 10_000)
+		cost.ImageInputMicros = calculate(usage.ImageInputTokens, prices.ImageInput, inputFactor*tierMultiplier/10_000, 10_000)
 		cost.ImageOutputMicros = calculate(usage.ImageOutputTokens, prices.ImageOutput, tierMultiplier, 10_000)
 	}
 	amount := new(big.Int)

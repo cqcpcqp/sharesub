@@ -18,6 +18,7 @@ ShareSub 复用 sub2api 已验证的 OpenAI Codex 协议行为，但产品边界
 | 独立联网检索 | 支持三个入口的 `/alpha/search`，按 SearchClient JSON 协议转发到 ChatGPT Codex alpha search 上游 |
 | 模型列表 | 普通请求返回支持配置的模型；Codex `client_version` 请求通过所选 OAuth 账号透传实时 manifest 与 ETag |
 | GPT-6 Astra | 静态模型列表提供官方 ID `gpt-6-astra`；Responses 请求按官方兼容规则移除不支持的采样/logprobs 参数，并将 `none`、`minimal` reasoning effort 规范为 `low` |
+| GPT-6.2 Sol / Astra | 静态列表提供 `gpt-6.2-sol`、`gpt-6.2-astra`；Responses、compact 和 WebSocket 保留 `low`、`medium`、`high`、`xhigh`、`max`，拒绝 `none`、`minimal`；独立计价并保留旧模型 |
 | GPT-6.1 Sol | 静态模型列表提供官方 ID `gpt-6.1-sol`；Responses、compact 和 WebSocket 拒绝不支持的 `none`、`minimal` reasoning effort，并按模型定价单独计费 |
 | Images API | 支持 `/v1/images/generations`、`/v1/images/edits` 及无 `/v1` 别名；OAuth 请求转换为 hosted `image_generation` 工具 |
 | 图片输入输出 | 生成支持 JSON；编辑支持 JSON 图片 URL、multipart 图片与 mask；响应支持 JSON 和 Images SSE |
@@ -54,3 +55,9 @@ ShareSub 复用 sub2api 已验证的 OpenAI Codex 协议行为，但产品边界
 - 上游连接在轮间保持热态，但账号业务并发槽会释放；下一轮开始时必须重新通过该账号的额度、并发和 RPM 检查。
 - 连接或上游状态无法安全恢复时会要求客户端重新连接，不会盲目重放可能已经产生工具副作用的 turn。
 - HTTP Responses 路径继续保留；未使用 WebSocket 的 Codex CLI、OpenCode 和 CCS 配置不受影响。
+
+## GPT-6.2 定价依据
+
+依据 2026-11-18 用户提供的官方模型页截图（[Sol](https://developers.openai.com/api/docs/models/gpt-6.2-sol)、[Astra](https://developers.openai.com/api/docs/models/gpt-6.2-astra)），Standard 每百万 token 的输入、缓存读取、缓存写入、输出价格分别为：Sol $2 / $0.10 / $2.50 / $10，Astra $8 / $0.40 / $10 / $40。输入超过 272,000 tokens 时，整次请求的输入与缓存价格乘 2，输出价格乘 1.5。
+
+缓存写入使用官方 30 分钟保留价格。官方另有 12 小时写入价格（Sol $5、Astra $20），当前 Codex 转发会移除 `prompt_cache_retention`，现有 usage/定价结构不区分写入保留时长，未新增 12 小时缓存写入档位。Fast/Flex 沿用项目现有全局倍率策略。模型上下文窗口为 1,050,000 tokens，最大输入 922,000、最大输出 128,000。

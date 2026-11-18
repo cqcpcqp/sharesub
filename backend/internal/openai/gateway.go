@@ -176,7 +176,7 @@ func prepareRequest(body []byte, compact, normalize bool) ([]byte, RequestBillin
 	for _, field := range chatGPTUnsupportedFields {
 		delete(payload, field)
 	}
-	if err := validateGPT61SolRequest(payload, model); err != nil {
+	if err := validateGPTSolAstraReasoning(payload, model); err != nil {
 		return nil, RequestBilling{}, err
 	}
 	normalizeGPT6AstraRequest(payload, model)

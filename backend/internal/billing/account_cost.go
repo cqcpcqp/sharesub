@@ -129,6 +129,7 @@ func AccountCostForImageSize(model, serviceTier string, usage domain.TokenUsage,
 	if pricing.LongContextThreshold > 0 &&
 		usage.InputTokens > pricing.LongContextThreshold {
 		inputPrice *= positiveOrOne(pricing.LongContextInputFactor)
+		imageInputPrice *= positiveOrOne(pricing.LongContextInputFactor)
 		cacheCreationPrice *= positiveOrOne(pricing.LongContextInputFactor)
 		cacheReadPrice *= positiveOrOne(pricing.LongContextInputFactor)
 		outputPrice *= positiveOrOne(pricing.LongContextOutputFactor)
@@ -249,9 +250,15 @@ func canonicalModel(model string) string {
 
 func knownCodexFamily(model string) string {
 	switch {
+	case model == "gpt-6.2-sol" || model == "gpt-6.2-astra":
+		return model
+	case strings.HasPrefix(model, "gpt-6.2-sol-") && isGPTSolAstraSuffix(strings.TrimPrefix(model, "gpt-6.2-sol-")):
+		return "gpt-6.2-sol"
+	case strings.HasPrefix(model, "gpt-6.2-astra-") && isGPTSolAstraSuffix(strings.TrimPrefix(model, "gpt-6.2-astra-")):
+		return "gpt-6.2-astra"
 	case model == "gpt-6.1-sol":
 		return "gpt-6.1-sol"
-	case strings.HasPrefix(model, "gpt-6.1-sol-") && isGPT61SolSuffix(strings.TrimPrefix(model, "gpt-6.1-sol-")):
+	case strings.HasPrefix(model, "gpt-6.1-sol-") && isGPTSolAstraSuffix(strings.TrimPrefix(model, "gpt-6.1-sol-")):
 		return "gpt-6.1-sol"
 	case model == "gpt-6-sol" || strings.HasPrefix(model, "gpt-6-sol-"):
 		return "gpt-6-sol"
@@ -300,7 +307,7 @@ func knownCodexFamily(model string) string {
 	}
 }
 
-func isGPT61SolSuffix(suffix string) bool {
+func isGPTSolAstraSuffix(suffix string) bool {
 	switch suffix {
 	case "none", "minimal", "low", "medium", "high", "xhigh", "max", "openai-compact":
 		return true

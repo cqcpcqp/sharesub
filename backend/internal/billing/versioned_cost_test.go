@@ -29,7 +29,7 @@ func TestInitialPricingMigrationMatchesEmbeddedCatalog(t *testing.T) {
 	embedded := EmbeddedPricingConfig()
 	var initialModels []domain.ModelPrice
 	for _, model := range embedded.Models {
-		if model.Model != "gpt-6.1-sol" && model.Model != "gpt-6-sol" && model.Model != "gpt-6-luna" {
+		if model.Model != "gpt-6.2-sol" && model.Model != "gpt-6.2-astra" && model.Model != "gpt-6.1-sol" && model.Model != "gpt-6-sol" && model.Model != "gpt-6-luna" {
 			initialModels = append(initialModels, model)
 		}
 	}
@@ -45,7 +45,7 @@ func TestInitialPricingMigrationMatchesEmbeddedCatalog(t *testing.T) {
 func TestVersionedCostMatchesExistingPricing(t *testing.T) {
 	config := EmbeddedPricingConfig()
 	for _, model := range config.Models {
-		if model.Model != "gpt-6-astra" && model.Model != "gpt-5.6-sol" && model.Model != "gpt-6-sol" && model.Model != "gpt-6-luna" {
+		if model.Model != "gpt-6.2-sol" && model.Model != "gpt-6.2-astra" && model.Model != "gpt-6-astra" && model.Model != "gpt-5.6-sol" && model.Model != "gpt-6-sol" && model.Model != "gpt-6-luna" {
 			continue
 		}
 		for _, tier := range []string{"", "standard", "priority", "fast", "flex"} {
